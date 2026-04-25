@@ -13,6 +13,11 @@ export async function GET() {
             group: true,
           },
         },
+        organizerPlans: {
+          orderBy: { createdAt: "desc" },
+          take: 1,
+          include: { items: true },
+        },
       },
     });
     return jsonResponse({ downloads });

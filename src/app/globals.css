@@ -781,7 +781,8 @@ a {
 
 .settings-panel input,
 .settings-panel select,
-.rss-draft input {
+.rss-draft input,
+.rss-draft select {
   height: 38px;
   min-width: 0;
   border: 1px solid var(--border-default);
@@ -800,7 +801,8 @@ a {
 
 .settings-panel input:focus,
 .settings-panel select:focus,
-.rss-draft input:focus {
+.rss-draft input:focus,
+.rss-draft select:focus {
   border-color: rgba(255, 255, 255, 0.22);
 }
 
@@ -812,8 +814,12 @@ a {
 
 .rss-draft {
   display: grid;
-  grid-template-columns: 220px minmax(0, 1fr) auto;
+  grid-template-columns: 180px minmax(180px, 220px) minmax(0, 1fr) auto;
   align-items: end;
+}
+
+.rss-draft:has(button:nth-child(3):last-child) {
+  grid-template-columns: 220px minmax(0, 1fr) auto;
 }
 
 .rss-list {
@@ -1156,6 +1162,20 @@ a {
   font-weight: 600;
 }
 
+.download-files {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  margin-top: 8px;
+}
+
+.download-files span {
+  overflow: hidden;
+  color: rgba(255, 255, 255, 0.46);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .organizer-list {
   overflow: hidden;
   border: 1px solid rgba(255, 255, 255, 0.04);
@@ -1176,6 +1196,14 @@ a {
 
 .organizer-list article:last-child {
   border-bottom: 0;
+}
+
+.organizer-poster {
+  width: 54px;
+  height: 76px;
+  flex: 0 0 auto;
+  border-radius: 8px;
+  object-fit: cover;
 }
 
 .organizer-paths {
@@ -1801,6 +1829,16 @@ a {
 
 .watch-control-cluster input[type="range"] {
   width: 86px;
+}
+
+.watch-control-cluster select {
+  height: 30px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 9px;
+  background: rgba(255, 255, 255, 0.08);
+  color: rgba(255, 255, 255, 0.86);
+  padding: 0 8px;
+  font-size: 12px;
 }
 
 .watch-ended {

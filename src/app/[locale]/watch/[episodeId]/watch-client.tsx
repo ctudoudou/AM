@@ -53,6 +53,7 @@ type PlaybackDescriptor = {
   direct: boolean;
   playbackMode: "DIRECT" | "HLS_REMUX" | "HLS_TRANSCODE" | null;
   transcodeStatus: "NOT_REQUIRED" | "PENDING" | "PROCESSING" | "READY" | "FAILED";
+  sourceDurationSec?: number | null;
   streamUrl?: string | null;
   hlsUrl?: string | null;
   mediaFile: WatchMediaFile;
@@ -80,12 +81,15 @@ export function WatchClient({
   const t = getMessages(locale);
   const playerRef = useRef<HTMLDivElement | null>(null);
   const videoRef = useRef<HTMLVideoElement | null>(null);
+  const descriptorRef = useRef<PlaybackDescriptor | null>(null);
   const [descriptor, setDescriptor] = useState<PlaybackDescriptor | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [isPlaying, setIsPlaying] = useState(false);
   const [currentTime, setCurrentTime] = useState(initialPositionSec);
   const [duration, setDuration] = useState(0);
+  const [bufferedUntil, setBufferedUntil] = useState(0);
+  const [playbackRate, setPlaybackRate] = useState(1);
   const [muted, setMuted] = useState(false);
   const [volume, setVolumeState] = useState(1);
   const [controlsVisible, setControlsVisible] = useState(true);
@@ -100,9 +104,11 @@ export function WatchClient({
         throw new Error(t.playbackLoadError);
       }
       const body = (await response.json()) as PlaybackDescriptor;
-      setEnded(false);
-      setIsPlaying(false);
+      if (body.sourceDurationSec && body.sourceDurationSec > 0) {
+        setDuration(body.sourceDurationSec);
+      }
       setDescriptor(body);
+      descriptorRef.current = body;
       setError("");
       return body;
     } catch (loadError) {
@@ -124,6 +130,17 @@ export function WatchClient({
     }
     await load();
   }, [load, mediaFileId, t.transcodeStartError]);
+
+  const stopHls = useCallback(() => {
+    const current = descriptorRef.current;
+    if (current?.direct || current?.transcodeStatus !== "PROCESSING") {
+      return;
+    }
+    void fetch(`/api/media-files/${mediaFileId}/transcode`, {
+      method: "DELETE",
+      keepalive: true,
+    }).catch(() => undefined);
+  }, [mediaFileId]);
 
   const saveProgress = useCallback(async () => {
     const video = videoRef.current;
@@ -158,18 +175,20 @@ export function WatchClient({
     if (!video) {
       return;
     }
-    video.currentTime = Math.min(Math.max(video.currentTime + seconds, 0), video.duration || 0);
+    const seekLimit = seekableLimit(video, duration);
+    video.currentTime = Math.min(Math.max(video.currentTime + seconds, 0), seekLimit);
     setCurrentTime(video.currentTime);
-  }, []);
+  }, [duration]);
 
   const seekTo = useCallback((seconds: number) => {
     const video = videoRef.current;
     if (!video) {
       return;
     }
-    video.currentTime = seconds;
-    setCurrentTime(seconds);
-  }, []);
+    const nextTime = Math.min(Math.max(seconds, 0), seekableLimit(video, duration));
+    video.currentTime = nextTime;
+    setCurrentTime(nextTime);
+  }, [duration]);
 
   const setVolume = useCallback((nextVolume: number) => {
     const video = videoRef.current;
@@ -203,12 +222,33 @@ export function WatchClient({
     }
   }, []);
 
+  const changePlaybackRate = useCallback((rate: number) => {
+    const video = videoRef.current;
+    setPlaybackRate(rate);
+    if (video) {
+      video.playbackRate = rate;
+    }
+  }, []);
+
   useEffect(() => {
     const timeout = window.setTimeout(() => {
       void load();
     }, 0);
     return () => window.clearTimeout(timeout);
   }, [load]);
+
+  useEffect(() => {
+    descriptorRef.current = descriptor;
+  }, [descriptor]);
+
+  useEffect(() => {
+    const stopOnPageHide = () => stopHls();
+    window.addEventListener("pagehide", stopOnPageHide);
+    return () => {
+      window.removeEventListener("pagehide", stopOnPageHide);
+      stopHls();
+    };
+  }, [stopHls]);
 
   useEffect(() => {
     if (!descriptor || descriptor.direct || descriptor.hlsUrl) {
@@ -233,20 +273,28 @@ export function WatchClient({
     return () => window.clearInterval(timer);
   }, [descriptor, load]);
 
+  const streamUrl = descriptor?.streamUrl ?? null;
+  const hlsUrl = descriptor?.hlsUrl ?? null;
+  const sourceDurationSec = descriptor?.sourceDurationSec ?? null;
+
   useEffect(() => {
     const video = videoRef.current;
-    if (!video || !descriptor) {
+    if (!video) {
       return;
     }
-    const sourceUrl = descriptor.streamUrl ?? descriptor.hlsUrl;
+    const sourceUrl = streamUrl ?? hlsUrl;
     if (!sourceUrl) {
       return;
     }
 
     let hls: Hls | null = null;
-    if (descriptor.hlsUrl && Hls.isSupported()) {
-      hls = new Hls({ enableWorker: true });
-      hls.loadSource(descriptor.hlsUrl);
+    if (hlsUrl && Hls.isSupported()) {
+      hls = new Hls({
+        backBufferLength: 30,
+        enableWorker: true,
+        startFragPrefetch: true,
+      });
+      hls.loadSource(hlsUrl);
       hls.attachMedia(video);
     } else {
       video.src = sourceUrl;
@@ -257,7 +305,8 @@ export function WatchClient({
         video.currentTime = initialPositionSec;
         setCurrentTime(initialPositionSec);
       }
-      setDuration(Number.isFinite(video.duration) ? video.duration : 0);
+      const sourceDuration = sourceDurationSec ?? 0;
+      setDuration(sourceDuration || (Number.isFinite(video.duration) ? video.duration : 0));
     };
     video.addEventListener("loadedmetadata", restore, { once: true });
 
@@ -267,7 +316,7 @@ export function WatchClient({
       video.removeAttribute("src");
       video.load();
     };
-  }, [descriptor, initialPositionSec]);
+  }, [hlsUrl, initialPositionSec, sourceDurationSec, streamUrl]);
 
   useEffect(() => {
     const video = videoRef.current;
@@ -276,14 +325,23 @@ export function WatchClient({
     }
     video.volume = volume;
     video.muted = muted;
+    video.playbackRate = playbackRate;
 
     const handlePlay = () => {
       setIsPlaying(true);
       setEnded(false);
     };
     const handlePause = () => setIsPlaying(false);
-    const handleTime = () => setCurrentTime(video.currentTime);
-    const handleDuration = () => setDuration(Number.isFinite(video.duration) ? video.duration : 0);
+    const updateBuffered = () => setBufferedUntil(bufferedEnd(video));
+    const handleTime = () => {
+      setCurrentTime(video.currentTime);
+      updateBuffered();
+    };
+    const handleDuration = () => {
+      const sourceDuration = descriptorRef.current?.sourceDurationSec ?? 0;
+      setDuration(sourceDuration || (Number.isFinite(video.duration) ? video.duration : 0));
+      updateBuffered();
+    };
     const handleEnded = () => {
       setEnded(true);
       setIsPlaying(false);
@@ -293,16 +351,18 @@ export function WatchClient({
     video.addEventListener("play", handlePlay);
     video.addEventListener("pause", handlePause);
     video.addEventListener("timeupdate", handleTime);
+    video.addEventListener("progress", updateBuffered);
     video.addEventListener("durationchange", handleDuration);
     video.addEventListener("ended", handleEnded);
     return () => {
       video.removeEventListener("play", handlePlay);
       video.removeEventListener("pause", handlePause);
       video.removeEventListener("timeupdate", handleTime);
+      video.removeEventListener("progress", updateBuffered);
       video.removeEventListener("durationchange", handleDuration);
       video.removeEventListener("ended", handleEnded);
     };
-  }, [muted, saveProgress, volume]);
+  }, [muted, playbackRate, saveProgress, volume]);
 
   useEffect(() => {
     if (!isPlaying || !controlsVisible || nativeControls) {
@@ -368,7 +428,12 @@ export function WatchClient({
   }
 
   const sourceReady = Boolean(descriptor?.streamUrl || descriptor?.hlsUrl);
-  const progressPercent = duration > 0 ? (currentTime / duration) * 100 : 0;
+  const processingHls = descriptor?.transcodeStatus === "PROCESSING";
+  const seekMax =
+    processingHls && bufferedUntil > 0
+      ? Math.max(currentTime, Math.min(duration || bufferedUntil, bufferedUntil))
+      : duration;
+  const progressPercent = seekMax > 0 ? (currentTime / seekMax) * 100 : 0;
 
   return (
     <div className={`watch-stage ${panelOpen ? "panel-open" : ""}`}>
@@ -410,13 +475,13 @@ export function WatchClient({
                 <div className={`watch-controls ${controlsVisible || !isPlaying ? "visible" : ""}`}>
                   <input
                     aria-label={t.seek}
-                    max={duration || 0}
+                    max={seekMax || 0}
                     min={0}
                     onChange={(event) => seekTo(Number(event.target.value))}
                     step={1}
                     style={{ backgroundSize: `${progressPercent}% 100%` }}
                     type="range"
-                    value={Math.min(currentTime, duration || currentTime)}
+                    value={Math.min(currentTime, seekMax || currentTime)}
                   />
                   <div className="watch-control-row">
                     <div className="watch-control-cluster">
@@ -431,6 +496,9 @@ export function WatchClient({
                       </button>
                       <span>
                         {formatTime(currentTime)} / {formatTime(duration)}
+                        {processingHls && bufferedUntil > currentTime
+                          ? ` · ${t.seekableReady} ${formatTime(bufferedUntil)}`
+                          : ""}
                       </span>
                     </div>
                     <div className="watch-control-cluster">
@@ -446,6 +514,17 @@ export function WatchClient({
                         type="range"
                         value={muted ? 0 : volume}
                       />
+                      <select
+                        aria-label={t.playbackRate}
+                        onChange={(event) => changePlaybackRate(Number(event.target.value))}
+                        value={playbackRate}
+                      >
+                        {playbackRateOptions.map((rate) => (
+                          <option key={rate} value={rate}>
+                            {rate}x
+                          </option>
+                        ))}
+                      </select>
                       <button aria-label={t.episodePanel} onClick={() => setPanelOpen((value) => !value)} type="button">
                         <ListVideo size={16} />
                       </button>
@@ -569,6 +648,8 @@ export function WatchClient({
   );
 }
 
+const playbackRateOptions = [0.5, 0.75, 1, 1.25, 1.5, 1.75, 2];
+
 function formatTime(value: number) {
   if (!Number.isFinite(value) || value <= 0) {
     return "00:00";
@@ -581,6 +662,23 @@ function formatTime(value: number) {
     return `${hours}:${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}`;
   }
   return `${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}`;
+}
+
+function seekableLimit(video: HTMLVideoElement, fallbackDuration: number) {
+  const buffered = bufferedEnd(video);
+  if (buffered > 0) {
+    return buffered;
+  }
+  return Number.isFinite(video.duration) && video.duration > 0
+    ? video.duration
+    : fallbackDuration;
+}
+
+function bufferedEnd(video: HTMLVideoElement) {
+  if (video.buffered.length === 0) {
+    return 0;
+  }
+  return video.buffered.end(video.buffered.length - 1);
 }
 
 function formatMediaFileLabel(file: WatchMediaFile) {

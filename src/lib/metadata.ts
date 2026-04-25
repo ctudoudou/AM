@@ -1,8 +1,17 @@
-import { Prisma } from "@prisma/client";
+import { Prisma, type MediaType } from "@prisma/client";
 import { prisma } from "@/lib/db";
 
 export type MetadataMatch = {
-  provider: "anilist" | "tmdb" | "bangumi" | "fallback";
+  provider:
+    | "anilist"
+    | "tmdb"
+    | "tmdb_movie"
+    | "tmdb_tv"
+    | "bangumi"
+    | "jikan"
+    | "kitsu"
+    | "omdb"
+    | "fallback";
   externalId: string;
   title: string;
   originalTitle?: string;
@@ -40,8 +49,11 @@ type AniListResponse = {
 type TmdbTvResult = {
   id: number | string;
   name?: string | null;
+  title?: string | null;
   original_name?: string | null;
+  original_title?: string | null;
   first_air_date?: string | null;
+  release_date?: string | null;
   overview?: string | null;
   poster_path?: string | null;
   backdrop_path?: string | null;
@@ -65,6 +77,54 @@ type BangumiSubject = {
 
 type BangumiSearchResponse = {
   data?: BangumiSubject[];
+};
+
+type JikanAnime = {
+  mal_id: number | string;
+  title?: string | null;
+  title_english?: string | null;
+  title_japanese?: string | null;
+  year?: number | null;
+  synopsis?: string | null;
+  images?: {
+    jpg?: { large_image_url?: string | null; image_url?: string | null };
+    webp?: { large_image_url?: string | null; image_url?: string | null };
+  } | null;
+  score?: number | null;
+};
+
+type JikanSearchResponse = {
+  data?: JikanAnime[];
+};
+
+type KitsuAnime = {
+  id: string;
+  attributes?: {
+    canonicalTitle?: string | null;
+    titles?: Record<string, string | null> | null;
+    startDate?: string | null;
+    synopsis?: string | null;
+    posterImage?: { large?: string | null; original?: string | null } | null;
+    coverImage?: { large?: string | null; original?: string | null } | null;
+    averageRating?: string | null;
+  } | null;
+};
+
+type KitsuSearchResponse = {
+  data?: KitsuAnime[];
+};
+
+type OmdbSearchItem = {
+  imdbID: string;
+  Title?: string;
+  Year?: string;
+  Type?: string;
+  Poster?: string;
+};
+
+type OmdbSearchResponse = {
+  Search?: OmdbSearchItem[];
+  Response?: string;
 };
 
 const romanNumerals = new Map([
@@ -94,7 +154,7 @@ export async function matchMetadataForGroup(groupId: string) {
     where: { id: groupId },
   });
   const query = group.displayTitle || group.normalizedTitle;
-  const providerResults = await searchAnimeMetadata(query);
+  const providerResults = await searchMediaMetadata(query, group.mediaType);
 
   const results =
     providerResults.length > 0
@@ -285,12 +345,26 @@ export function buildAnimeMetadataQueries(values: Array<string | null | undefine
 }
 
 export async function searchAnimeMetadata(query: string): Promise<MetadataMatch[]> {
+  return searchMediaMetadata(query, "ANIME");
+}
+
+export async function searchMediaMetadata(
+  query: string,
+  mediaType: MediaType = "ANIME",
+): Promise<MetadataMatch[]> {
   const providerResults = (
-    await Promise.allSettled([
-      searchAniList(query),
-      searchBangumi(query),
-      searchTmdb(query),
-    ])
+    mediaType === "ANIME"
+      ? await Promise.allSettled([
+          searchAniList(query),
+          searchBangumi(query),
+          searchJikan(query),
+          searchKitsu(query),
+          searchTmdb(query, "tv"),
+        ])
+      : await Promise.allSettled([
+          searchTmdb(query, mediaType === "MOVIE" ? "movie" : "tv"),
+          searchOmdb(query, mediaType),
+        ])
   ).flatMap((result) => (result.status === "fulfilled" ? result.value : []));
 
   return providerResults
@@ -345,12 +419,12 @@ async function searchAniList(query: string): Promise<MetadataMatch[]> {
   }));
 }
 
-async function searchTmdb(query: string): Promise<MetadataMatch[]> {
+async function searchTmdb(query: string, kind: "movie" | "tv"): Promise<MetadataMatch[]> {
   const token = process.env.TMDB_API_KEY;
   if (!token) {
     return [];
   }
-  const url = new URL("https://api.themoviedb.org/3/search/tv");
+  const url = new URL(`https://api.themoviedb.org/3/search/${kind}`);
   url.searchParams.set("query", query);
   url.searchParams.set("include_adult", "false");
   url.searchParams.set("language", "zh-CN");
@@ -363,11 +437,15 @@ async function searchTmdb(query: string): Promise<MetadataMatch[]> {
   }
   const body = (await response.json()) as TmdbSearchResponse;
   return (body.results ?? []).slice(0, 3).map((item) => ({
-    provider: "tmdb" as const,
+    provider: kind === "movie" ? ("tmdb_movie" as const) : ("tmdb_tv" as const),
     externalId: String(item.id),
-    title: item.name || item.original_name || query,
-    originalTitle: optionalString(item.original_name),
-    year: item.first_air_date ? Number(String(item.first_air_date).slice(0, 4)) : undefined,
+    title: item.title || item.name || item.original_title || item.original_name || query,
+    originalTitle: optionalString(item.original_title || item.original_name),
+    year: item.release_date
+      ? Number(String(item.release_date).slice(0, 4))
+      : item.first_air_date
+        ? Number(String(item.first_air_date).slice(0, 4))
+        : undefined,
     synopsis: optionalString(item.overview),
     posterUrl: item.poster_path ? `https://image.tmdb.org/t/p/w500${item.poster_path}` : undefined,
     backdropUrl: item.backdrop_path ? `https://image.tmdb.org/t/p/w780${item.backdrop_path}` : undefined,
@@ -408,6 +486,109 @@ async function searchBangumi(query: string): Promise<MetadataMatch[]> {
   }));
 }
 
+async function searchJikan(query: string): Promise<MetadataMatch[]> {
+  const url = new URL("https://api.jikan.moe/v4/anime");
+  url.searchParams.set("q", query);
+  url.searchParams.set("limit", "3");
+  url.searchParams.set("sfw", "true");
+  const response = await fetch(url, {
+    headers: { "User-Agent": "Kura/0.1" },
+    signal: AbortSignal.timeout(8_000),
+  });
+  if (!response.ok) {
+    return [];
+  }
+  const body = (await response.json()) as JikanSearchResponse;
+  return (body.data ?? []).slice(0, 3).map((item) => ({
+    provider: "jikan" as const,
+    externalId: String(item.mal_id),
+    title: item.title_english || item.title || item.title_japanese || query,
+    originalTitle: optionalString(item.title_japanese),
+    year: optionalNumber(item.year),
+    synopsis: optionalString(item.synopsis),
+    posterUrl: optionalString(
+      item.images?.webp?.large_image_url ||
+        item.images?.jpg?.large_image_url ||
+        item.images?.webp?.image_url ||
+        item.images?.jpg?.image_url,
+    ),
+    language: "multi",
+    score: Math.min(0.94, 0.66 + (item.score ?? 0) / 35),
+    raw: item,
+  }));
+}
+
+async function searchKitsu(query: string): Promise<MetadataMatch[]> {
+  const url = new URL("https://kitsu.io/api/edge/anime");
+  url.searchParams.set("filter[text]", query);
+  url.searchParams.set("page[limit]", "3");
+  const response = await fetch(url, {
+    headers: {
+      Accept: "application/vnd.api+json",
+      "User-Agent": "Kura/0.1",
+    },
+    signal: AbortSignal.timeout(8_000),
+  });
+  if (!response.ok) {
+    return [];
+  }
+  const body = (await response.json()) as KitsuSearchResponse;
+  return (body.data ?? []).slice(0, 3).map((item) => {
+    const attrs = item.attributes;
+    const titles = attrs?.titles ?? {};
+    return {
+      provider: "kitsu" as const,
+      externalId: item.id,
+      title:
+        attrs?.canonicalTitle ||
+        titles.en ||
+        titles.en_jp ||
+        titles.ja_jp ||
+        query,
+      originalTitle: optionalString(titles.ja_jp || titles.en_jp),
+      year: attrs?.startDate ? Number(String(attrs.startDate).slice(0, 4)) : undefined,
+      synopsis: optionalString(attrs?.synopsis),
+      posterUrl: optionalString(attrs?.posterImage?.large || attrs?.posterImage?.original),
+      backdropUrl: optionalString(attrs?.coverImage?.large || attrs?.coverImage?.original),
+      language: "multi",
+      score: Math.min(0.93, 0.64 + Number(attrs?.averageRating ?? 0) / 260),
+      raw: item,
+    };
+  });
+}
+
+async function searchOmdb(query: string, mediaType: MediaType): Promise<MetadataMatch[]> {
+  const apiKey = process.env.OMDB_API_KEY;
+  if (!apiKey || mediaType === "ANIME") {
+    return [];
+  }
+  const url = new URL("https://www.omdbapi.com/");
+  url.searchParams.set("apikey", apiKey);
+  url.searchParams.set("s", query);
+  url.searchParams.set("type", mediaType === "MOVIE" ? "movie" : "series");
+  const response = await fetch(url, {
+    headers: { "User-Agent": "Kura/0.1" },
+    signal: AbortSignal.timeout(8_000),
+  });
+  if (!response.ok) {
+    return [];
+  }
+  const body = (await response.json()) as OmdbSearchResponse;
+  if (body.Response === "False") {
+    return [];
+  }
+  return (body.Search ?? []).slice(0, 3).map((item) => ({
+    provider: "omdb" as const,
+    externalId: item.imdbID,
+    title: item.Title || query,
+    year: parseOmdbYear(item.Year),
+    posterUrl: item.Poster && item.Poster !== "N/A" ? item.Poster : undefined,
+    language: "multi",
+    score: 0.72,
+    raw: item,
+  }));
+}
+
 function selectBestMetadataMatch(results: MetadataMatch[]) {
   return [...results].sort(
     (a, b) =>
@@ -415,6 +596,11 @@ function selectBestMetadataMatch(results: MetadataMatch[]) {
       Number(Boolean(b.backdropUrl)) - Number(Boolean(a.backdropUrl)) ||
       b.score - a.score,
   )[0];
+}
+
+function parseOmdbYear(value: string | undefined) {
+  const year = Number(value?.match(/\b(19\d{2}|20\d{2})\b/)?.[1]);
+  return Number.isFinite(year) ? year : undefined;
 }
 
 function addQuery(queries: string[], value: string) {

@@ -1,6 +1,6 @@
 import fs from "node:fs/promises";
 import path from "node:path";
-import { Prisma } from "@prisma/client";
+import { Prisma, type MediaType } from "@prisma/client";
 import { prisma } from "@/lib/db";
 import { getAppSettings } from "@/lib/settings";
 import { matchMetadataForGroup } from "@/lib/metadata";
@@ -50,6 +50,7 @@ export async function createOrganizerPlanForDownload(downloadId: string) {
       data: {
         downloadId,
         candidateId: download.candidateId,
+        mediaType: download.candidate?.mediaType ?? "ANIME",
         status: "NEEDS_REVIEW",
         confidence: 0,
         reason: "Download has no grouped candidate",
@@ -64,6 +65,7 @@ export async function createOrganizerPlanForDownload(downloadId: string) {
       data: {
         downloadId,
         candidateId: download.candidateId,
+        mediaType: download.candidate.mediaType,
         status: "NEEDS_REVIEW",
         confidence: 0,
         reason: "Download has no completed file path",
@@ -79,6 +81,7 @@ export async function createOrganizerPlanForDownload(downloadId: string) {
       data: {
         downloadId,
         candidateId: download.candidateId,
+        mediaType: download.candidate.mediaType,
         status: "NEEDS_REVIEW",
         confidence: 0.2,
         reason: "No video file found",
@@ -93,7 +96,8 @@ export async function createOrganizerPlanForDownload(downloadId: string) {
     files.map(async (sourcePath) => {
       const stat = await fs.stat(sourcePath);
       const targetPath = buildTargetPath({
-        animeRoot: settings.directories.animeLibraryDir,
+        mediaType: candidate.mediaType,
+        roots: settings.directories,
         title: metadata.title || candidate.group?.displayTitle || candidate.parsedTitle,
         year: metadata.year,
         season: candidate.season ?? 1,
@@ -118,22 +122,25 @@ export async function createOrganizerPlanForDownload(downloadId: string) {
   );
 
   const hasConflict = itemInputs.some((item) => item.conflict);
-  const hasEpisode = candidate.episodeNumber !== null && candidate.episodeNumber !== undefined;
-  const autoExecutable = confidence >= 0.9 && hasEpisode && !hasConflict;
-  const status = hasConflict ? "CONFLICT" : autoExecutable ? "PENDING" : "NEEDS_REVIEW";
+  const hasPlayableIdentity =
+    candidate.mediaType === "MOVIE" ||
+    (candidate.episodeNumber !== null && candidate.episodeNumber !== undefined);
+  const readyForConfirmation = confidence >= 0.82 && hasPlayableIdentity && !hasConflict;
+  const status = hasConflict ? "CONFLICT" : readyForConfirmation ? "PENDING" : "NEEDS_REVIEW";
   const reason = hasConflict
     ? "Target path conflict"
-    : autoExecutable
-      ? "High confidence plan"
+    : readyForConfirmation
+      ? "Ready for confirmation"
       : "Needs manual confirmation";
 
   const plan = await prisma.organizerPlan.create({
     data: {
       downloadId,
       candidateId: candidate.id,
+      mediaType: candidate.mediaType,
       status,
       confidence,
-      autoExecutable,
+      autoExecutable: false,
       reason,
       metadata: metadata as Prisma.InputJsonValue,
       items: {
@@ -145,7 +152,7 @@ export async function createOrganizerPlanForDownload(downloadId: string) {
 
   await prisma.download.update({
     where: { id: download.id },
-    data: { archiveStatus: autoExecutable ? "ready_to_archive" : "planned" },
+    data: { archiveStatus: readyForConfirmation ? "ready_to_archive" : "planned" },
   });
 
   return plan;
@@ -226,7 +233,12 @@ async function findVideoFiles(sourceRoot: string, allowedRoots: string[]) {
 }
 
 function buildTargetPath(input: {
-  animeRoot: string;
+  mediaType: MediaType;
+  roots: {
+    animeLibraryDir: string;
+    moviesLibraryDir: string;
+    tvLibraryDir: string;
+  };
   title: string;
   year?: number;
   season: number;
@@ -248,8 +260,15 @@ function buildTargetPath(input: {
     .map((tag) => `[${sanitizeSegment(String(tag))}]`)
     .join("");
   const ext = path.extname(input.sourcePath);
+  if (input.mediaType === "MOVIE") {
+    const movieName = input.year ? `${title} (${input.year})` : title;
+    const filename = `${movieName} ${tags}${ext}`;
+    return path.join(input.roots.moviesLibraryDir, movieName, filename);
+  }
+  const root =
+    input.mediaType === "TV" ? input.roots.tvLibraryDir : input.roots.animeLibraryDir;
   const filename = `${title} - ${episode} - ${sanitizeSegment(input.episodeTitle)} ${tags}${ext}`;
-  return path.join(input.animeRoot, seriesDir, seasonDir, filename);
+  return path.join(root, seriesDir, seasonDir, filename);
 }
 
 async function upsertMediaRecords(plan: {
@@ -261,6 +280,7 @@ async function upsertMediaRecords(plan: {
     sizeBytes: bigint | null;
   }>;
   candidate: {
+    mediaType: MediaType;
     parsedTitle: string;
     season: number | null;
     episodeNumber: number | null;
@@ -279,6 +299,7 @@ async function upsertMediaRecords(plan: {
     backdropUrl?: string;
   } | null;
   const candidate = plan.candidate;
+  const mediaType = candidate?.mediaType ?? "ANIME";
   const title = cleanMediaTitle(
     metadata?.title || candidate?.group?.displayTitle || candidate?.parsedTitle || "Unknown",
   );
@@ -288,14 +309,14 @@ async function upsertMediaRecords(plan: {
       : null) ??
     (await prisma.mediaTitle.findFirst({
       where: {
-        type: "ANIME",
+        type: mediaType,
         primaryTitle: title,
         year: metadata?.year ?? null,
       },
     })) ??
     (await prisma.mediaTitle.create({
       data: {
-        type: "ANIME",
+        type: mediaType,
         primaryTitle: title,
         originalTitle: metadata?.originalTitle,
         year: metadata?.year,
@@ -322,7 +343,8 @@ async function upsertMediaRecords(plan: {
     create: { mediaId: media.id, number: seasonNumber },
     update: {},
   });
-  const episodeNumber = candidate?.episodeNumber ? Math.floor(candidate.episodeNumber) : 0;
+  const episodeNumber =
+    mediaType === "MOVIE" ? 1 : candidate?.episodeNumber ? Math.floor(candidate.episodeNumber) : 0;
   const episode = await prisma.episode.upsert({
     where: { seasonId_number: { seasonId: season.id, number: episodeNumber } },
     create: {

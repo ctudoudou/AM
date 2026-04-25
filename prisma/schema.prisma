@@ -164,6 +164,7 @@ model RssSource {
   id        String   @id @default(cuid())
   name      String
   url       String   @unique
+  mediaType MediaType @default(ANIME)
   enabled   Boolean  @default(true)
   items     RssItem[]
   createdAt DateTime @default(now())
@@ -174,6 +175,7 @@ model Subscription {
   id                  String   @id @default(cuid())
   candidateGroupId    String?
   candidateGroup      ReleaseCandidateGroup? @relation(fields: [candidateGroupId], references: [id], onDelete: SetNull)
+  mediaType           MediaType @default(ANIME)
   title               String
   preferredGroup      String?
   preferredResolution String?
@@ -208,6 +210,7 @@ model Download {
   downloadSpeed  BigInt?
   etaSeconds     Int?
   downloadDir    String?
+  aria2Files     Json?
   errorMessage   String?
   lastSyncedAt   DateTime?
   archiveStatus  String?
@@ -242,6 +245,7 @@ model RssItem {
   sourceId       String?
   source         RssSource?         @relation(fields: [sourceId], references: [id], onDelete: Cascade)
   origin         String             @default("rss")
+  mediaType      MediaType          @default(ANIME)
   guid           String?
   title          String
   link           String?
@@ -264,6 +268,7 @@ model RssItem {
 
 model ReleaseCandidateGroup {
   id              String             @id @default(cuid())
+  mediaType       MediaType          @default(ANIME)
   normalizedTitle String
   displayTitle    String
   season          Int?
@@ -277,8 +282,9 @@ model ReleaseCandidateGroup {
   createdAt       DateTime           @default(now())
   updatedAt       DateTime           @updatedAt
 
-  @@unique([normalizedTitle, season])
+  @@unique([mediaType, normalizedTitle, season])
   @@index([reviewRequired])
+  @@index([mediaType])
 }
 
 model ReleaseCandidate {
@@ -287,6 +293,7 @@ model ReleaseCandidate {
   group            ReleaseCandidateGroup? @relation(fields: [groupId], references: [id], onDelete: SetNull)
   rssItemId         String                 @unique
   rssItem           RssItem                @relation(fields: [rssItemId], references: [id], onDelete: Cascade)
+  mediaType         MediaType              @default(ANIME)
   rawTitle          String
   parsedTitle       String
   normalizedTitle   String
@@ -316,6 +323,7 @@ model ReleaseCandidate {
   @@index([status])
   @@index([normalizedTitle])
   @@index([variantKey])
+  @@index([mediaType])
 }
 
 model MetadataProviderResult {
@@ -348,6 +356,7 @@ model OrganizerPlan {
   candidate      ReleaseCandidate?   @relation(fields: [candidateId], references: [id], onDelete: SetNull)
   mediaTitleId   String?
   mediaTitle     MediaTitle?         @relation(fields: [mediaTitleId], references: [id], onDelete: SetNull)
+  mediaType      MediaType           @default(ANIME)
   status         OrganizerPlanStatus @default(PENDING)
   confidence     Float               @default(0)
   autoExecutable Boolean             @default(false)
@@ -361,6 +370,7 @@ model OrganizerPlan {
   @@index([downloadId])
   @@index([candidateId])
   @@index([status])
+  @@index([mediaType])
 }
 
 model OrganizerPlanItem {

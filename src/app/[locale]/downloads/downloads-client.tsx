@@ -7,19 +7,34 @@ import type { Locale } from "@/lib/i18n";
 
 type DownloadRecord = {
   id: string;
+  aria2Gid?: string | null;
+  sourceUrl: string;
   title?: string | null;
   status: string;
   progress: number;
   totalBytes?: string | null;
   completedBytes?: string | null;
   downloadSpeed?: string | null;
+  aria2Files?: Array<{
+    path?: string;
+    length?: string;
+    completedLength?: string;
+    selected?: string;
+  }> | null;
   targetPath?: string | null;
   errorMessage?: string | null;
   archiveStatus?: string | null;
   candidate?: {
+    mediaType: "ANIME" | "MOVIE" | "TV";
     parsedTitle: string;
     group?: { displayTitle: string } | null;
   } | null;
+  organizerPlans?: Array<{
+    id: string;
+    status: string;
+    reason?: string | null;
+    items: Array<{ targetPath: string; conflict: boolean }>;
+  }>;
 };
 
 export function DownloadsClient({ locale }: { locale: Locale }) {
@@ -106,7 +121,7 @@ export function DownloadsClient({ locale }: { locale: Locale }) {
         ))}
       </div>
       {error ? <div className="settings-alert">{error}</div> : null}
-      <div className="download-table">
+      <div className="download-table enhanced">
         {visibleDownloads.length === 0 ? (
           <p>{t.noDownloads}</p>
         ) : (
@@ -120,9 +135,22 @@ export function DownloadsClient({ locale }: { locale: Locale }) {
                     t.unknownTitle}
                 </h3>
                 <p>
-                  {download.archiveStatus ? `${download.archiveStatus} · ` : ""}
-                  {download.targetPath || download.errorMessage || download.status}
+                  {formatDownloadLine(download)}
                 </p>
+                {download.aria2Gid ? <small>gid {download.aria2Gid}</small> : null}
+                {download.aria2Files?.length ? (
+                  <div className="download-files">
+                    {download.aria2Files
+                      .filter((file) => file.path && file.path !== "[METADATA]")
+                      .slice(0, 3)
+                      .map((file) => (
+                        <span key={file.path}>
+                          {file.path} · {formatBytes(file.completedLength)} /{" "}
+                          {formatBytes(file.length)}
+                        </span>
+                      ))}
+                  </div>
+                ) : null}
               </div>
               <span>{download.status}</span>
               <strong>{Math.round(download.progress * 100)}%</strong>
@@ -133,6 +161,19 @@ export function DownloadsClient({ locale }: { locale: Locale }) {
       </div>
     </section>
   );
+}
+
+function formatDownloadLine(download: DownloadRecord) {
+  const latestPlan = download.organizerPlans?.[0];
+  return [
+    download.candidate?.mediaType,
+    download.archiveStatus,
+    latestPlan ? `plan ${latestPlan.status}` : undefined,
+    latestPlan?.items?.[0]?.targetPath || download.targetPath,
+    download.errorMessage,
+  ]
+    .filter(Boolean)
+    .join(" · ") || download.status;
 }
 
 function formatBytes(value?: string | null) {

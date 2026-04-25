@@ -55,6 +55,7 @@ export async function POST(request: Request) {
     const subscription = await prisma.subscription.create({
       data: {
         candidateGroupId: group.id,
+        mediaType: group.mediaType,
         title: group.displayTitle,
         preferredGroup: input.preferredGroup ?? selectedCandidate?.subtitleGroup,
         preferredResolution: input.preferredResolution ?? selectedCandidate?.resolution,

@@ -1,7 +1,7 @@
 import { XMLParser } from "fast-xml-parser";
 import { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/db";
-import { parseAnimeReleaseTitle } from "@/lib/anime-parser";
+import { parseMediaReleaseTitle } from "@/lib/media-parser";
 
 type FeedItem = {
   title: unknown;
@@ -70,6 +70,7 @@ export async function fetchRssSource(sourceId: string) {
       data: {
         source: { connect: { id: source.id } },
         origin: "rss",
+        mediaType: source.mediaType,
         guid,
         title,
         link,
@@ -99,9 +100,12 @@ export async function fetchAllRssSources() {
   return results;
 }
 
-export async function parseNewRssItems(limit = 100) {
+export async function parseNewRssItems(limit = 100, options: { ids?: string[] } = {}) {
   const items = await prisma.rssItem.findMany({
-    where: { status: "NEW" },
+    where: {
+      status: "NEW",
+      ...(options.ids ? { id: { in: options.ids } } : {}),
+    },
     orderBy: { createdAt: "asc" },
     take: limit,
   });
@@ -109,11 +113,12 @@ export async function parseNewRssItems(limit = 100) {
 
   for (const item of items) {
     try {
-      const parsed = parseAnimeReleaseTitle(item.title);
+      const parsed = parseMediaReleaseTitle(item.title, item.mediaType);
       await prisma.releaseCandidate.upsert({
         where: { rssItemId: item.id },
         create: {
           rssItem: { connect: { id: item.id } },
+          mediaType: parsed.mediaType,
           rawTitle: item.title,
           parsedTitle: parsed.parsedTitle,
           normalizedTitle: parsed.normalizedTitle,
@@ -133,8 +138,20 @@ export async function parseNewRssItems(limit = 100) {
           status: parsed.confidence >= 0.7 ? "READY" : "REVIEW",
         },
         update: {
+          mediaType: parsed.mediaType,
           parsedTitle: parsed.parsedTitle,
           normalizedTitle: parsed.normalizedTitle,
+          subtitleGroup: parsed.subtitleGroup,
+          episodeNumber: parsed.episodeNumber,
+          season: parsed.season,
+          resolution: parsed.resolution,
+          codec: parsed.codec,
+          audio: parsed.audio,
+          subtitleLanguage: parsed.subtitleLanguage,
+          releaseProfile: parsed.releaseProfile,
+          sourceKind: parsed.sourceKind,
+          variantKey: parsed.variantKey,
+          releaseTags: parsed.releaseTags,
           confidence: parsed.confidence,
           magnetUrl: item.magnetUrl,
           torrentUrl: item.torrentUrl,

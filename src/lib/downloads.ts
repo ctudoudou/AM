@@ -1,4 +1,5 @@
 import { prisma } from "@/lib/db";
+import { Prisma } from "@prisma/client";
 import {
   addMagnetToAria2,
   addTorrentToAria2,
@@ -84,6 +85,7 @@ export async function syncAria2Downloads() {
         downloadSpeed: BigInt(status.downloadSpeed ?? 0),
         progress,
         targetPath,
+        aria2Files: (status.files ?? []) as Prisma.InputJsonValue,
         errorMessage: status.errorMessage,
         lastSyncedAt: new Date(),
       },

@@ -9,9 +9,13 @@ const connectionString =
 const boss = new PgBoss({ connectionString });
 
 async function main() {
+  boss.on("error", (error) => {
+    console.error(error);
+  });
+
   await boss.start();
 
-  for (const name of [
+  const queues = [
     "rss.fetchAll",
     "rss.parseItems",
     "ai.groupCandidates",
@@ -19,7 +23,13 @@ async function main() {
     "downloads.syncAria2",
     "organizer.inspectCompletedDownloads",
     "library.scan",
-  ] as JobName[]) {
+  ] as JobName[];
+
+  for (const name of queues) {
+    await boss.createQueue(name);
+  }
+
+  for (const name of queues) {
     await boss.work(name, async () => runJob(name));
   }
 

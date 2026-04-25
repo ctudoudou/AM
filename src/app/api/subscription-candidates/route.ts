@@ -13,6 +13,7 @@ export async function GET() {
           orderBy: [{ episodeNumber: "asc" }, { createdAt: "desc" }],
           select: {
             id: true,
+            mediaType: true,
             rawTitle: true,
             episodeNumber: true,
             subtitleGroup: true,

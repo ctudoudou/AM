@@ -14,6 +14,7 @@ const envSchema = z.object({
   ARIA2_RPC_SECRET: z.string().default(""),
   OPENROUTER_API_KEY: z.string().default(""),
   OPENROUTER_MODEL: z.string().default("glm5.1"),
+  OMDB_API_KEY: z.string().default(""),
 });
 
 export const serverEnv = envSchema.parse(process.env);

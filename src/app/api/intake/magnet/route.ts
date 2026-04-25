@@ -5,6 +5,7 @@ import { createManualMagnetIntake } from "@/lib/intake";
 const magnetSchema = z.object({
   title: z.string().optional(),
   magnetUrl: z.string().startsWith("magnet:"),
+  mediaType: z.enum(["ANIME", "MOVIE", "TV", "AUTO"]),
 });
 
 export const dynamic = "force-dynamic";

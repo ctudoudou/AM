@@ -5,15 +5,19 @@ import { prisma } from "@/lib/db";
 import { parseNewRssItems } from "@/lib/rss-fetcher";
 import { groupUngroupedCandidates } from "@/lib/candidate-grouper";
 import { getAppSettings } from "@/lib/settings";
+import { resolveMediaType, type IntakeMediaType } from "@/lib/media-parser";
 
 export async function createManualMagnetIntake(input: {
   title?: string;
   magnetUrl: string;
+  mediaType: IntakeMediaType;
 }) {
   const title = input.title?.trim() || input.magnetUrl;
+  const mediaType = resolveMediaType(title, input.mediaType);
   const item = await prisma.rssItem.create({
     data: {
       origin: "manual",
+      mediaType,
       title,
       link: input.magnetUrl,
       magnetUrl: input.magnetUrl,
@@ -21,13 +25,14 @@ export async function createManualMagnetIntake(input: {
     },
   });
 
-  await parseNewRssItems(10);
-  await groupUngroupedCandidates(10);
+  await parseNewRssItems(1, { ids: [item.id] });
+  await groupCreatedCandidate(item.id);
   return item;
 }
 
 export async function createManualTorrentIntake(input: {
   title: string;
+  mediaType: IntakeMediaType;
   fileName: string;
   bytes: ArrayBuffer;
 }) {
@@ -47,6 +52,7 @@ export async function createManualTorrentIntake(input: {
   const item = await prisma.rssItem.create({
     data: {
       origin: "manual",
+      mediaType: resolveMediaType(input.title || input.fileName, input.mediaType),
       title: input.title || input.fileName,
       torrentFilePath,
       raw: {
@@ -57,9 +63,19 @@ export async function createManualTorrentIntake(input: {
     },
   });
 
-  await parseNewRssItems(10);
-  await groupUngroupedCandidates(10);
+  await parseNewRssItems(1, { ids: [item.id] });
+  await groupCreatedCandidate(item.id);
   return item;
+}
+
+async function groupCreatedCandidate(rssItemId: string) {
+  const candidate = await prisma.releaseCandidate.findUnique({
+    where: { rssItemId },
+    select: { id: true },
+  });
+  if (candidate) {
+    await groupUngroupedCandidates(1, { candidateIds: [candidate.id] });
+  }
 }
 
 function assertInsideRoot(candidatePath: string, rootPath: string) {

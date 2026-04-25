@@ -7,6 +7,7 @@ import type { Locale } from "@/lib/i18n";
 
 type OrganizerPlan = {
   id: string;
+  mediaType: "ANIME" | "MOVIE" | "TV";
   status: string;
   confidence: number;
   reason?: string | null;
@@ -22,6 +23,11 @@ type OrganizerPlan = {
     conflict: boolean;
     conflictReason?: string | null;
   }>;
+  metadata?: {
+    title?: string;
+    posterUrl?: string;
+    year?: number;
+  } | null;
 };
 
 export function OrganizerClient({ locale }: { locale: Locale }) {
@@ -111,7 +117,7 @@ export function OrganizerClient({ locale }: { locale: Locale }) {
         </button>
       </div>
       <div className="filter-tabs">
-        {["ALL", "PENDING", "NEEDS_REVIEW", "CONFLICT", "AUTO_ARCHIVED", "EXECUTED"].map((status) => (
+        {["ALL", "PENDING", "NEEDS_REVIEW", "CONFLICT", "FAILED", "REJECTED", "EXECUTED"].map((status) => (
           <button
             className={filter === status ? "active" : ""}
             key={status}
@@ -130,10 +136,20 @@ export function OrganizerClient({ locale }: { locale: Locale }) {
           visiblePlans.map((plan) => (
             <article key={plan.id}>
               <div className="candidate-heading">
+                {plan.metadata?.posterUrl ? (
+                  // eslint-disable-next-line @next/next/no-img-element
+                  <img className="organizer-poster" src={plan.metadata.posterUrl} alt="" />
+                ) : null}
                 <div>
-                  <h2>{plan.candidate?.group?.displayTitle || plan.candidate?.parsedTitle || t.unknownTitle}</h2>
+                  <h2>
+                    {plan.metadata?.title ||
+                      plan.candidate?.group?.displayTitle ||
+                      plan.candidate?.parsedTitle ||
+                      t.unknownTitle}
+                  </h2>
                   <p>
-                    {plan.status} · {Math.round(plan.confidence * 100)}% ·{" "}
+                    {formatMediaType(plan.mediaType, t)} · {plan.status} ·{" "}
+                    {Math.round(plan.confidence * 100)}% ·{" "}
                     {plan.reason || "-"}
                   </p>
                 </div>
@@ -163,4 +179,17 @@ export function OrganizerClient({ locale }: { locale: Locale }) {
       </div>
     </section>
   );
+}
+
+function formatMediaType(
+  value: OrganizerPlan["mediaType"],
+  t: ReturnType<typeof getMessages>,
+) {
+  if (value === "ANIME") {
+    return t.anime;
+  }
+  if (value === "MOVIE") {
+    return t.movies;
+  }
+  return t.tv;
 }

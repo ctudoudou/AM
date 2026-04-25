@@ -9,11 +9,16 @@ type RssSource = {
   id: string;
   name: string;
   url: string;
+  mediaType: MediaType;
   enabled: boolean;
 };
 
+type MediaType = "ANIME" | "MOVIE" | "TV";
+type IntakeMediaType = MediaType | "AUTO" | "";
+
 type Candidate = {
   id: string;
+  mediaType: MediaType;
   rawTitle: string;
   episodeNumber?: number | null;
   subtitleGroup?: string | null;
@@ -29,6 +34,7 @@ type Candidate = {
 
 type CandidateGroup = {
   id: string;
+  mediaType: MediaType;
   displayTitle: string;
   normalizedTitle: string;
   confidence: number;
@@ -44,6 +50,7 @@ type CandidateGroup = {
 type Subscription = {
   id: string;
   candidateGroupId?: string | null;
+  mediaType: MediaType;
   title: string;
   preferredGroup?: string | null;
   preferredResolution?: string | null;
@@ -65,10 +72,16 @@ export function SubscriptionsClient({ locale }: { locale: Locale }) {
   const [groups, setGroups] = useState<CandidateGroup[]>([]);
   const [subscriptions, setSubscriptions] = useState<Subscription[]>([]);
   const [rssSources, setRssSources] = useState<RssSource[]>([]);
-  const [rssDraft, setRssDraft] = useState({ name: "", url: "" });
+  const [rssDraft, setRssDraft] = useState<{ name: string; url: string; mediaType: MediaType }>({
+    name: "",
+    url: "",
+    mediaType: "ANIME",
+  });
   const [magnetUrl, setMagnetUrl] = useState("");
   const [magnetTitle, setMagnetTitle] = useState("");
+  const [magnetMediaType, setMagnetMediaType] = useState<IntakeMediaType>("");
   const [torrentTitle, setTorrentTitle] = useState("");
+  const [torrentMediaType, setTorrentMediaType] = useState<IntakeMediaType>("");
   const [torrentFile, setTorrentFile] = useState<File | null>(null);
   const [status, setStatus] = useState("");
   const [error, setError] = useState("");
@@ -140,7 +153,7 @@ export function SubscriptionsClient({ locale }: { locale: Locale }) {
       return;
     }
 
-    setRssDraft({ name: "", url: "" });
+    setRssDraft({ name: "", url: "", mediaType: "ANIME" });
     setStatus(t.rssSourceAdded);
     await load();
   }
@@ -168,10 +181,14 @@ export function SubscriptionsClient({ locale }: { locale: Locale }) {
   async function addMagnet() {
     setStatus("");
     setError("");
+    if (!magnetMediaType) {
+      setError(t.mediaTypeRequired);
+      return;
+    }
     const response = await fetch("/api/intake/magnet", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ title: magnetTitle, magnetUrl }),
+      body: JSON.stringify({ title: magnetTitle, magnetUrl, mediaType: magnetMediaType }),
     });
     if (!response.ok) {
       const body = await response.json().catch(() => null);
@@ -180,6 +197,7 @@ export function SubscriptionsClient({ locale }: { locale: Locale }) {
     }
     setMagnetTitle("");
     setMagnetUrl("");
+    setMagnetMediaType("");
     setStatus(t.manualIntakeCreated);
     await load();
   }
@@ -189,8 +207,13 @@ export function SubscriptionsClient({ locale }: { locale: Locale }) {
       setError(t.torrentFileRequired);
       return;
     }
+    if (!torrentMediaType) {
+      setError(t.mediaTypeRequired);
+      return;
+    }
     const form = new FormData();
     form.set("title", torrentTitle);
+    form.set("mediaType", torrentMediaType);
     form.set("file", torrentFile);
     const response = await fetch("/api/intake/torrent", {
       method: "POST",
@@ -202,6 +225,7 @@ export function SubscriptionsClient({ locale }: { locale: Locale }) {
       return;
     }
     setTorrentTitle("");
+    setTorrentMediaType("");
     setTorrentFile(null);
     setStatus(t.manualIntakeCreated);
     await load();
@@ -304,6 +328,19 @@ export function SubscriptionsClient({ locale }: { locale: Locale }) {
             placeholder={t.rssUrl}
             value={rssDraft.url}
           />
+          <select
+            aria-label={t.mediaType}
+            onChange={(event) =>
+              setRssDraft({ ...rssDraft, mediaType: event.target.value as MediaType })
+            }
+            value={rssDraft.mediaType}
+          >
+            {mediaTypeOptions.map((option) => (
+              <option key={option} value={option}>
+                {formatMediaType(option, t)}
+              </option>
+            ))}
+          </select>
           <button onClick={addRssSource} type="button">
             <Plus size={14} />
             {t.add}
@@ -324,7 +361,9 @@ export function SubscriptionsClient({ locale }: { locale: Locale }) {
                 </button>
                 <div>
                   <h3>{source.name}</h3>
-                  <p>{source.url}</p>
+                  <p>
+                    {formatMediaType(source.mediaType, t)} · {source.url}
+                  </p>
                 </div>
                 <button
                   className="icon-button"
@@ -357,6 +396,18 @@ export function SubscriptionsClient({ locale }: { locale: Locale }) {
           </div>
         </div>
         <div className="rss-draft">
+          <select
+            aria-label={t.mediaType}
+            onChange={(event) => setMagnetMediaType(event.target.value as IntakeMediaType)}
+            value={magnetMediaType}
+          >
+            <option value="">{t.selectMediaType}</option>
+            {intakeMediaTypeOptions.map((option) => (
+              <option key={option} value={option}>
+                {formatMediaType(option, t)}
+              </option>
+            ))}
+          </select>
           <input
             onChange={(event) => setMagnetTitle(event.target.value)}
             placeholder={t.manualTitle}
@@ -367,12 +418,24 @@ export function SubscriptionsClient({ locale }: { locale: Locale }) {
             placeholder={t.magnetUrl}
             value={magnetUrl}
           />
-          <button onClick={addMagnet} type="button">
+          <button disabled={!magnetMediaType} onClick={addMagnet} type="button">
             <Plus size={14} />
             {t.addMagnet}
           </button>
         </div>
         <div className="rss-draft">
+          <select
+            aria-label={t.mediaType}
+            onChange={(event) => setTorrentMediaType(event.target.value as IntakeMediaType)}
+            value={torrentMediaType}
+          >
+            <option value="">{t.selectMediaType}</option>
+            {intakeMediaTypeOptions.map((option) => (
+              <option key={option} value={option}>
+                {formatMediaType(option, t)}
+              </option>
+            ))}
+          </select>
           <input
             onChange={(event) => setTorrentTitle(event.target.value)}
             placeholder={t.manualTitle}
@@ -383,7 +446,7 @@ export function SubscriptionsClient({ locale }: { locale: Locale }) {
             onChange={(event) => setTorrentFile(event.target.files?.[0] ?? null)}
             type="file"
           />
-          <button onClick={addTorrent} type="button">
+          <button disabled={!torrentMediaType} onClick={addTorrent} type="button">
             <Plus size={14} />
             {t.addTorrent}
           </button>
@@ -408,7 +471,10 @@ export function SubscriptionsClient({ locale }: { locale: Locale }) {
               <article key={subscription.id}>
                 <div>
                   <h3>{subscription.title}</h3>
-                  <p>{formatSubscriptionPolicy(subscription)}</p>
+                  <p>
+                    {formatMediaType(subscription.mediaType, t)} ·{" "}
+                    {formatSubscriptionPolicy(subscription)}
+                  </p>
                 </div>
                 <button
                   className="danger-button"
@@ -439,6 +505,7 @@ export function SubscriptionsClient({ locale }: { locale: Locale }) {
                   <div>
                     <h2>{group.displayTitle}</h2>
                     <p>
+                      {formatMediaType(group.mediaType, t)} ·{" "}
                       {group._count.candidates} {t.candidates} ·{" "}
                       {Math.round(group.confidence * 100)}% ·{" "}
                       {group.reviewRequired ? t.needsReview : t.ready}
@@ -573,4 +640,28 @@ function candidateMatchesSubscription(candidate: Candidate, subscription: Subscr
   ] as const;
 
   return checks.every(([preferred, actual]) => !preferred || preferred === actual);
+}
+
+const mediaTypeOptions: MediaType[] = ["ANIME", "MOVIE", "TV"];
+const intakeMediaTypeOptions: Array<Exclude<IntakeMediaType, "">> = [
+  "ANIME",
+  "MOVIE",
+  "TV",
+  "AUTO",
+];
+
+function formatMediaType(
+  value: MediaType | "AUTO",
+  t: ReturnType<typeof getMessages>,
+) {
+  if (value === "ANIME") {
+    return t.anime;
+  }
+  if (value === "MOVIE") {
+    return t.movies;
+  }
+  if (value === "TV") {
+    return t.tv;
+  }
+  return t.autoDetect;
 }

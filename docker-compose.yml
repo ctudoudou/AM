@@ -31,18 +31,20 @@ services:
       - "6888:6888/udp"
     volumes:
       - ${KURA_DATA_ROOT:-./data}:/data
-      - ${KURA_DATA_ROOT:-./data}:${KURA_LOCAL_DATA_ROOT:-/data}
       - ${KURA_DATA_ROOT:-./data}/downloads:/downloads
       - aria2-config:/config
 
   web:
     build:
       context: .
+      target: runner
     container_name: kura-web
     restart: unless-stopped
     depends_on:
       postgres:
         condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
     environment:
       DATABASE_URL: postgresql://kura:kura@postgres:5432/kura?schema=public
       DATA_ROOT: /data
@@ -63,6 +65,34 @@ services:
     volumes:
       - ${KURA_DATA_ROOT:-./data}:/data
 
+  migrate:
+    build:
+      context: .
+      target: worker
+    container_name: kura-migrate
+    restart: "no"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    command: ["npm", "run", "prisma:migrate:deploy"]
+    environment:
+      DATABASE_URL: postgresql://kura:kura@postgres:5432/kura?schema=public
+      DATA_ROOT: /data
+      DOWNLOADS_DIR: /data/downloads
+      STAGING_DIR: /data/staging
+      ANIME_LIBRARY_DIR: /data/library/anime
+      MOVIES_LIBRARY_DIR: /data/library/movies
+      TV_LIBRARY_DIR: /data/library/tv
+      METADATA_DIR: /data/metadata
+      TRANSCODES_DIR: /data/transcodes
+      ARIA2_RPC_URL: http://aria2:6800/jsonrpc
+      ARIA2_RPC_SECRET: ${ARIA2_RPC_SECRET:-}
+      OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
+      OPENROUTER_MODEL: ${OPENROUTER_MODEL:-glm5.1}
+      NEXT_PUBLIC_DEFAULT_LOCALE: ${NEXT_PUBLIC_DEFAULT_LOCALE:-zh-Hans}
+    volumes:
+      - ${KURA_DATA_ROOT:-./data}:/data
+
   worker:
     build:
       context: .
@@ -74,6 +104,8 @@ services:
         condition: service_healthy
       aria2:
         condition: service_started
+      migrate:
+        condition: service_completed_successfully
     command: ["npm", "run", "worker"]
     environment:
       DATABASE_URL: postgresql://kura:kura@postgres:5432/kura?schema=public

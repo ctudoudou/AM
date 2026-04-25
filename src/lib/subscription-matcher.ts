@@ -31,6 +31,7 @@ export async function matchSubscriptionsToCandidates() {
   const subscriptions = await prisma.subscription.findMany({
     where: {
       enabled: true,
+      mediaType: { in: ["ANIME", "TV"] },
       candidateGroupId: { not: null },
     },
   });
