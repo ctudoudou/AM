@@ -1,0 +1,97 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: kura-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: kura
+      POSTGRES_USER: kura
+      POSTGRES_PASSWORD: kura
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U kura -d kura"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  aria2:
+    image: p3terx/aria2-pro:latest
+    container_name: kura-aria2
+    restart: unless-stopped
+    environment:
+      RPC_SECRET: ${ARIA2_RPC_SECRET:-}
+      RPC_PORT: 6800
+      LISTEN_PORT: 6888
+    ports:
+      - "6800:6800"
+      - "6888:6888"
+      - "6888:6888/udp"
+    volumes:
+      - ${KURA_DATA_ROOT:-./data}:/data
+      - ${KURA_DATA_ROOT:-./data}/downloads:/downloads
+      - aria2-config:/config
+
+  web:
+    build:
+      context: .
+    container_name: kura-web
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql://kura:kura@postgres:5432/kura?schema=public
+      DATA_ROOT: /data
+      DOWNLOADS_DIR: /data/downloads
+      STAGING_DIR: /data/staging
+      ANIME_LIBRARY_DIR: /data/library/anime
+      MOVIES_LIBRARY_DIR: /data/library/movies
+      TV_LIBRARY_DIR: /data/library/tv
+      METADATA_DIR: /data/metadata
+      TRANSCODES_DIR: /data/transcodes
+      ARIA2_RPC_URL: http://aria2:6800/jsonrpc
+      ARIA2_RPC_SECRET: ${ARIA2_RPC_SECRET:-}
+      OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
+      OPENROUTER_MODEL: ${OPENROUTER_MODEL:-glm5.1}
+      NEXT_PUBLIC_DEFAULT_LOCALE: ${NEXT_PUBLIC_DEFAULT_LOCALE:-zh-Hans}
+    ports:
+      - "3000:3000"
+    volumes:
+      - ${KURA_DATA_ROOT:-./data}:/data
+
+  worker:
+    build:
+      context: .
+      target: worker
+    container_name: kura-worker
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      aria2:
+        condition: service_started
+    command: ["npm", "run", "worker"]
+    environment:
+      DATABASE_URL: postgresql://kura:kura@postgres:5432/kura?schema=public
+      DATA_ROOT: /data
+      DOWNLOADS_DIR: /data/downloads
+      STAGING_DIR: /data/staging
+      ANIME_LIBRARY_DIR: /data/library/anime
+      MOVIES_LIBRARY_DIR: /data/library/movies
+      TV_LIBRARY_DIR: /data/library/tv
+      METADATA_DIR: /data/metadata
+      TRANSCODES_DIR: /data/transcodes
+      ARIA2_RPC_URL: http://aria2:6800/jsonrpc
+      ARIA2_RPC_SECRET: ${ARIA2_RPC_SECRET:-}
+      OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
+      OPENROUTER_MODEL: ${OPENROUTER_MODEL:-glm5.1}
+      NEXT_PUBLIC_DEFAULT_LOCALE: ${NEXT_PUBLIC_DEFAULT_LOCALE:-zh-Hans}
+    volumes:
+      - ${KURA_DATA_ROOT:-./data}:/data
+
+volumes:
+  postgres-data:
+  aria2-config:

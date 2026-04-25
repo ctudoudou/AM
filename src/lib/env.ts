@@ -1,0 +1,43 @@
+import path from "node:path";
+import { z } from "zod";
+
+const envSchema = z.object({
+  DATA_ROOT: z.string().default("/data"),
+  DOWNLOADS_DIR: z.string().default("/data/downloads"),
+  STAGING_DIR: z.string().default("/data/staging"),
+  ANIME_LIBRARY_DIR: z.string().default("/data/library/anime"),
+  MOVIES_LIBRARY_DIR: z.string().default("/data/library/movies"),
+  TV_LIBRARY_DIR: z.string().default("/data/library/tv"),
+  METADATA_DIR: z.string().default("/data/metadata"),
+  TRANSCODES_DIR: z.string().default("/data/transcodes"),
+  ARIA2_RPC_URL: z.string().url().default("http://localhost:6800/jsonrpc"),
+  ARIA2_RPC_SECRET: z.string().default(""),
+  OPENROUTER_API_KEY: z.string().default(""),
+  OPENROUTER_MODEL: z.string().default("glm5.1"),
+});
+
+export const serverEnv = envSchema.parse(process.env);
+
+export const allowedRoots = [
+  serverEnv.DATA_ROOT,
+  serverEnv.DOWNLOADS_DIR,
+  serverEnv.STAGING_DIR,
+  serverEnv.ANIME_LIBRARY_DIR,
+  serverEnv.MOVIES_LIBRARY_DIR,
+  serverEnv.TV_LIBRARY_DIR,
+  serverEnv.METADATA_DIR,
+  serverEnv.TRANSCODES_DIR,
+].map((root) => path.resolve(root));
+
+export function assertInsideAllowedRoots(candidatePath: string): string {
+  const resolved = path.resolve(candidatePath);
+  const isAllowed = allowedRoots.some(
+    (root) => resolved === root || resolved.startsWith(`${root}${path.sep}`),
+  );
+
+  if (!isAllowed) {
+    throw new Error(`Path is outside configured Kura roots: ${candidatePath}`);
+  }
+
+  return resolved;
+}

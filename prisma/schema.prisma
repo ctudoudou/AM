@@ -1,0 +1,381 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+enum MediaType {
+  ANIME
+  MOVIE
+  TV
+}
+
+enum DownloadStatus {
+  WAITING
+  ACTIVE
+  PAUSED
+  COMPLETED
+  FAILED
+}
+
+enum RssItemStatus {
+  NEW
+  PARSED
+  GROUPED
+  FAILED
+}
+
+enum CandidateStatus {
+  NEW
+  REVIEW
+  READY
+  SUBSCRIBED
+  DOWNLOADED
+  IGNORED
+}
+
+enum OrganizerPlanStatus {
+  PENDING
+  NEEDS_REVIEW
+  AUTO_ARCHIVED
+  EXECUTED
+  REJECTED
+  CONFLICT
+  FAILED
+}
+
+enum OrganizerAction {
+  MOVE
+}
+
+enum PlaybackMode {
+  DIRECT
+  HLS_REMUX
+  HLS_TRANSCODE
+}
+
+enum TranscodeStatus {
+  NOT_REQUIRED
+  PENDING
+  PROCESSING
+  READY
+  FAILED
+}
+
+model MediaTitle {
+  id           String         @id @default(cuid())
+  type         MediaType
+  primaryTitle String
+  originalTitle String?
+  year         Int?
+  synopsis     String?
+  posterUrl    String?
+  backdropUrl  String?
+  rating       Float?
+  createdAt    DateTime       @default(now())
+  updatedAt    DateTime       @updatedAt
+  seasons      Season[]
+  aliases      TitleAlias[]
+  metadata     MetadataLink[]
+  organizerPlans OrganizerPlan[]
+}
+
+model TitleAlias {
+  id        String     @id @default(cuid())
+  title     String
+  locale    String?
+  mediaId   String
+  media     MediaTitle @relation(fields: [mediaId], references: [id], onDelete: Cascade)
+  createdAt DateTime   @default(now())
+
+  @@index([title])
+}
+
+model Season {
+  id        String      @id @default(cuid())
+  mediaId   String
+  media     MediaTitle  @relation(fields: [mediaId], references: [id], onDelete: Cascade)
+  number    Int
+  title     String?
+  episodes  Episode[]
+  createdAt DateTime    @default(now())
+  updatedAt DateTime    @updatedAt
+
+  @@unique([mediaId, number])
+}
+
+model Episode {
+  id          String          @id @default(cuid())
+  seasonId    String
+  season      Season          @relation(fields: [seasonId], references: [id], onDelete: Cascade)
+  number      Int
+  title       String?
+  overview    String?
+  airDate     DateTime?
+  files       MediaFile[]
+  progress    WatchProgress[]
+  createdAt   DateTime        @default(now())
+  updatedAt   DateTime        @updatedAt
+
+  @@unique([seasonId, number])
+}
+
+model MediaFile {
+  id              String    @id @default(cuid())
+  episodeId       String?
+  episode         Episode?  @relation(fields: [episodeId], references: [id], onDelete: SetNull)
+  relativePath    String
+  absolutePath    String
+  originalName    String
+  sizeBytes       BigInt?
+  videoCodec      String?
+  audioCodec      String?
+  resolution      String?
+  sourceResolution String?
+  playbackMode    PlaybackMode?
+  transcodeStatus TranscodeStatus @default(PENDING)
+  transcodePath   String?
+  transcodeError  String?
+  transcodedAt    DateTime?
+  subtitleGroup   String?
+  checksum        String?
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  @@index([relativePath])
+  @@index([transcodeStatus])
+}
+
+model WatchProgress {
+  id          String   @id @default(cuid())
+  episodeId   String
+  episode     Episode  @relation(fields: [episodeId], references: [id], onDelete: Cascade)
+  positionSec Int
+  durationSec Int?
+  completed   Boolean  @default(false)
+  updatedAt   DateTime @updatedAt
+
+  @@unique([episodeId])
+}
+
+model RssSource {
+  id        String   @id @default(cuid())
+  name      String
+  url       String   @unique
+  enabled   Boolean  @default(true)
+  items     RssItem[]
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model Subscription {
+  id                  String   @id @default(cuid())
+  candidateGroupId    String?
+  candidateGroup      ReleaseCandidateGroup? @relation(fields: [candidateGroupId], references: [id], onDelete: SetNull)
+  title               String
+  preferredGroup      String?
+  preferredResolution String?
+  preferredCodec      String?
+  preferredAudio      String?
+  preferredSubtitleLanguage String?
+  preferredReleaseProfile String?
+  preferredSourceKind String?
+  preferredVariantKey String?
+  fallbackPolicy      String   @default("manual_review")
+  frequencyMinutes    Int      @default(30)
+  autoDownload         Boolean  @default(false)
+  enabled             Boolean  @default(true)
+  createdAt           DateTime @default(now())
+  updatedAt           DateTime @updatedAt
+
+  @@index([candidateGroupId])
+}
+
+model Download {
+  id             String            @id @default(cuid())
+  candidateId    String?
+  candidate      ReleaseCandidate? @relation(fields: [candidateId], references: [id], onDelete: SetNull)
+  aria2Gid       String?           @unique
+  status         DownloadStatus    @default(WAITING)
+  sourceUrl      String
+  targetPath     String?
+  title          String?
+  progress       Float             @default(0)
+  totalBytes     BigInt?
+  completedBytes BigInt?
+  downloadSpeed  BigInt?
+  etaSeconds     Int?
+  downloadDir    String?
+  errorMessage   String?
+  lastSyncedAt   DateTime?
+  archiveStatus  String?
+  organizerPlans OrganizerPlan[]
+  createdAt      DateTime          @default(now())
+  updatedAt      DateTime          @updatedAt
+
+  @@index([candidateId])
+  @@index([status])
+}
+
+model MetadataLink {
+  id        String     @id @default(cuid())
+  provider  String
+  externalId String
+  mediaId   String
+  media     MediaTitle @relation(fields: [mediaId], references: [id], onDelete: Cascade)
+  createdAt DateTime   @default(now())
+
+  @@unique([provider, externalId])
+}
+
+model AppSetting {
+  key       String   @id
+  value     Json
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model RssItem {
+  id             String             @id @default(cuid())
+  sourceId       String?
+  source         RssSource?         @relation(fields: [sourceId], references: [id], onDelete: Cascade)
+  origin         String             @default("rss")
+  guid           String?
+  title          String
+  link           String?
+  magnetUrl      String?
+  torrentUrl     String?
+  torrentFilePath String?
+  publishedAt    DateTime?
+  raw            Json
+  status         RssItemStatus      @default(NEW)
+  parseError     String?
+  candidate      ReleaseCandidate?
+  createdAt      DateTime           @default(now())
+  updatedAt      DateTime           @updatedAt
+
+  @@unique([sourceId, guid])
+  @@unique([sourceId, link])
+  @@index([status])
+  @@index([publishedAt])
+}
+
+model ReleaseCandidateGroup {
+  id              String             @id @default(cuid())
+  normalizedTitle String
+  displayTitle    String
+  season          Int?
+  confidence      Float              @default(0)
+  reviewRequired  Boolean            @default(true)
+  aiSummary       String?
+  aliases         Json?
+  candidates      ReleaseCandidate[]
+  subscriptions   Subscription[]
+  metadataResults MetadataProviderResult[]
+  createdAt       DateTime           @default(now())
+  updatedAt       DateTime           @updatedAt
+
+  @@unique([normalizedTitle, season])
+  @@index([reviewRequired])
+}
+
+model ReleaseCandidate {
+  id               String                 @id @default(cuid())
+  groupId          String?
+  group            ReleaseCandidateGroup? @relation(fields: [groupId], references: [id], onDelete: SetNull)
+  rssItemId         String                 @unique
+  rssItem           RssItem                @relation(fields: [rssItemId], references: [id], onDelete: Cascade)
+  rawTitle          String
+  parsedTitle       String
+  normalizedTitle   String
+  subtitleGroup     String?
+  episodeNumber     Float?
+  season            Int?
+  resolution        String?
+  codec             String?
+  audio             String?
+  subtitleLanguage  String?
+  releaseProfile    String?
+  sourceKind        String?
+  variantKey        String?
+  releaseTags       Json?
+  magnetUrl         String?
+  torrentUrl        String?
+  torrentFilePath   String?
+  sourceUrl         String?
+  confidence        Float                  @default(0)
+  status            CandidateStatus        @default(NEW)
+  downloads         Download[]
+  organizerPlans    OrganizerPlan[]
+  createdAt         DateTime               @default(now())
+  updatedAt         DateTime               @updatedAt
+
+  @@index([groupId])
+  @@index([status])
+  @@index([normalizedTitle])
+  @@index([variantKey])
+}
+
+model MetadataProviderResult {
+  id                String                 @id @default(cuid())
+  candidateGroupId  String?
+  candidateGroup    ReleaseCandidateGroup? @relation(fields: [candidateGroupId], references: [id], onDelete: Cascade)
+  provider          String
+  externalId        String
+  title             String
+  originalTitle     String?
+  year              Int?
+  synopsis          String?
+  posterUrl         String?
+  backdropUrl       String?
+  language          String?
+  score             Float                  @default(0)
+  raw               Json
+  createdAt         DateTime               @default(now())
+  updatedAt         DateTime               @updatedAt
+
+  @@unique([provider, externalId, candidateGroupId])
+  @@index([candidateGroupId])
+}
+
+model OrganizerPlan {
+  id             String              @id @default(cuid())
+  downloadId     String?
+  download       Download?           @relation(fields: [downloadId], references: [id], onDelete: SetNull)
+  candidateId    String?
+  candidate      ReleaseCandidate?   @relation(fields: [candidateId], references: [id], onDelete: SetNull)
+  mediaTitleId   String?
+  mediaTitle     MediaTitle?         @relation(fields: [mediaTitleId], references: [id], onDelete: SetNull)
+  status         OrganizerPlanStatus @default(PENDING)
+  confidence     Float               @default(0)
+  autoExecutable Boolean             @default(false)
+  reason         String?
+  metadata       Json?
+  executedAt     DateTime?
+  createdAt      DateTime            @default(now())
+  updatedAt      DateTime            @updatedAt
+  items          OrganizerPlanItem[]
+
+  @@index([downloadId])
+  @@index([candidateId])
+  @@index([status])
+}
+
+model OrganizerPlanItem {
+  id             String          @id @default(cuid())
+  planId         String
+  plan           OrganizerPlan   @relation(fields: [planId], references: [id], onDelete: Cascade)
+  sourcePath     String
+  targetPath     String
+  originalName   String
+  fileType       String
+  action         OrganizerAction @default(MOVE)
+  sizeBytes      BigInt?
+  conflict       Boolean         @default(false)
+  conflictReason String?
+  createdAt      DateTime        @default(now())
+
+  @@index([planId])
+}
