@@ -114,6 +114,8 @@ export const en = {
   animeLibrary: "Anime library",
   animeLibraryDescription: "Archived anime appears here for direct playback or preserved-quality HLS preparation.",
   animeLibraryLoadError: "Unable to load anime library.",
+  refreshMetadata: "Refresh art",
+  metadataRefreshError: "Unable to refresh cover art.",
   titles: "titles",
   seasons: "seasons",
   episodes: "episodes",

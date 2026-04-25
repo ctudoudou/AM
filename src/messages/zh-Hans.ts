@@ -114,6 +114,8 @@ export const zhHans = {
   animeLibrary: "动漫库",
   animeLibraryDescription: "已归档动画会出现在这里，可直接播放或准备保真 HLS。",
   animeLibraryLoadError: "无法加载动漫库。",
+  refreshMetadata: "刷新封面",
+  metadataRefreshError: "刷新封面失败。",
   titles: "部作品",
   seasons: "季",
   episodes: "集",

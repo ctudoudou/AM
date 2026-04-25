@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Loader2, Play, Search } from "lucide-react";
+import { Image as ImageIcon, Loader2, Play, Search } from "lucide-react";
 import { getMessages } from "@/messages";
 import type { Locale } from "@/lib/i18n";
 
@@ -29,6 +29,7 @@ export function AnimeLibraryClient({ locale }: { locale: Locale }) {
   const [titles, setTitles] = useState<AnimeTitle[]>([]);
   const [query, setQuery] = useState("");
   const [loading, setLoading] = useState(true);
+  const [refreshingMetadata, setRefreshingMetadata] = useState(false);
   const [error, setError] = useState("");
   const visibleTitles = useMemo(() => {
     const needle = query.trim().toLowerCase();
@@ -65,6 +66,25 @@ export function AnimeLibraryClient({ locale }: { locale: Locale }) {
     return () => window.clearTimeout(timeout);
   }, [load]);
 
+  async function refreshMetadata() {
+    setRefreshingMetadata(true);
+    try {
+      const response = await fetch("/api/library/anime/metadata", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ onlyMissing: true }),
+      });
+      if (!response.ok) {
+        throw new Error(t.metadataRefreshError);
+      }
+      await load();
+    } catch (refreshError) {
+      setError(refreshError instanceof Error ? refreshError.message : t.metadataRefreshError);
+    } finally {
+      setRefreshingMetadata(false);
+    }
+  }
+
   if (loading) {
     return (
       <div className="settings-loading">
@@ -88,6 +108,10 @@ export function AnimeLibraryClient({ locale }: { locale: Locale }) {
         <span>
           {visibleTitles.length} {t.titles}
         </span>
+        <button disabled={refreshingMetadata} onClick={() => void refreshMetadata()} type="button">
+          {refreshingMetadata ? <Loader2 size={14} /> : <ImageIcon size={14} />}
+          {t.refreshMetadata}
+        </button>
       </div>
       {error ? <div className="settings-alert">{error}</div> : null}
       {visibleTitles.length === 0 ? (

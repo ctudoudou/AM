@@ -67,8 +67,22 @@ type BangumiSearchResponse = {
   data?: BangumiSubject[];
 };
 
+const romanNumerals = new Map([
+  ["一", 1],
+  ["二", 2],
+  ["三", 3],
+  ["四", 4],
+  ["五", 5],
+  ["六", 6],
+  ["七", 7],
+  ["八", 8],
+  ["九", 9],
+  ["十", 10],
+]);
+
 function optionalString(value: string | null | undefined) {
-  return value ?? undefined;
+  const normalized = value?.trim();
+  return normalized ? normalized : undefined;
 }
 
 function optionalNumber(value: number | null | undefined) {
@@ -80,13 +94,7 @@ export async function matchMetadataForGroup(groupId: string) {
     where: { id: groupId },
   });
   const query = group.displayTitle || group.normalizedTitle;
-  const providerResults = (
-    await Promise.allSettled([
-      searchAniList(query),
-      searchTmdb(query),
-      searchBangumi(query),
-    ])
-  ).flatMap((result) => (result.status === "fulfilled" ? result.value : []));
+  const providerResults = await searchAnimeMetadata(query);
 
   const results =
     providerResults.length > 0
@@ -141,10 +149,163 @@ export async function matchMetadataForGroup(groupId: string) {
   return results.sort((a, b) => b.score - a.score)[0];
 }
 
+export async function refreshAnimeLibraryMetadata(input?: { titleId?: string; onlyMissing?: boolean }) {
+  const titles = await prisma.mediaTitle.findMany({
+    where: {
+      type: "ANIME",
+      id: input?.titleId,
+      ...(input?.onlyMissing === false
+        ? {}
+        : {
+            OR: [{ posterUrl: null }, { backdropUrl: null }, { synopsis: null }],
+          }),
+    },
+    select: {
+      id: true,
+    },
+  });
+  const results = [];
+
+  for (const title of titles) {
+    results.push(await refreshAnimeMetadata(title.id));
+  }
+
+  return {
+    checked: titles.length,
+    updated: results.filter((result) => result.updated).length,
+    results,
+  };
+}
+
+export async function refreshAnimeMetadata(titleId: string) {
+  const media = await prisma.mediaTitle.findUniqueOrThrow({
+    where: { id: titleId },
+    include: {
+      aliases: true,
+    },
+  });
+  const queries = buildAnimeMetadataQueries([
+    media.primaryTitle,
+    media.originalTitle,
+    ...media.aliases.map((alias) => alias.title),
+  ]);
+  const matches = [];
+
+  for (const query of queries) {
+    matches.push(...(await searchAnimeMetadata(query)));
+    if (matches.some((match) => match.posterUrl)) {
+      break;
+    }
+  }
+
+  const best = selectBestMetadataMatch(matches);
+  if (!best) {
+    return {
+      id: media.id,
+      title: media.primaryTitle,
+      updated: false,
+      queries,
+      provider: null,
+    };
+  }
+
+  const updated = await prisma.mediaTitle.update({
+    where: { id: media.id },
+    data: {
+      originalTitle: media.originalTitle ?? best.originalTitle,
+      year: media.year ?? best.year,
+      synopsis: media.synopsis ?? best.synopsis,
+      posterUrl: best.posterUrl ?? media.posterUrl,
+      backdropUrl: best.backdropUrl ?? media.backdropUrl,
+    },
+    select: {
+      id: true,
+      primaryTitle: true,
+      posterUrl: true,
+      backdropUrl: true,
+      synopsis: true,
+    },
+  });
+
+  await prisma.metadataLink
+    .upsert({
+      where: {
+        provider_externalId: {
+          provider: best.provider,
+          externalId: best.externalId,
+        },
+      },
+      create: {
+        provider: best.provider,
+        externalId: best.externalId,
+        mediaId: media.id,
+      },
+      update: {
+        mediaId: media.id,
+      },
+    })
+    .catch(() => null);
+
+  return {
+    id: updated.id,
+    title: updated.primaryTitle,
+    updated: Boolean(updated.posterUrl || updated.backdropUrl || updated.synopsis),
+    queries,
+    provider: best.provider,
+    posterUrl: updated.posterUrl,
+  };
+}
+
+export function buildAnimeMetadataQueries(values: Array<string | null | undefined>) {
+  const queries: string[] = [];
+
+  for (const value of values) {
+    const title = cleanSearchTitle(value ?? "");
+    if (!title) {
+      continue;
+    }
+    addQuery(queries, title);
+
+    for (const part of title.split(/\s+\/\s+|｜|\|/).map((item) => cleanSearchTitle(item))) {
+      if (!part) {
+        continue;
+      }
+      addQuery(queries, part);
+      addQuery(queries, stripSeasonWords(part));
+      const season = detectSeason(part);
+      const stripped = stripSeasonWords(part);
+      if (season && stripped) {
+        addQuery(queries, `${stripped} ${ordinal(season)} Season`);
+        addQuery(queries, `${stripped} Season ${season}`);
+      }
+    }
+  }
+
+  return queries.slice(0, 10);
+}
+
+export async function searchAnimeMetadata(query: string): Promise<MetadataMatch[]> {
+  const providerResults = (
+    await Promise.allSettled([
+      searchAniList(query),
+      searchBangumi(query),
+      searchTmdb(query),
+    ])
+  ).flatMap((result) => (result.status === "fulfilled" ? result.value : []));
+
+  return providerResults
+    .map((result) => ({
+      ...result,
+      synopsis: result.synopsis ? cleanDescription(result.synopsis) : undefined,
+    }))
+    .sort((a, b) => Number(Boolean(b.posterUrl)) - Number(Boolean(a.posterUrl)) || b.score - a.score);
+}
+
 async function searchAniList(query: string): Promise<MetadataMatch[]> {
   const response = await fetch("https://graphql.anilist.co", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
+    signal: AbortSignal.timeout(8_000),
     body: JSON.stringify({
       query: `
         query ($search: String) {
@@ -195,6 +356,7 @@ async function searchTmdb(query: string): Promise<MetadataMatch[]> {
   url.searchParams.set("language", "zh-CN");
   const response = await fetch(url, {
     headers: { Authorization: `Bearer ${token}` },
+    signal: AbortSignal.timeout(8_000),
   });
   if (!response.ok) {
     return [];
@@ -222,6 +384,7 @@ async function searchBangumi(query: string): Promise<MetadataMatch[]> {
       "Content-Type": "application/json",
       "User-Agent": "Kura/0.1",
     },
+    signal: AbortSignal.timeout(8_000),
     body: JSON.stringify({
       keyword: query,
       filter: { type: [2] },
@@ -243,4 +406,75 @@ async function searchBangumi(query: string): Promise<MetadataMatch[]> {
     score: Math.min(0.95, 0.7 + (item.score ?? 0) / 40),
     raw: item,
   }));
+}
+
+function selectBestMetadataMatch(results: MetadataMatch[]) {
+  return [...results].sort(
+    (a, b) =>
+      Number(Boolean(b.posterUrl)) - Number(Boolean(a.posterUrl)) ||
+      Number(Boolean(b.backdropUrl)) - Number(Boolean(a.backdropUrl)) ||
+      b.score - a.score,
+  )[0];
+}
+
+function addQuery(queries: string[], value: string) {
+  const query = cleanSearchTitle(value);
+  if (!query) {
+    return;
+  }
+  const key = query.toLowerCase();
+  if (!queries.some((item) => item.toLowerCase() === key)) {
+    queries.push(query);
+  }
+}
+
+function cleanSearchTitle(value: string) {
+  return value
+    .replace(/\[[^\]]*]/g, " ")
+    .replace(/\([^)]*(?:1080p|2160p|720p|x26[45]|hevc|avc|web-dl|baha|b-global)[^)]*\)/gi, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function stripSeasonWords(value: string) {
+  return value
+    .replace(/\s*第\s*[一二三四五六七八九十\d]+\s*[季期]\s*/g, " ")
+    .replace(/\s*S(?:eason)?\s*\d+\s*/gi, " ")
+    .replace(/\s*\d+(?:st|nd|rd|th)\s+Season\s*/gi, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function detectSeason(value: string) {
+  const chinese = value.match(/第\s*([一二三四五六七八九十\d]+)\s*[季期]/);
+  if (chinese?.[1]) {
+    return Number(chinese[1]) || romanNumerals.get(chinese[1]) || null;
+  }
+  const english = value.match(/(?:Season\s*|S)(\d+)|(\d+)(?:st|nd|rd|th)\s+Season/i);
+  const numeric = english?.[1] ?? english?.[2];
+  return numeric ? Number(numeric) : null;
+}
+
+function ordinal(value: number) {
+  const mod10 = value % 10;
+  const mod100 = value % 100;
+  if (mod10 === 1 && mod100 !== 11) {
+    return `${value}st`;
+  }
+  if (mod10 === 2 && mod100 !== 12) {
+    return `${value}nd`;
+  }
+  if (mod10 === 3 && mod100 !== 13) {
+    return `${value}rd`;
+  }
+  return `${value}th`;
+}
+
+function cleanDescription(value: string) {
+  return value
+    .replace(/<br\s*\/?>/gi, "\n")
+    .replace(/<[^>]+>/g, "")
+    .replace(/\s+\n/g, "\n")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
 }
