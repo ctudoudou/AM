@@ -110,7 +110,18 @@ export async function prepareHlsPlayback(mediaFileId: string) {
 
   const codecArgs = videoCopy
     ? ["-c:v", "copy"]
-    : ["-c:v", "libx264", "-preset", "medium", "-crf", "18", "-profile:v", "high"];
+    : [
+        "-c:v",
+        "libx264",
+        "-preset",
+        "medium",
+        "-crf",
+        "18",
+        "-profile:v",
+        "high",
+        "-pix_fmt",
+        "yuv420p",
+      ];
   const audioArgs = audioCopy ? ["-c:a", "copy"] : ["-c:a", "aac", "-b:a", "192k"];
   const args = [
     "-hide_banner",

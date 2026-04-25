@@ -102,23 +102,32 @@ export function AnimeLibraryClient({ locale }: { locale: Locale }) {
                 : 0;
             return (
               <article className="anime-card" key={title.id}>
-                <div
-                  className="anime-poster"
+                <a
+                  aria-label={title.primaryTitle}
+                  className="anime-poster anime-poster-link"
+                  href={`/${locale}/anime/${title.id}`}
                   style={{
                     backgroundImage: title.posterUrl ? `url(${title.posterUrl})` : undefined,
                   }}
                 >
-                  {!title.posterUrl ? <span>{title.primaryTitle.slice(0, 1)}</span> : null}
-                </div>
+                  {!title.posterUrl ? (
+                    <FallbackCover title={title.primaryTitle} />
+                  ) : null}
+                </a>
                 <div className="anime-card-body">
-                  <h2>{title.primaryTitle}</h2>
+                  <a className="anime-title-link" href={`/${locale}/anime/${title.id}`}>
+                    <h2>{splitTitle(title.primaryTitle).primary}</h2>
+                  </a>
+                  {splitTitle(title.primaryTitle).secondary ? (
+                    <small>{splitTitle(title.primaryTitle).secondary}</small>
+                  ) : null}
                   <p>
                     {title.year ?? "-"} · {title.seasonCount} {t.seasons} ·{" "}
                     {title.episodeCount} {t.episodes}
                   </p>
                   {title.synopsis ? <small>{title.synopsis}</small> : null}
                   {title.nextEpisode?.mediaFileId ? (
-                    <a href={`/${locale}/watch/${title.nextEpisode.id}`}>
+                    <a className="anime-play-link" href={`/${locale}/watch/${title.nextEpisode.id}`}>
                       <Play size={14} />
                       {progress?.completed
                         ? t.rewatch
@@ -134,5 +143,27 @@ export function AnimeLibraryClient({ locale }: { locale: Locale }) {
         </section>
       )}
     </div>
+  );
+}
+
+function splitTitle(title: string) {
+  const [primary, ...rest] = title
+    .split(/\s+\/\s+/)
+    .map((part) => part.trim())
+    .filter(Boolean);
+
+  return {
+    primary: primary || title,
+    secondary: rest.join(" / "),
+  };
+}
+
+function FallbackCover({ title }: { title: string }) {
+  const { primary, secondary } = splitTitle(title);
+  return (
+    <span className="anime-fallback-cover">
+      <b>{primary.slice(0, 2)}</b>
+      <small>{secondary || primary}</small>
+    </span>
   );
 }

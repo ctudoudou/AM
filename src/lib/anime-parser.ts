@@ -31,6 +31,7 @@ export function normalizeTitle(title: string) {
   return canonicalizeTitle(title)
     .toLowerCase()
     .replace(/\[[^\]]+\]|\([^)]+\)|【[^】]+】/g, " ")
+    .replace(/\[\s*\]/g, " ")
     .replace(/\b(2160p|4k|1080p|720p|480p|x265|x264|h265|h264|hevc|avc|av1|aac|flac|chs|cht)\b/g, " ")
     .replace(/第\s*\d+(\.\d+)?\s*(话|集)/g, " ")
     .replace(/\bs\d{1,2}e\d{1,4}(\.\d+)?\b/g, " ")
@@ -107,6 +108,7 @@ export function parseAnimeReleaseTitle(rawTitle: string): ParsedAnimeRelease {
 
   parsedTitle = canonicalizeTitle(parsedTitle
     .replace(/\[[^\]]+\]|\([^)]+\)|【[^】]+】/g, " ")
+    .replace(/\[\s*\]/g, " ")
     .replace(/[._]+/g, " ")
     .replace(/\s+-\s+$/, "")
     .replace(/\s+/g, " ")

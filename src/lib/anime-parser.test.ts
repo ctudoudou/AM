@@ -44,4 +44,13 @@ describe("parseAnimeReleaseTitle", () => {
     expect(parsed.releaseProfile).not.toContain("01");
     expect(parsed.variantKey).toContain("chs+cht+jpn");
   });
+
+  it("does not leave empty episode brackets in parsed titles", () => {
+    const parsed = parseAnimeReleaseTitle(
+      "[桜都字幕组] 入间同学入魔了 第四季 / Mairimashita! Iruma-kun (2026) [01][1080P][简繁内封]",
+    );
+
+    expect(parsed.parsedTitle).toBe("入间同学入魔了 第四季 / Mairimashita! Iruma-kun");
+    expect(parsed.normalizedTitle).not.toContain("[]");
+  });
 });

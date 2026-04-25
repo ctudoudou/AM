@@ -1,6 +1,8 @@
 import type { MediaType } from "@prisma/client";
 import { prisma } from "@/lib/db";
 
+const directPlayExtensions = new Set([".mp4", ".m4v", ".webm", ".mov"]);
+
 export async function getMediaLibrary(type: MediaType) {
   const titles = await prisma.mediaTitle.findMany({
     where: { type },
@@ -12,7 +14,7 @@ export async function getMediaLibrary(type: MediaType) {
           episodes: {
             orderBy: { number: "asc" },
             include: {
-              files: { orderBy: { updatedAt: "desc" }, take: 1 },
+              files: { orderBy: { updatedAt: "desc" } },
               progress: true,
             },
           },
@@ -28,6 +30,7 @@ export async function getMediaLibrary(type: MediaType) {
       playableEpisodes.find((episode) => !episode.progress[0]?.completed) ??
       playableEpisodes[0] ??
       null;
+    const nextFile = nextEpisode ? selectPlayableFile(nextEpisode.files) : null;
 
     return {
       id: title.id,
@@ -48,9 +51,22 @@ export async function getMediaLibrary(type: MediaType) {
             number: nextEpisode.number,
             title: nextEpisode.title,
             progress: nextEpisode.progress[0] ?? null,
-            mediaFileId: nextEpisode.files[0]?.id ?? null,
+            mediaFileId: nextFile?.id ?? null,
           }
         : null,
     };
   });
+}
+
+function selectPlayableFile<T extends { absolutePath: string }>(files: T[]) {
+  return (
+    files.find((file) => directPlayExtensions.has(extname(file.absolutePath))) ??
+    files[0] ??
+    null
+  );
+}
+
+function extname(filePath: string) {
+  const index = filePath.lastIndexOf(".");
+  return index >= 0 ? filePath.slice(index).toLowerCase() : "";
 }

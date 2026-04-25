@@ -5,6 +5,8 @@ import { isLocale } from "@/lib/i18n";
 import { getMessages } from "@/messages";
 import { WatchClient } from "./watch-client";
 
+const directPlayExtensions = new Set([".mp4", ".m4v", ".webm", ".mov"]);
+
 export default async function WatchPage({
   params,
 }: {
@@ -19,7 +21,7 @@ export default async function WatchPage({
   const episode = await prisma.episode.findUnique({
     where: { id: episodeId },
     include: {
-      files: { orderBy: { updatedAt: "desc" }, take: 1 },
+      files: { orderBy: { updatedAt: "desc" } },
       progress: true,
       season: { include: { media: true } },
     },
@@ -30,7 +32,7 @@ export default async function WatchPage({
   }
 
   const t = getMessages(locale);
-  const file = episode.files[0];
+  const file = selectPlayableFile(episode.files);
 
   return (
     <main className="app-shell">
@@ -56,4 +58,16 @@ export default async function WatchPage({
       </section>
     </main>
   );
+}
+
+function selectPlayableFile<T extends { absolutePath: string }>(files: T[]) {
+  return (
+    files.find((file) => directPlayExtensions.has(extname(file.absolutePath))) ??
+    files[0]
+  );
+}
+
+function extname(filePath: string) {
+  const index = filePath.lastIndexOf(".");
+  return index >= 0 ? filePath.slice(index).toLowerCase() : "";
 }

@@ -163,6 +163,10 @@ export async function executeOrganizerPlan(planId: string, automatic = false) {
     },
   });
 
+  if (plan.items.length === 0) {
+    throw new Error("Organizer plan has no files to archive");
+  }
+
   for (const item of plan.items) {
     const sourcePath = assertInsideConfiguredRoots(item.sourcePath, allowedRoots);
     const targetPath = assertInsideConfiguredRoots(item.targetPath, allowedRoots);
@@ -275,19 +279,35 @@ async function upsertMediaRecords(plan: {
     backdropUrl?: string;
   } | null;
   const candidate = plan.candidate;
-  const title = metadata?.title || candidate?.group?.displayTitle || candidate?.parsedTitle || "Unknown";
-  const media = await prisma.mediaTitle.upsert({
-    where: { id: plan.mediaTitleId ?? "__missing__" },
-    create: {
-      type: "ANIME",
-      primaryTitle: title,
-      originalTitle: metadata?.originalTitle,
-      year: metadata?.year,
-      synopsis: metadata?.synopsis,
-      posterUrl: metadata?.posterUrl,
-      backdropUrl: metadata?.backdropUrl,
-    },
-    update: {
+  const title = cleanMediaTitle(
+    metadata?.title || candidate?.group?.displayTitle || candidate?.parsedTitle || "Unknown",
+  );
+  const media =
+    (plan.mediaTitleId
+      ? await prisma.mediaTitle.findUnique({ where: { id: plan.mediaTitleId } })
+      : null) ??
+    (await prisma.mediaTitle.findFirst({
+      where: {
+        type: "ANIME",
+        primaryTitle: title,
+        year: metadata?.year ?? null,
+      },
+    })) ??
+    (await prisma.mediaTitle.create({
+      data: {
+        type: "ANIME",
+        primaryTitle: title,
+        originalTitle: metadata?.originalTitle,
+        year: metadata?.year,
+        synopsis: metadata?.synopsis,
+        posterUrl: metadata?.posterUrl,
+        backdropUrl: metadata?.backdropUrl,
+      },
+    }));
+
+  await prisma.mediaTitle.update({
+    where: { id: media.id },
+    data: {
       primaryTitle: title,
       originalTitle: metadata?.originalTitle,
       year: metadata?.year,
@@ -313,21 +333,42 @@ async function upsertMediaRecords(plan: {
     update: { title: candidate?.parsedTitle },
   });
   for (const item of plan.items) {
+    const existing = await prisma.mediaFile.findFirst({
+      where: { absolutePath: item.targetPath },
+      select: { id: true },
+    });
+    const data = {
+      episodeId: episode.id,
+      relativePath: item.targetPath,
+      absolutePath: item.targetPath,
+      originalName: item.originalName,
+      sizeBytes: item.sizeBytes,
+      resolution: candidate?.resolution,
+      sourceResolution: candidate?.resolution,
+      videoCodec: candidate?.codec,
+      subtitleGroup: candidate?.subtitleGroup,
+    };
+    if (existing) {
+      await prisma.mediaFile.update({
+        where: { id: existing.id },
+        data,
+      });
+      continue;
+    }
     await prisma.mediaFile.create({
       data: {
-        episodeId: episode.id,
-        relativePath: item.targetPath,
-        absolutePath: item.targetPath,
-        originalName: item.originalName,
-        sizeBytes: item.sizeBytes,
-        resolution: candidate?.resolution,
-        sourceResolution: candidate?.resolution,
-        videoCodec: candidate?.codec,
-        subtitleGroup: candidate?.subtitleGroup,
+        ...data,
       },
     });
   }
   return media;
+}
+
+function cleanMediaTitle(value: string) {
+  return value
+    .replace(/\s*\[\s*\]\s*/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
 }
 
 function sanitizeSegment(value: string) {

@@ -9,6 +9,8 @@ import {
 import { getAppSettings } from "@/lib/settings";
 import { createOrganizerPlanForDownload } from "@/lib/organizer";
 
+const videoExtensions = new Set([".mkv", ".mp4", ".avi", ".mov", ".webm", ".m4v", ".ts"]);
+
 export async function enqueueCandidateDownload(candidateId: string) {
   const candidate = await prisma.releaseCandidate.findUniqueOrThrow({
     where: { id: candidateId },
@@ -72,6 +74,7 @@ export async function syncAria2Downloads() {
       totalBytes > 0 ? Number(completedBytes) / Number(totalBytes) : download.progress;
 
     const nextStatus = mapAria2Status(status.status);
+    const targetPath = selectTargetPath(status.files) ?? download.targetPath;
     await prisma.download.update({
       where: { id: download.id },
       data: {
@@ -80,7 +83,7 @@ export async function syncAria2Downloads() {
         completedBytes,
         downloadSpeed: BigInt(status.downloadSpeed ?? 0),
         progress,
-        targetPath: status.files?.find((file) => file.path)?.path ?? download.targetPath,
+        targetPath,
         errorMessage: status.errorMessage,
         lastSyncedAt: new Date(),
       },
@@ -100,4 +103,18 @@ export async function syncAria2Downloads() {
   }
 
   return { synced };
+}
+
+function selectTargetPath(
+  files?: Array<{ path?: string; length?: string; completedLength?: string; selected?: string }>,
+) {
+  return (files ?? [])
+    .filter((file) => file.path && file.path !== "[METADATA]")
+    .filter((file) => videoExtensions.has(file.path ? extname(file.path) : ""))
+    .sort((a, b) => Number(b.length ?? 0) - Number(a.length ?? 0))[0]?.path;
+}
+
+function extname(filePath: string) {
+  const index = filePath.lastIndexOf(".");
+  return index >= 0 ? filePath.slice(index).toLowerCase() : "";
 }

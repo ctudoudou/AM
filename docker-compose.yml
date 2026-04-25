@@ -31,6 +31,7 @@ services:
       - "6888:6888/udp"
     volumes:
       - ${KURA_DATA_ROOT:-./data}:/data
+      - ${KURA_DATA_ROOT:-./data}:${KURA_LOCAL_DATA_ROOT:-/data}
       - ${KURA_DATA_ROOT:-./data}/downloads:/downloads
       - aria2-config:/config
 

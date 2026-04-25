@@ -8,7 +8,12 @@ type Aria2Status = {
   completedLength?: string;
   downloadSpeed?: string;
   errorMessage?: string;
-  files?: Array<{ path?: string }>;
+  files?: Array<{
+    path?: string;
+    length?: string;
+    completedLength?: string;
+    selected?: string;
+  }>;
 };
 
 export async function aria2Request<T>(method: string, params: unknown[] = []) {
