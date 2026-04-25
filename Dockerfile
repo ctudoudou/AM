@@ -13,6 +13,8 @@ RUN npm run build
 FROM node:24-alpine AS runner
 WORKDIR /app
 ENV NODE_ENV=production
+ENV HOSTNAME=0.0.0.0
+ENV PORT=3000
 RUN apk add --no-cache ffmpeg
 COPY --from=builder /app/public ./public
 COPY --from=builder /app/.next/standalone ./

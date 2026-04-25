@@ -65,20 +65,30 @@ export function OrganizerClient({ locale }: { locale: Locale }) {
   }, [load]);
 
   async function runInspect() {
-    await fetch("/api/jobs/run", {
+    const response = await fetch("/api/jobs/run", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ job: "organizer.inspectCompletedDownloads" }),
     });
+    if (!response.ok) {
+      const body = await response.json().catch(() => null);
+      setError(body?.message || t.organizerLoadError);
+      return;
+    }
     await load();
   }
 
   async function execute(plan: OrganizerPlan) {
+    if (!canExecutePlan(plan)) {
+      setError(t.organizerExecuteError);
+      return;
+    }
     const response = await fetch(`/api/organizer/plans/${plan.id}/execute`, {
       method: "POST",
     });
     if (!response.ok) {
-      setError(t.organizerExecuteError);
+      const body = await response.json().catch(() => null);
+      setError(body?.message || t.organizerExecuteError);
       return;
     }
     await load();
@@ -89,7 +99,8 @@ export function OrganizerClient({ locale }: { locale: Locale }) {
       method: "POST",
     });
     if (!response.ok) {
-      setError(t.organizerRejectError);
+      const body = await response.json().catch(() => null);
+      setError(body?.message || t.organizerRejectError);
       return;
     }
     await load();
@@ -133,52 +144,75 @@ export function OrganizerClient({ locale }: { locale: Locale }) {
         {visiblePlans.length === 0 ? (
           <p>{t.noOrganizerPlans}</p>
         ) : (
-          visiblePlans.map((plan) => (
-            <article key={plan.id}>
-              <div className="candidate-heading">
-                {plan.metadata?.posterUrl ? (
-                  // eslint-disable-next-line @next/next/no-img-element
-                  <img className="organizer-poster" src={plan.metadata.posterUrl} alt="" />
-                ) : null}
-                <div>
-                  <h2>
-                    {plan.metadata?.title ||
-                      plan.candidate?.group?.displayTitle ||
-                      plan.candidate?.parsedTitle ||
-                      t.unknownTitle}
-                  </h2>
-                  <p>
-                    {formatMediaType(plan.mediaType, t)} · {plan.status} ·{" "}
-                    {Math.round(plan.confidence * 100)}% ·{" "}
-                    {plan.reason || "-"}
-                  </p>
-                </div>
-                <div className="toolbar-actions">
-                  <button onClick={() => void execute(plan)} type="button">
-                    <Check size={14} />
-                    {t.execute}
-                  </button>
-                  <button onClick={() => void reject(plan)} type="button">
-                    <X size={14} />
-                    {t.reject}
-                  </button>
-                </div>
-              </div>
-              <div className="organizer-paths">
-                {plan.items.map((item) => (
-                  <div key={item.id}>
-                    <span>{item.sourcePath}</span>
-                    <strong>{item.targetPath}</strong>
-                    {item.conflict ? <em>{item.conflictReason || t.conflict}</em> : null}
+          visiblePlans.map((plan) => {
+            const executable = canExecutePlan(plan);
+            const rejectable = canRejectPlan(plan);
+            return (
+              <article key={plan.id}>
+                <div className="candidate-heading">
+                  {plan.metadata?.posterUrl ? (
+                    // eslint-disable-next-line @next/next/no-img-element
+                    <img className="organizer-poster" src={plan.metadata.posterUrl} alt="" />
+                  ) : null}
+                  <div>
+                    <h2>
+                      {plan.metadata?.title ||
+                        plan.candidate?.group?.displayTitle ||
+                        plan.candidate?.parsedTitle ||
+                        t.unknownTitle}
+                    </h2>
+                    <p>
+                      {formatMediaType(plan.mediaType, t)} · {plan.status} ·{" "}
+                      {Math.round(plan.confidence * 100)}% · {plan.reason || "-"}
+                    </p>
                   </div>
-                ))}
-              </div>
-            </article>
-          ))
+                  <div className="toolbar-actions">
+                    <button
+                      disabled={!executable}
+                      onClick={() => void execute(plan)}
+                      type="button"
+                    >
+                      <Check size={14} />
+                      {t.execute}
+                    </button>
+                    <button
+                      disabled={!rejectable}
+                      onClick={() => void reject(plan)}
+                      type="button"
+                    >
+                      <X size={14} />
+                      {t.reject}
+                    </button>
+                  </div>
+                </div>
+                <div className="organizer-paths">
+                  {plan.items.map((item) => (
+                    <div key={item.id}>
+                      <span>{item.sourcePath}</span>
+                      <strong>{item.targetPath}</strong>
+                      {item.conflict ? <em>{item.conflictReason || t.conflict}</em> : null}
+                    </div>
+                  ))}
+                </div>
+              </article>
+            );
+          })
         )}
       </div>
     </section>
   );
+}
+
+function canExecutePlan(plan: OrganizerPlan) {
+  return (
+    ["PENDING", "NEEDS_REVIEW"].includes(plan.status) &&
+    plan.items.length > 0 &&
+    plan.items.every((item) => !item.conflict)
+  );
+}
+
+function canRejectPlan(plan: OrganizerPlan) {
+  return !["AUTO_ARCHIVED", "EXECUTED", "REJECTED"].includes(plan.status);
 }
 
 function formatMediaType(

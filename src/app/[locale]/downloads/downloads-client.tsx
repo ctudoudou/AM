@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Loader2, RefreshCw } from "lucide-react";
+import { Loader2, Pause, Play, RefreshCw, RotateCw, Trash2 } from "lucide-react";
 import { getMessages } from "@/messages";
 import type { Locale } from "@/lib/i18n";
 
@@ -37,9 +37,21 @@ type DownloadRecord = {
   }>;
 };
 
+type Aria2Overview =
+  | {
+      downloadSpeed: string;
+      uploadSpeed: string;
+      numActive: string;
+      numWaiting: string;
+      numStopped: string;
+      numStoppedTotal: string;
+    }
+  | { error: string };
+
 export function DownloadsClient({ locale }: { locale: Locale }) {
   const t = getMessages(locale);
   const [downloads, setDownloads] = useState<DownloadRecord[]>([]);
+  const [aria2, setAria2] = useState<Aria2Overview | null>(null);
   const [filter, setFilter] = useState("ALL");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -55,8 +67,12 @@ export function DownloadsClient({ locale }: { locale: Locale }) {
       if (!response.ok) {
         throw new Error(t.downloadsLoadError);
       }
-      const body = (await response.json()) as { downloads: DownloadRecord[] };
+      const body = (await response.json()) as {
+        downloads: DownloadRecord[];
+        aria2?: Aria2Overview;
+      };
       setDownloads(body.downloads);
+      setAria2(body.aria2 ?? null);
       setError("");
     } catch (loadError) {
       setError(loadError instanceof Error ? loadError.message : t.downloadsLoadError);
@@ -87,6 +103,21 @@ export function DownloadsClient({ locale }: { locale: Locale }) {
     await load();
   }
 
+  async function runDownloadAction(download: DownloadRecord, action: "pause" | "resume" | "remove" | "sync") {
+    setError("");
+    const response = await fetch(`/api/downloads/${download.id}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action }),
+    });
+    if (!response.ok) {
+      const body = await response.json().catch(() => null);
+      setError(body?.message || t.downloadActionError);
+      return;
+    }
+    await load();
+  }
+
   if (loading) {
     return (
       <div className="settings-loading">
@@ -109,7 +140,7 @@ export function DownloadsClient({ locale }: { locale: Locale }) {
         </button>
       </div>
       <div className="filter-tabs">
-        {["ALL", "ACTIVE", "WAITING", "COMPLETED", "FAILED"].map((status) => (
+        {["ALL", "ACTIVE", "WAITING", "PAUSED", "COMPLETED", "FAILED"].map((status) => (
           <button
             className={filter === status ? "active" : ""}
             key={status}
@@ -121,6 +152,20 @@ export function DownloadsClient({ locale }: { locale: Locale }) {
         ))}
       </div>
       {error ? <div className="settings-alert">{error}</div> : null}
+      {aria2 ? (
+        <div className="download-overview">
+          {"error" in aria2 ? (
+            <span>{t.aria2StatusError}: {aria2.error}</span>
+          ) : (
+            <>
+              <span>{t.active}: {aria2.numActive}</span>
+              <span>{t.waiting}: {aria2.numWaiting}</span>
+              <span>{t.stopped}: {aria2.numStopped}</span>
+              <span>{t.speed}: {formatBytes(aria2.downloadSpeed)} /s</span>
+            </>
+          )}
+        </div>
+      ) : null}
       <div className="download-table enhanced">
         {visibleDownloads.length === 0 ? (
           <p>{t.noDownloads}</p>
@@ -154,7 +199,42 @@ export function DownloadsClient({ locale }: { locale: Locale }) {
               </div>
               <span>{download.status}</span>
               <strong>{Math.round(download.progress * 100)}%</strong>
-              <small>{formatBytes(download.downloadSpeed)} /s</small>
+              <div className="download-actions">
+                <small>{formatBytes(download.downloadSpeed)} /s</small>
+                <button
+                  aria-label={t.syncTask}
+                  onClick={() => void runDownloadAction(download, "sync")}
+                  type="button"
+                >
+                  <RotateCw size={13} />
+                </button>
+                {download.status === "PAUSED" ? (
+                  <button
+                    aria-label={t.resumeDownload}
+                    onClick={() => void runDownloadAction(download, "resume")}
+                    type="button"
+                  >
+                    <Play size={13} />
+                  </button>
+                ) : ["ACTIVE", "WAITING"].includes(download.status) ? (
+                  <button
+                    aria-label={t.pauseDownload}
+                    onClick={() => void runDownloadAction(download, "pause")}
+                    type="button"
+                  >
+                    <Pause size={13} />
+                  </button>
+                ) : null}
+                {!["COMPLETED"].includes(download.status) ? (
+                  <button
+                    aria-label={t.removeDownload}
+                    onClick={() => void runDownloadAction(download, "remove")}
+                    type="button"
+                  >
+                    <Trash2 size={13} />
+                  </button>
+                ) : null}
+              </div>
             </article>
           ))
         )}

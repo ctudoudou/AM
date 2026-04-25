@@ -170,6 +170,18 @@ export async function executeOrganizerPlan(planId: string, automatic = false) {
     },
   });
 
+  if (plan.status === "EXECUTED" || plan.status === "AUTO_ARCHIVED") {
+    throw new Error("Organizer plan has already been executed.");
+  }
+  if (plan.status === "REJECTED") {
+    throw new Error("Organizer plan has been rejected.");
+  }
+  if (plan.status === "FAILED") {
+    throw new Error("Organizer plan is marked as failed.");
+  }
+  if (plan.items.some((item) => item.conflict)) {
+    throw new Error("Organizer plan has file conflicts that must be resolved first.");
+  }
   if (plan.items.length === 0) {
     throw new Error("Organizer plan has no files to archive");
   }
@@ -177,6 +189,16 @@ export async function executeOrganizerPlan(planId: string, automatic = false) {
   for (const item of plan.items) {
     const sourcePath = assertInsideConfiguredRoots(item.sourcePath, allowedRoots);
     const targetPath = assertInsideConfiguredRoots(item.targetPath, allowedRoots);
+    if (!(await exists(sourcePath))) {
+      await prisma.organizerPlan.update({
+        where: { id: plan.id },
+        data: {
+          status: "FAILED",
+          reason: `Source file is missing: ${sourcePath}`,
+        },
+      });
+      throw new Error(`Source file is missing: ${sourcePath}`);
+    }
     await fs.mkdir(path.dirname(targetPath), { recursive: true });
     if (await exists(targetPath)) {
       throw new Error(`Target already exists: ${targetPath}`);

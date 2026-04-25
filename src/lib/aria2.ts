@@ -86,6 +86,22 @@ export async function tellKnownDownload(gid: string) {
   ]);
 }
 
+export async function pauseAria2Download(gid: string) {
+  return aria2Request<string>("pause", [gid]);
+}
+
+export async function resumeAria2Download(gid: string) {
+  return aria2Request<string>("unpause", [gid]);
+}
+
+export async function removeAria2Download(gid: string) {
+  return aria2Request<string>("remove", [gid]);
+}
+
+export async function removeAria2DownloadResult(gid: string) {
+  return aria2Request<string>("removeDownloadResult", [gid]);
+}
+
 export function mapAria2Status(status: Aria2Status["status"]) {
   switch (status) {
     case "active":
