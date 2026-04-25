@@ -9,10 +9,14 @@ const directPlayExtensions = new Set([".mp4", ".m4v", ".webm", ".mov"]);
 
 export default async function WatchPage({
   params,
+  searchParams,
 }: {
   params: Promise<{ locale: string; episodeId: string }>;
+  searchParams?: Promise<{ file?: string | string[] }>;
 }) {
   const { locale, episodeId } = await params;
+  const query = await searchParams;
+  const requestedFileId = Array.isArray(query?.file) ? query?.file[0] : query?.file;
 
   if (!isLocale(locale)) {
     notFound();
@@ -23,7 +27,26 @@ export default async function WatchPage({
     include: {
       files: { orderBy: { updatedAt: "desc" } },
       progress: true,
-      season: { include: { media: true } },
+      season: {
+        include: {
+          media: {
+            include: {
+              seasons: {
+                orderBy: { number: "asc" },
+                include: {
+                  episodes: {
+                    orderBy: { number: "asc" },
+                    include: {
+                      files: { orderBy: { updatedAt: "desc" } },
+                      progress: true,
+                    },
+                  },
+                },
+              },
+            },
+          },
+        },
+      },
     },
   });
 
@@ -32,7 +55,39 @@ export default async function WatchPage({
   }
 
   const t = getMessages(locale);
-  const file = selectPlayableFile(episode.files);
+  const file = episode.files.find((item) => item.id === requestedFileId) ?? selectPlayableFile(episode.files);
+  const episodes = episode.season.media.seasons
+    .flatMap((season) =>
+      season.episodes
+        .filter((item) => item.files.length > 0)
+        .map((item) => ({
+          id: item.id,
+          number: item.number,
+          title: item.title,
+          seasonNumber: season.number,
+          progress: item.progress[0]
+            ? {
+                positionSec: item.progress[0].positionSec,
+                durationSec: item.progress[0].durationSec,
+                completed: item.progress[0].completed,
+              }
+            : null,
+          files: item.files.map((mediaFile) => ({
+            id: mediaFile.id,
+            originalName: mediaFile.originalName,
+            resolution: mediaFile.resolution,
+            sourceResolution: mediaFile.sourceResolution,
+            videoCodec: mediaFile.videoCodec,
+            audioCodec: mediaFile.audioCodec,
+            subtitleGroup: mediaFile.subtitleGroup,
+            playbackMode: mediaFile.playbackMode,
+            transcodeStatus: mediaFile.transcodeStatus,
+          })),
+        })),
+    );
+  const currentIndex = episodes.findIndex((item) => item.id === episode.id);
+  const previousEpisode = currentIndex > 0 ? episodes[currentIndex - 1] : null;
+  const nextEpisode = currentIndex >= 0 ? episodes[currentIndex + 1] ?? null : null;
 
   return (
     <main className="app-shell">
@@ -47,13 +102,22 @@ export default async function WatchPage({
               {episode.title || t.unknownTitle}
             </h1>
           </div>
-          <a href={`/${locale}/anime`}>{t.backToLibrary}</a>
+          <a href={`/${locale}/anime/${episode.season.media.id}`}>{t.backToLibrary}</a>
         </header>
         <WatchClient
+          currentEpisode={{
+            id: episode.id,
+            number: episode.number,
+            title: episode.title,
+            seasonNumber: episode.season.number,
+          }}
           episodeId={episode.id}
+          episodes={episodes}
           initialPositionSec={episode.progress[0]?.positionSec ?? 0}
           locale={locale}
           mediaFileId={file.id}
+          nextEpisode={nextEpisode ? { id: nextEpisode.id, number: nextEpisode.number, seasonNumber: nextEpisode.seasonNumber, title: nextEpisode.title } : null}
+          previousEpisode={previousEpisode ? { id: previousEpisode.id, number: previousEpisode.number, seasonNumber: previousEpisode.seasonNumber, title: previousEpisode.title } : null}
         />
       </section>
     </main>
