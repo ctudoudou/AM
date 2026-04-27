@@ -47,6 +47,12 @@ type CandidateGroup = {
   };
 };
 
+type CandidateStats = {
+  totalGroups: number;
+  emptyGroups: number;
+  ungroupedCandidates: number;
+};
+
 type Subscription = {
   id: string;
   candidateGroupId?: string | null;
@@ -73,8 +79,13 @@ export function SubscriptionsClient({ locale }: { locale: Locale }) {
   const [subscriptions, setSubscriptions] = useState<Subscription[]>([]);
   const [rssSources, setRssSources] = useState<RssSource[]>([]);
   const [candidateFilter, setCandidateFilter] = useState<
-    "ALL" | "WITH_CANDIDATES" | "UNSUBSCRIBED" | "SUBSCRIBED"
+    "ALL" | "WITH_CANDIDATES" | "UNSUBSCRIBED" | "SUBSCRIBED" | "EMPTY"
   >("WITH_CANDIDATES");
+  const [candidateStats, setCandidateStats] = useState<CandidateStats>({
+    totalGroups: 0,
+    emptyGroups: 0,
+    ungroupedCandidates: 0,
+  });
   const [rssDraft, setRssDraft] = useState<{ name: string; url: string; mediaType: MediaType }>({
     name: "",
     url: "",
@@ -89,6 +100,7 @@ export function SubscriptionsClient({ locale }: { locale: Locale }) {
   const [status, setStatus] = useState("");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(true);
+  const groupsWithVersions = Math.max(0, candidateStats.totalGroups - candidateStats.emptyGroups);
   const visibleGroups = useMemo(() => {
     const subscriptionGroupIds = new Set(
       subscriptions
@@ -101,10 +113,13 @@ export function SubscriptionsClient({ locale }: { locale: Locale }) {
           return group.candidates.length > 0;
         }
         if (candidateFilter === "UNSUBSCRIBED") {
-          return !subscriptionGroupIds.has(group.id);
+          return !subscriptionGroupIds.has(group.id) && group.candidates.length > 0;
         }
         if (candidateFilter === "SUBSCRIBED") {
           return subscriptionGroupIds.has(group.id);
+        }
+        if (candidateFilter === "EMPTY") {
+          return group.candidates.length === 0;
         }
         return true;
       })
@@ -131,12 +146,20 @@ export function SubscriptionsClient({ locale }: { locale: Locale }) {
       }
       const candidateBody = (await candidateResponse.json()) as {
         groups: CandidateGroup[];
+        stats?: CandidateStats;
       };
       const rssBody = (await rssResponse.json()) as { sources: RssSource[] };
       const subscriptionsBody = (await subscriptionsResponse.json()) as {
         subscriptions: Subscription[];
       };
       setGroups(candidateBody.groups);
+      setCandidateStats(
+        candidateBody.stats ?? {
+          totalGroups: candidateBody.groups.length,
+          emptyGroups: candidateBody.groups.filter((group) => group.candidates.length === 0).length,
+          ungroupedCandidates: 0,
+        },
+      );
       setRssSources(rssBody.sources);
       setSubscriptions(subscriptionsBody.subscriptions);
       setError("");
@@ -430,6 +453,10 @@ export function SubscriptionsClient({ locale }: { locale: Locale }) {
               <WandSparkles size={14} />
               {t.aiGroup}
             </button>
+            <button onClick={() => void runJob("ai.repairCandidateGroups")} type="button">
+              <WandSparkles size={14} />
+              {t.repairGroups}
+            </button>
           </div>
         </div>
         <div className="rss-draft">
@@ -532,7 +559,9 @@ export function SubscriptionsClient({ locale }: { locale: Locale }) {
           <div>
             <h2>{t.subscriptionQueue}</h2>
             <p>
-              {groups.length} {t.titles} · {subscriptions.length} {t.subscribed}
+              {candidateStats.totalGroups} {t.titles} ·{" "}
+              {groupsWithVersions} {t.withVersions} ·{" "}
+              {candidateStats.ungroupedCandidates} {t.ungroupedCandidates}
             </p>
           </div>
           <div className="filter-tabs">
@@ -540,6 +569,7 @@ export function SubscriptionsClient({ locale }: { locale: Locale }) {
               ["WITH_CANDIDATES", t.withVersions],
               ["UNSUBSCRIBED", t.unsubscribed],
               ["SUBSCRIBED", t.subscribed],
+              ["EMPTY", t.futureOnly],
               ["ALL", t.subscriptionFilterAll],
             ].map(([key, label]) => (
               <button
@@ -547,7 +577,12 @@ export function SubscriptionsClient({ locale }: { locale: Locale }) {
                 key={key}
                 onClick={() =>
                   setCandidateFilter(
-                    key as "ALL" | "WITH_CANDIDATES" | "UNSUBSCRIBED" | "SUBSCRIBED",
+                    key as
+                      | "ALL"
+                      | "WITH_CANDIDATES"
+                      | "UNSUBSCRIBED"
+                      | "SUBSCRIBED"
+                      | "EMPTY",
                   )
                 }
                 type="button"
@@ -596,51 +631,51 @@ export function SubscriptionsClient({ locale }: { locale: Locale }) {
                 ) : (
                   <div className="candidate-list">
                     {groupCandidatesByEpisode(group.candidates).map((episode) => (
-                    <div className="candidate-episode" key={episode.key}>
-                      <div className="candidate-episode-heading">
-                        <span>
-                          {t.episode} {episode.label}
-                        </span>
-                        <small>
-                          {episode.candidates.length} {t.candidates}
-                        </small>
-                      </div>
-                      {episode.candidates.map((candidate) => {
-                        const isSubscribed = groupSubscriptions.some((subscription) =>
-                          candidateMatchesSubscription(candidate, subscription),
-                        );
-                        const hasOtherSubscription = hasSubscription && !isSubscribed;
+                      <div className="candidate-episode" key={episode.key}>
+                        <div className="candidate-episode-heading">
+                          <span>
+                            {t.episode} {episode.label}
+                          </span>
+                          <small>
+                            {episode.candidates.length} {t.candidates}
+                          </small>
+                        </div>
+                        {episode.candidates.map((candidate) => {
+                          const isSubscribed = groupSubscriptions.some((subscription) =>
+                            candidateMatchesSubscription(candidate, subscription),
+                          );
+                          const hasOtherSubscription = hasSubscription && !isSubscribed;
 
-                        return (
-                          <div className="candidate-row" key={candidate.id}>
-                            <div>
-                              <strong>{candidate.rawTitle}</strong>
-                              <span className="candidate-row-meta">
-                                {formatCandidateMeta(candidate)}
-                              </span>
+                          return (
+                            <div className="candidate-row" key={candidate.id}>
+                              <div>
+                                <strong>{candidate.rawTitle}</strong>
+                                <span className="candidate-row-meta">
+                                  {formatCandidateMeta(candidate)}
+                                </span>
+                              </div>
+                              <div className="candidate-actions">
+                                <button
+                                  disabled={isSubscribed}
+                                  onClick={() => void createSubscription(group, candidate)}
+                                  type="button"
+                                >
+                                  <Play size={14} />
+                                  {isSubscribed
+                                    ? t.subscribed
+                                    : hasOtherSubscription
+                                      ? t.switchVersion
+                                      : t.subscribeVersion}
+                                </button>
+                                <button onClick={() => void downloadCandidate(candidate)} type="button">
+                                  <Download size={14} />
+                                  {t.download}
+                                </button>
+                              </div>
                             </div>
-                            <div className="candidate-actions">
-                              <button
-                                disabled={isSubscribed}
-                                onClick={() => void createSubscription(group, candidate)}
-                                type="button"
-                              >
-                                <Play size={14} />
-                                {isSubscribed
-                                  ? t.subscribed
-                                  : hasOtherSubscription
-                                    ? t.switchVersion
-                                    : t.subscribeVersion}
-                              </button>
-                              <button onClick={() => void downloadCandidate(candidate)} type="button">
-                                <Download size={14} />
-                                {t.download}
-                              </button>
-                            </div>
-                          </div>
-                        );
-                      })}
-                    </div>
+                          );
+                        })}
+                      </div>
                     ))}
                   </div>
                 )}

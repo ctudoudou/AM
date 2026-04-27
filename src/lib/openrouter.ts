@@ -34,29 +34,38 @@ export async function groupCandidatesWithOpenRouter(candidates: AiCandidateInput
     return heuristicGroups(candidates);
   }
 
-  const response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${settings.ai.openRouterApiKey}`,
-      "Content-Type": "application/json",
-      "HTTP-Referer": "http://localhost:3000",
-      "X-Title": "Kura",
-    },
-    body: JSON.stringify({
-      model: settings.ai.model || "glm5.1",
-      messages: [
-        {
-          role: "system",
-          content:
-            "You group anime release candidates. Return strict JSON only, with no markdown: {\"groups\":[{\"normalizedTitle\":\"\",\"displayTitle\":\"\",\"season\":1,\"candidateIds\":[\"\"],\"confidence\":0.9,\"aliases\":[],\"summary\":\"\"}]}",
-        },
-        {
-          role: "user",
-          content: JSON.stringify({ candidates }),
-        },
-      ],
-    }),
-  });
+  let response: Response;
+  try {
+    response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
+      method: "POST",
+      signal: AbortSignal.timeout(15_000),
+      headers: {
+        Authorization: `Bearer ${settings.ai.openRouterApiKey}`,
+        "Content-Type": "application/json",
+        "HTTP-Referer": "http://localhost:3000",
+        "X-Title": "Kura",
+      },
+      body: JSON.stringify({
+        model: settings.ai.model || "glm5.1",
+        messages: [
+          {
+            role: "system",
+            content:
+              "You group anime release candidates. Return strict JSON only, with no markdown: {\"groups\":[{\"normalizedTitle\":\"\",\"displayTitle\":\"\",\"season\":1,\"candidateIds\":[\"\"],\"confidence\":0.9,\"aliases\":[],\"summary\":\"\"}]}",
+          },
+          {
+            role: "user",
+            content: JSON.stringify({ candidates }),
+          },
+        ],
+      }),
+    });
+  } catch {
+    return heuristicGroups(
+      candidates,
+      "Heuristic grouping used because OpenRouter did not respond before the timeout.",
+    );
+  }
 
   if (!response.ok) {
     return heuristicGroups(

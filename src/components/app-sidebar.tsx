@@ -1,6 +1,5 @@
 import {
   Activity,
-  Database,
   Download,
   Film,
   Folder,
@@ -14,6 +13,7 @@ import {
 import { getMessages } from "@/messages";
 import type { Locale } from "@/lib/i18n";
 import { StorageSummaryCard } from "@/components/storage-summary-card";
+import { KuraIcon } from "@/components/kura-icon";
 
 type SidebarKey =
   | "home"
@@ -66,7 +66,7 @@ export function AppSidebar({
     <aside className="sidebar">
       <div className="brand">
         <div className="brand-mark">
-          <Database size={16} />
+          <KuraIcon size={22} title={t.appName} />
         </div>
         <div>
           <strong>{t.appName}</strong>

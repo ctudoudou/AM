@@ -147,24 +147,29 @@ export function OrganizerClient({ locale }: { locale: Locale }) {
           visiblePlans.map((plan) => {
             const executable = canExecutePlan(plan);
             const rejectable = canRejectPlan(plan);
+            const title =
+              plan.metadata?.title ||
+              plan.candidate?.group?.displayTitle ||
+              plan.candidate?.parsedTitle ||
+              t.unknownTitle;
             return (
               <article key={plan.id}>
-                <div className="candidate-heading">
-                  {plan.metadata?.posterUrl ? (
-                    // eslint-disable-next-line @next/next/no-img-element
-                    <img className="organizer-poster" src={plan.metadata.posterUrl} alt="" />
-                  ) : null}
-                  <div>
-                    <h2>
-                      {plan.metadata?.title ||
-                        plan.candidate?.group?.displayTitle ||
-                        plan.candidate?.parsedTitle ||
-                        t.unknownTitle}
-                    </h2>
-                    <p>
-                      {formatMediaType(plan.mediaType, t)} · {plan.status} ·{" "}
-                      {Math.round(plan.confidence * 100)}% · {plan.reason || "-"}
-                    </p>
+                <div className="organizer-plan-heading">
+                  <div className="organizer-plan-media">
+                    {plan.metadata?.posterUrl ? (
+                      // eslint-disable-next-line @next/next/no-img-element
+                      <img className="organizer-poster" src={plan.metadata.posterUrl} alt="" />
+                    ) : (
+                      <span className="organizer-poster-fallback">{getTitleInitial(title)}</span>
+                    )}
+                    <div className="organizer-plan-title">
+                      <h2>{title}</h2>
+                      {plan.metadata?.year ? <span>{plan.metadata.year}</span> : null}
+                      <p>
+                        {formatMediaType(plan.mediaType, t)} · {plan.status} ·{" "}
+                        {Math.round(plan.confidence * 100)}% · {plan.reason || "-"}
+                      </p>
+                    </div>
                   </div>
                   <div className="toolbar-actions">
                     <button
@@ -201,6 +206,10 @@ export function OrganizerClient({ locale }: { locale: Locale }) {
       </div>
     </section>
   );
+}
+
+function getTitleInitial(title: string) {
+  return title.trim().slice(0, 1).toUpperCase() || "?";
 }
 
 function canExecutePlan(plan: OrganizerPlan) {

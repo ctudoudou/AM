@@ -30,7 +30,26 @@ export async function GET() {
         },
       },
     });
-    return jsonResponse({ groups });
+    const [totalGroups, emptyGroups, ungroupedCandidates] = await Promise.all([
+      prisma.releaseCandidateGroup.count(),
+      prisma.releaseCandidateGroup.count({
+        where: { candidates: { none: {} } },
+      }),
+      prisma.releaseCandidate.count({
+        where: {
+          groupId: null,
+          status: { in: ["NEW", "READY", "REVIEW"] },
+        },
+      }),
+    ]);
+    return jsonResponse({
+      groups,
+      stats: {
+        totalGroups,
+        emptyGroups,
+        ungroupedCandidates,
+      },
+    });
   } catch (error) {
     return jsonError(error);
   }

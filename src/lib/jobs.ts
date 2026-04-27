@@ -1,5 +1,5 @@
 import { fetchAllRssSources, parseNewRssItems } from "@/lib/rss-fetcher";
-import { groupUngroupedCandidates } from "@/lib/candidate-grouper";
+import { groupUngroupedCandidates, repairCandidateGroups } from "@/lib/candidate-grouper";
 import { syncAria2Downloads } from "@/lib/downloads";
 import { matchSubscriptionsToCandidates } from "@/lib/subscription-matcher";
 import { inspectCompletedDownloads } from "@/lib/organizer";
@@ -9,6 +9,7 @@ export const jobNames = [
   "rss.fetchAll",
   "rss.parseItems",
   "ai.groupCandidates",
+  "ai.repairCandidateGroups",
   "subscriptions.matchNewCandidates",
   "downloads.syncAria2",
   "organizer.inspectCompletedDownloads",
@@ -30,6 +31,8 @@ export async function runJob(name: JobName) {
       return parseNewRssItems();
     case "ai.groupCandidates":
       return groupUngroupedCandidates(200, { regroupExisting: true });
+    case "ai.repairCandidateGroups":
+      return repairCandidateGroups(200);
     case "subscriptions.matchNewCandidates":
       return matchSubscriptionsToCandidates();
     case "downloads.syncAria2":

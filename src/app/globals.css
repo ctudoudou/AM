@@ -1292,12 +1292,80 @@ a {
   border-bottom: 0;
 }
 
+.organizer-plan-heading {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: start;
+  gap: 16px;
+}
+
+.organizer-plan-media {
+  display: grid;
+  min-width: 0;
+  grid-template-columns: 64px minmax(0, 1fr);
+  align-items: start;
+  gap: 14px;
+}
+
 .organizer-poster {
-  width: 54px;
-  height: 76px;
+  display: block;
+  width: 64px;
+  height: 90px;
   flex: 0 0 auto;
-  border-radius: 8px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.04);
   object-fit: cover;
+}
+
+.organizer-poster-fallback {
+  display: grid;
+  width: 64px;
+  height: 90px;
+  place-items: center;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 10px;
+  background: linear-gradient(145deg, rgba(255, 255, 255, 0.09), rgba(255, 255, 255, 0.025));
+  color: rgba(255, 255, 255, 0.7);
+  font-size: 24px;
+  font-weight: 700;
+}
+
+.organizer-plan-title {
+  min-width: 0;
+  padding-top: 1px;
+}
+
+.organizer-plan-title h2 {
+  display: -webkit-box;
+  overflow: hidden;
+  margin: 0;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  color: var(--text-primary);
+  font-size: 16px;
+  font-weight: 650;
+  line-height: 22px;
+  text-align: left;
+}
+
+.organizer-plan-title span {
+  display: block;
+  margin-top: 4px;
+  color: var(--text-faint);
+  font-size: 12px;
+  line-height: 16px;
+}
+
+.organizer-plan-title p {
+  display: -webkit-box;
+  overflow: hidden;
+  margin: 6px 0 0;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  color: var(--text-muted);
+  font-size: 12px;
+  line-height: 18px;
 }
 
 .organizer-list .toolbar-actions button:disabled {
@@ -2345,6 +2413,7 @@ a {
   }
 
   .candidate-heading,
+  .organizer-plan-heading,
   .download-table article,
   .organizer-paths div {
     grid-template-columns: 1fr;
@@ -2352,5 +2421,21 @@ a {
 
   .candidate-heading {
     flex-direction: column;
+  }
+
+  .organizer-plan-media {
+    grid-template-columns: 56px minmax(0, 1fr);
+    gap: 12px;
+  }
+
+  .organizer-poster,
+  .organizer-poster-fallback {
+    width: 56px;
+    height: 78px;
+    border-radius: 9px;
+  }
+
+  .organizer-list .toolbar-actions {
+    justify-content: flex-start;
   }
 }

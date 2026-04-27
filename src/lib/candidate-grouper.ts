@@ -3,9 +3,31 @@ import { prisma } from "@/lib/db";
 import { groupCandidatesWithOpenRouter } from "@/lib/openrouter";
 import { parseMediaReleaseTitle } from "@/lib/media-parser";
 
+type CandidateGroupProposal = {
+  normalizedTitle: string;
+  displayTitle: string;
+  season?: number | null;
+  candidateIds: string[];
+  confidence: number;
+  aliases: string[];
+  summary: string;
+};
+
+type GroupableCandidate = {
+  id: string;
+  rawTitle: string;
+  parsedTitle: string;
+  normalizedTitle: string;
+  episodeNumber?: number | null;
+  season?: number | null;
+  subtitleGroup?: string | null;
+  resolution?: string | null;
+  codec?: string | null;
+};
+
 export async function groupUngroupedCandidates(
   limit = 50,
-  options: { regroupExisting?: boolean; candidateIds?: string[] } = {},
+  options: { regroupExisting?: boolean; candidateIds?: string[]; useAi?: boolean } = {},
 ) {
   const candidates = await prisma.releaseCandidate.findMany({
     where: {
@@ -41,7 +63,6 @@ export async function groupUngroupedCandidates(
         sourceKind: parsed.sourceKind,
         variantKey: parsed.variantKey,
         releaseTags: parsed.releaseTags,
-        groupId: options.regroupExisting ? null : candidate.groupId,
       },
     });
     normalizedCandidates.push(updated);
@@ -66,10 +87,17 @@ export async function groupUngroupedCandidates(
       resolution: candidate.resolution,
       codec: candidate.codec,
     }));
-    const mediaGroups =
-      mediaType === "ANIME"
+    const rawGroups =
+      mediaType === "ANIME" && options.useAi !== false
         ? await groupCandidatesWithOpenRouter(aiInputs)
         : heuristicMediaGroups(mediaType, aiInputs);
+    const mediaGroups = validateGroupProposals(rawGroups, aiInputs)
+      ? rawGroups
+      : heuristicMediaGroups(
+          mediaType,
+          aiInputs,
+          "Rule grouping used because AI grouping did not cover the candidate set safely.",
+        );
     groups.push(...mediaGroups.map((group) => ({ ...group, mediaType })));
   }
 
@@ -137,19 +165,77 @@ export async function groupUngroupedCandidates(
   return { grouped };
 }
 
+export async function repairCandidateGroups(batchSize = 200) {
+  let grouped = 0;
+  let passes = 0;
+  let lastGrouped = -1;
+
+  while (lastGrouped !== 0) {
+    const result = await groupUngroupedCandidates(batchSize, { useAi: false });
+    lastGrouped = result.grouped;
+    grouped += result.grouped;
+    passes += 1;
+  }
+
+  const deleted = await prisma.releaseCandidateGroup.deleteMany({
+    where: {
+      subscriptions: { none: {} },
+      candidates: { none: {} },
+    },
+  });
+
+  const remainingUngrouped = await prisma.releaseCandidate.count({
+    where: {
+      groupId: null,
+      status: { in: ["NEW", "READY", "REVIEW"] },
+    },
+  });
+  const emptyGroups = await prisma.releaseCandidateGroup.count({
+    where: {
+      subscriptions: { none: {} },
+      candidates: { none: {} },
+    },
+  });
+
+  return {
+    grouped,
+    passes,
+    deletedEmptyGroups: deleted.count,
+    remainingUngrouped,
+    emptyGroups,
+  };
+}
+
+export function validateGroupProposals(
+  groups: CandidateGroupProposal[],
+  candidates: Array<{ id: string }>,
+) {
+  const inputIds = new Set(candidates.map((candidate) => candidate.id));
+  const seenIds = new Set<string>();
+
+  if (groups.length === 0 || inputIds.size === 0) {
+    return false;
+  }
+
+  for (const group of groups) {
+    if (!group.candidateIds.length) {
+      return false;
+    }
+    for (const id of group.candidateIds) {
+      if (!inputIds.has(id) || seenIds.has(id)) {
+        return false;
+      }
+      seenIds.add(id);
+    }
+  }
+
+  return seenIds.size === inputIds.size;
+}
+
 function heuristicMediaGroups(
   mediaType: MediaType,
-  candidates: Array<{
-    id: string;
-    rawTitle: string;
-    parsedTitle: string;
-    normalizedTitle: string;
-    episodeNumber?: number | null;
-    season?: number | null;
-    subtitleGroup?: string | null;
-    resolution?: string | null;
-    codec?: string | null;
-  }>,
+  candidates: GroupableCandidate[],
+  summary?: string,
 ) {
   const grouped = new Map<string, typeof candidates>();
 
@@ -167,8 +253,9 @@ function heuristicMediaGroups(
     confidence: Math.min(...items.map((item) => 0.72 + (item.resolution ? 0.08 : 0))),
     aliases: [...new Set(items.map((item) => item.parsedTitle))],
     summary:
-      mediaType === "MOVIE"
+      summary ??
+      (mediaType === "MOVIE"
         ? "Rule grouping used for movie intake."
-        : "Rule grouping used for TV intake.",
+        : "Rule grouping used for TV intake."),
   }));
 }
