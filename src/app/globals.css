@@ -929,6 +929,29 @@ a {
   gap: 16px;
 }
 
+.candidate-board-heading {
+  display: flex;
+  grid-column: 1 / -1;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 2px 2px 0;
+}
+
+.candidate-board-heading h2 {
+  margin: 0;
+  color: var(--text-primary);
+  font-size: 18px;
+  line-height: 26px;
+}
+
+.candidate-board-heading p {
+  margin: 3px 0 0;
+  color: var(--text-muted);
+  font-size: 12px;
+  line-height: 18px;
+}
+
 .empty-panel,
 .candidate-group {
   border: 1px solid var(--border-subtle);
@@ -953,6 +976,15 @@ a {
   align-items: flex-start;
   justify-content: space-between;
   gap: 16px;
+}
+
+.candidate-heading-actions {
+  display: flex;
+  flex: 0 0 auto;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
 }
 
 .candidate-heading h2 {
@@ -1006,8 +1038,24 @@ a {
   white-space: nowrap;
 }
 
+.candidate-policy.active {
+  color: rgba(167, 243, 208, 0.95);
+  border-color: rgba(16, 185, 129, 0.35);
+  background: rgba(16, 185, 129, 0.1);
+}
+
 .candidate-summary {
   margin-top: 12px;
+}
+
+.candidate-empty-version {
+  margin-top: 14px;
+  border: 1px dashed rgba(255, 255, 255, 0.1);
+  border-radius: 12px;
+  color: var(--text-muted);
+  padding: 14px;
+  font-size: 12px;
+  line-height: 18px;
 }
 
 .candidate-list {
@@ -2242,8 +2290,11 @@ a {
   .library-toolbar,
   .watch-heading,
   .episode-browser-heading,
+  .candidate-board-heading,
+  .candidate-heading-actions,
   .candidate-actions {
     flex-direction: column;
+    align-items: stretch;
   }
 
   .anime-card {

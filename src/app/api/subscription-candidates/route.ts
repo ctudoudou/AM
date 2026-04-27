@@ -6,7 +6,7 @@ export const dynamic = "force-dynamic";
 export async function GET() {
   try {
     const groups = await prisma.releaseCandidateGroup.findMany({
-      orderBy: [{ updatedAt: "desc" }],
+      orderBy: [{ candidates: { _count: "desc" } }, { updatedAt: "desc" }],
       include: {
         _count: { select: { candidates: true, subscriptions: true } },
         candidates: {

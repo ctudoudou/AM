@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { Download, Loader2, Play, Plus, RefreshCw, Trash2, WandSparkles } from "lucide-react";
 import { getMessages } from "@/messages";
 import type { Locale } from "@/lib/i18n";
@@ -72,6 +72,9 @@ export function SubscriptionsClient({ locale }: { locale: Locale }) {
   const [groups, setGroups] = useState<CandidateGroup[]>([]);
   const [subscriptions, setSubscriptions] = useState<Subscription[]>([]);
   const [rssSources, setRssSources] = useState<RssSource[]>([]);
+  const [candidateFilter, setCandidateFilter] = useState<
+    "ALL" | "WITH_CANDIDATES" | "UNSUBSCRIBED" | "SUBSCRIBED"
+  >("WITH_CANDIDATES");
   const [rssDraft, setRssDraft] = useState<{ name: string; url: string; mediaType: MediaType }>({
     name: "",
     url: "",
@@ -86,6 +89,35 @@ export function SubscriptionsClient({ locale }: { locale: Locale }) {
   const [status, setStatus] = useState("");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(true);
+  const visibleGroups = useMemo(() => {
+    const subscriptionGroupIds = new Set(
+      subscriptions
+        .map((subscription) => subscription.candidateGroupId)
+        .filter(Boolean),
+    );
+    return groups
+      .filter((group) => {
+        if (candidateFilter === "WITH_CANDIDATES") {
+          return group.candidates.length > 0;
+        }
+        if (candidateFilter === "UNSUBSCRIBED") {
+          return !subscriptionGroupIds.has(group.id);
+        }
+        if (candidateFilter === "SUBSCRIBED") {
+          return subscriptionGroupIds.has(group.id);
+        }
+        return true;
+      })
+      .sort((a, b) => {
+        const aSubscribed = subscriptionGroupIds.has(a.id) ? 1 : 0;
+        const bSubscribed = subscriptionGroupIds.has(b.id) ? 1 : 0;
+        return (
+          bSubscribed - aSubscribed ||
+          b.candidates.length - a.candidates.length ||
+          b.confidence - a.confidence
+        );
+      });
+  }, [candidateFilter, groups, subscriptions]);
 
   const load = useCallback(async () => {
     try {
@@ -231,37 +263,42 @@ export function SubscriptionsClient({ locale }: { locale: Locale }) {
     await load();
   }
 
-  async function createSubscription(group: CandidateGroup, candidate: Candidate) {
+  async function createSubscription(group: CandidateGroup, candidate?: Candidate) {
+    setStatus("");
+    setError("");
     const response = await fetch("/api/subscriptions", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        candidateId: candidate.id,
+        candidateId: candidate?.id,
         candidateGroupId: group.id,
-        preferredGroup: candidate.subtitleGroup ?? undefined,
-        preferredResolution: candidate.resolution ?? undefined,
-        preferredCodec: candidate.codec ?? undefined,
-        preferredAudio: candidate.audio ?? undefined,
-        preferredSubtitleLanguage: candidate.subtitleLanguage ?? undefined,
-        preferredReleaseProfile: candidate.releaseProfile ?? undefined,
-        preferredSourceKind: candidate.sourceKind ?? undefined,
-        preferredVariantKey: candidate.variantKey ?? undefined,
-        autoDownload: true,
+        preferredGroup: candidate?.subtitleGroup ?? undefined,
+        preferredResolution: candidate?.resolution ?? undefined,
+        preferredCodec: candidate?.codec ?? undefined,
+        preferredAudio: candidate?.audio ?? undefined,
+        preferredSubtitleLanguage: candidate?.subtitleLanguage ?? undefined,
+        preferredReleaseProfile: candidate?.releaseProfile ?? undefined,
+        preferredSourceKind: candidate?.sourceKind ?? undefined,
+        preferredVariantKey: candidate?.variantKey ?? undefined,
+        autoDownload: Boolean(candidate),
         fallbackPolicy: "manual_review",
       }),
     });
     if (response.ok) {
       const body = (await response.json().catch(() => null)) as {
         downloadError?: string;
+        replaced?: boolean;
       } | null;
+      const message = body?.replaced ? t.subscriptionUpdated : t.subscriptionCreated;
       setStatus(
         body?.downloadError
-          ? `${t.subscriptionCreated} ${t.downloadCreateError}: ${body.downloadError}`
-          : t.subscriptionCreated,
+          ? `${message} ${t.downloadCreateError}: ${body.downloadError}`
+          : message,
       );
       await load();
     } else {
-      setError(t.subscriptionCreateError);
+      const body = await response.json().catch(() => null);
+      setError(body?.message || t.subscriptionCreateError);
     }
   }
 
@@ -491,13 +528,43 @@ export function SubscriptionsClient({ locale }: { locale: Locale }) {
       </section>
 
       <section className="candidate-board">
-        {groups.length === 0 ? (
+        <div className="candidate-board-heading">
+          <div>
+            <h2>{t.subscriptionQueue}</h2>
+            <p>
+              {groups.length} {t.titles} · {subscriptions.length} {t.subscribed}
+            </p>
+          </div>
+          <div className="filter-tabs">
+            {[
+              ["WITH_CANDIDATES", t.withVersions],
+              ["UNSUBSCRIBED", t.unsubscribed],
+              ["SUBSCRIBED", t.subscribed],
+              ["ALL", t.subscriptionFilterAll],
+            ].map(([key, label]) => (
+              <button
+                className={candidateFilter === key ? "active" : ""}
+                key={key}
+                onClick={() =>
+                  setCandidateFilter(
+                    key as "ALL" | "WITH_CANDIDATES" | "UNSUBSCRIBED" | "SUBSCRIBED",
+                  )
+                }
+                type="button"
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+        </div>
+        {visibleGroups.length === 0 ? (
           <div className="empty-panel">{t.noCandidates}</div>
         ) : (
-          groups.map((group) => {
+          visibleGroups.map((group) => {
             const groupSubscriptions = subscriptions.filter(
               (subscription) => subscription.candidateGroupId === group.id,
             );
+            const hasSubscription = groupSubscriptions.length > 0;
 
             return (
               <article className="candidate-group" key={group.id}>
@@ -511,15 +578,24 @@ export function SubscriptionsClient({ locale }: { locale: Locale }) {
                       {group.reviewRequired ? t.needsReview : t.ready}
                     </p>
                   </div>
-                  <span className="candidate-policy">
-                    {groupSubscriptions.length > 0
-                      ? `${groupSubscriptions.length} ${t.subscribed}`
-                      : t.futureOnlyPolicy}
-                  </span>
+                  <div className="candidate-heading-actions">
+                    <span className={hasSubscription ? "candidate-policy active" : "candidate-policy"}>
+                      {hasSubscription ? t.subscribed : t.futureOnlyPolicy}
+                    </span>
+                    {!hasSubscription ? (
+                      <button onClick={() => void createSubscription(group)} type="button">
+                        <Plus size={14} />
+                        {t.futureOnlySubscribe}
+                      </button>
+                    ) : null}
+                  </div>
                 </div>
                 {group.aiSummary ? <p className="candidate-summary">{group.aiSummary}</p> : null}
-                <div className="candidate-list">
-                  {groupCandidatesByEpisode(group.candidates).map((episode) => (
+                {group.candidates.length === 0 ? (
+                  <div className="candidate-empty-version">{t.noVersionsYet}</div>
+                ) : (
+                  <div className="candidate-list">
+                    {groupCandidatesByEpisode(group.candidates).map((episode) => (
                     <div className="candidate-episode" key={episode.key}>
                       <div className="candidate-episode-heading">
                         <span>
@@ -533,8 +609,7 @@ export function SubscriptionsClient({ locale }: { locale: Locale }) {
                         const isSubscribed = groupSubscriptions.some((subscription) =>
                           candidateMatchesSubscription(candidate, subscription),
                         );
-                        const hasOtherSubscription =
-                          groupSubscriptions.length > 0 && !isSubscribed;
+                        const hasOtherSubscription = hasSubscription && !isSubscribed;
 
                         return (
                           <div className="candidate-row" key={candidate.id}>
@@ -546,7 +621,7 @@ export function SubscriptionsClient({ locale }: { locale: Locale }) {
                             </div>
                             <div className="candidate-actions">
                               <button
-                                disabled={isSubscribed || hasOtherSubscription}
+                                disabled={isSubscribed}
                                 onClick={() => void createSubscription(group, candidate)}
                                 type="button"
                               >
@@ -554,7 +629,7 @@ export function SubscriptionsClient({ locale }: { locale: Locale }) {
                                 {isSubscribed
                                   ? t.subscribed
                                   : hasOtherSubscription
-                                    ? t.cancelBeforeResubscribe
+                                    ? t.switchVersion
                                     : t.subscribeVersion}
                               </button>
                               <button onClick={() => void downloadCandidate(candidate)} type="button">
@@ -566,8 +641,9 @@ export function SubscriptionsClient({ locale }: { locale: Locale }) {
                         );
                       })}
                     </div>
-                  ))}
-                </div>
+                    ))}
+                  </div>
+                )}
               </article>
             );
           })

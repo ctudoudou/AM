@@ -52,26 +52,54 @@ export async function POST(request: Request) {
       (await prisma.releaseCandidateGroup.findUniqueOrThrow({
         where: { id: candidateGroupId },
       }));
-    const subscription = await prisma.subscription.create({
-      data: {
-        candidateGroupId: group.id,
-        mediaType: group.mediaType,
-        title: group.displayTitle,
-        preferredGroup: input.preferredGroup ?? selectedCandidate?.subtitleGroup,
-        preferredResolution: input.preferredResolution ?? selectedCandidate?.resolution,
-        preferredCodec: input.preferredCodec ?? selectedCandidate?.codec,
-        preferredAudio: input.preferredAudio ?? selectedCandidate?.audio,
-        preferredSubtitleLanguage:
-          input.preferredSubtitleLanguage ?? selectedCandidate?.subtitleLanguage,
-        preferredReleaseProfile:
-          input.preferredReleaseProfile ?? selectedCandidate?.releaseProfile,
-        preferredSourceKind: input.preferredSourceKind ?? selectedCandidate?.sourceKind,
-        preferredVariantKey: input.preferredVariantKey ?? selectedCandidate?.variantKey,
-        fallbackPolicy: input.fallbackPolicy,
-        autoDownload: input.autoDownload,
-      },
+    const existingSubscription = await prisma.subscription.findFirst({
+      where: { candidateGroupId: group.id },
+      orderBy: { updatedAt: "desc" },
     });
+    const subscriptionData = {
+      candidateGroupId: group.id,
+      mediaType: group.mediaType,
+      title: group.displayTitle,
+      preferredGroup: input.preferredGroup ?? selectedCandidate?.subtitleGroup,
+      preferredResolution: input.preferredResolution ?? selectedCandidate?.resolution,
+      preferredCodec: input.preferredCodec ?? selectedCandidate?.codec,
+      preferredAudio: input.preferredAudio ?? selectedCandidate?.audio,
+      preferredSubtitleLanguage:
+        input.preferredSubtitleLanguage ?? selectedCandidate?.subtitleLanguage,
+      preferredReleaseProfile:
+        input.preferredReleaseProfile ?? selectedCandidate?.releaseProfile,
+      preferredSourceKind: input.preferredSourceKind ?? selectedCandidate?.sourceKind,
+      preferredVariantKey: input.preferredVariantKey ?? selectedCandidate?.variantKey,
+      fallbackPolicy: input.fallbackPolicy,
+      autoDownload: input.autoDownload,
+      enabled: true,
+    };
+    const subscription = existingSubscription
+      ? await prisma.subscription.update({
+          where: { id: existingSubscription.id },
+          data: subscriptionData,
+        })
+      : await prisma.subscription.create({
+          data: subscriptionData,
+        });
+    if (existingSubscription) {
+      await prisma.subscription.deleteMany({
+        where: {
+          candidateGroupId: group.id,
+          id: { not: subscription.id },
+        },
+      });
+    }
+
     if (selectedCandidate) {
+      await prisma.releaseCandidate.updateMany({
+        where: {
+          groupId: group.id,
+          status: "SUBSCRIBED",
+          id: { not: selectedCandidate.id },
+        },
+        data: { status: "READY" },
+      });
       await prisma.releaseCandidate.update({
         where: { id: selectedCandidate.id },
         data: { status: "SUBSCRIBED" },
@@ -97,7 +125,10 @@ export async function POST(request: Request) {
       }
     }
 
-    return jsonResponse({ subscription, downloadError }, { status: 201 });
+    return jsonResponse(
+      { subscription, downloadError, replaced: Boolean(existingSubscription) },
+      { status: existingSubscription ? 200 : 201 },
+    );
   } catch (error) {
     return jsonError(error);
   }
