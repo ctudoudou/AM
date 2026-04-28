@@ -26,7 +26,6 @@ export async function POST(
       const media = await prisma.mediaTitle.update({
         where: { id },
         data: {
-          originalTitle: null,
           year: null,
           synopsis: null,
           posterUrl: null,

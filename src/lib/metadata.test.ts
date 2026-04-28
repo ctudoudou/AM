@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { buildAnimeMetadataQueries, scoreMetadataRelevance } from "./metadata";
+import {
+  buildAnimeMetadataQueries,
+  collectAnimeMetadataQueryTexts,
+  scoreMetadataRelevance,
+} from "./metadata";
 
 describe("buildAnimeMetadataQueries", () => {
   it("creates provider-friendly queries from bilingual seasonal titles", () => {
@@ -18,6 +22,36 @@ describe("buildAnimeMetadataQueries", () => {
     expect(queries).toContain("Mairimashita! Iruma-kun");
     expect(queries).toContain("Mairimashita! Iruma-kun 4th Season");
     expect(queries).toContain("Mairimashita! Iruma-kun Season 4");
+  });
+});
+
+describe("collectAnimeMetadataQueryTexts", () => {
+  it("uses episode titles and file names as recovery queries", () => {
+    const queries = buildAnimeMetadataQueries(
+      collectAnimeMetadataQueryTexts({
+        primaryTitle: "A Hundred Scenes of Awajima",
+        originalTitle: null,
+        aliases: [{ title: "A Hundred Scenes of Awajima" }],
+        seasons: [
+          {
+            episodes: [
+              {
+                title: "淡岛百景 / Awajima Hyakkei",
+                files: [
+                  {
+                    originalName: "[ANi] Awajima Hyakkei - 01.mkv",
+                    absolutePath: "/data/library/anime/A Hundred Scenes of Awajima/Season 01/Awajima Hyakkei - 01.mkv",
+                  },
+                ],
+              },
+            ],
+          },
+        ],
+      }),
+    );
+
+    expect(queries).toContain("淡岛百景");
+    expect(queries).toContain("Awajima Hyakkei");
   });
 });
 

@@ -1,6 +1,8 @@
+import path from "node:path";
 import { Prisma, type MediaType } from "@prisma/client";
 import { prisma } from "@/lib/db";
 import { normalizeTitleAliases } from "@/lib/anime-parser";
+import { cacheRemoteMediaAsset, isLocalMediaAssetUrl } from "@/lib/media-assets";
 import {
   aliasesFromMetadataRaw,
   aliasesFromTitleTexts,
@@ -250,16 +252,27 @@ export async function refreshAnimeMetadata(titleId: string) {
     where: { id: titleId },
     include: {
       aliases: true,
+      seasons: {
+        include: {
+          episodes: {
+            include: {
+              files: {
+                select: {
+                  originalName: true,
+                  absolutePath: true,
+                },
+              },
+            },
+          },
+        },
+      },
     },
   });
-  const queries = buildAnimeMetadataQueries([
-    media.primaryTitle,
-    media.originalTitle,
-    ...media.aliases.map((alias) => alias.title),
-  ]);
+  const queryTexts = collectAnimeMetadataQueryTexts(media);
+  const queries = buildAnimeMetadataQueries(queryTexts);
   await upsertTitleAliases(
     media.id,
-    aliasesFromTitleTexts([media.primaryTitle, media.originalTitle]),
+    aliasesFromTitleTexts(queryTexts),
   );
   const matches = [];
 
@@ -290,6 +303,16 @@ export async function refreshAnimeMetadata(titleId: string) {
     ]),
     ...aliasesFromMetadataRaw(best.raw),
   ]);
+  const posterUrl =
+    (await cacheRemoteMediaAsset(best.posterUrl, {
+      mediaId: media.id,
+      kind: "poster",
+    })) ?? (isLocalMediaAssetUrl(media.posterUrl) ? media.posterUrl : undefined);
+  const backdropUrl =
+    (await cacheRemoteMediaAsset(best.backdropUrl, {
+      mediaId: media.id,
+      kind: "backdrop",
+    })) ?? (isLocalMediaAssetUrl(media.backdropUrl) ? media.backdropUrl : undefined);
 
   const updated = await prisma.mediaTitle.update({
     where: { id: media.id },
@@ -297,8 +320,8 @@ export async function refreshAnimeMetadata(titleId: string) {
       originalTitle: media.originalTitle ?? best.originalTitle,
       year: media.year ?? best.year,
       synopsis: media.synopsis ?? best.synopsis,
-      posterUrl: best.posterUrl ?? media.posterUrl,
-      backdropUrl: best.backdropUrl ?? media.backdropUrl,
+      posterUrl,
+      backdropUrl,
     },
     select: {
       id: true,
@@ -336,6 +359,35 @@ export async function refreshAnimeMetadata(titleId: string) {
     provider: best.provider,
     posterUrl: updated.posterUrl,
   };
+}
+
+export function collectAnimeMetadataQueryTexts(media: {
+  primaryTitle: string;
+  originalTitle?: string | null;
+  aliases?: Array<{ title: string }>;
+  seasons?: Array<{
+    episodes: Array<{
+      title?: string | null;
+      files?: Array<{
+        originalName?: string | null;
+        absolutePath?: string | null;
+      }>;
+    }>;
+  }>;
+}) {
+  const values = [
+    media.primaryTitle,
+    media.originalTitle,
+    ...(media.aliases ?? []).map((alias) => alias.title),
+  ];
+  for (const episode of (media.seasons ?? []).flatMap((season) => season.episodes)) {
+    values.push(episode.title);
+    for (const file of episode.files ?? []) {
+      values.push(file.originalName);
+      values.push(file.absolutePath ? path.basename(file.absolutePath, path.extname(file.absolutePath)) : null);
+    }
+  }
+  return uniqueQueryTexts(values);
 }
 
 export function buildAnimeMetadataQueries(values: Array<string | null | undefined>) {
@@ -778,6 +830,24 @@ function addQuery(queries: string[], value: string) {
   if (!queries.some((item) => item.toLowerCase() === key)) {
     queries.push(query);
   }
+}
+
+function uniqueQueryTexts(values: Array<string | null | undefined>) {
+  const seen = new Set<string>();
+  const results: string[] = [];
+  for (const value of values) {
+    const text = value?.replace(/\s+/g, " ").trim();
+    if (!text) {
+      continue;
+    }
+    const key = text.toLowerCase();
+    if (seen.has(key)) {
+      continue;
+    }
+    seen.add(key);
+    results.push(text);
+  }
+  return results;
 }
 
 function cleanSearchTitle(value: string) {

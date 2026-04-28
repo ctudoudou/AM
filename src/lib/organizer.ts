@@ -2,6 +2,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { Prisma, type MediaType } from "@prisma/client";
 import { prisma } from "@/lib/db";
+import { cacheRemoteMediaAsset, isLocalMediaAssetUrl } from "@/lib/media-assets";
 import { getAppSettings } from "@/lib/settings";
 import { matchMetadataForGroup, type MetadataMatch } from "@/lib/metadata";
 
@@ -385,6 +386,16 @@ async function upsertMediaRecords(plan: {
         backdropUrl: metadata?.backdropUrl,
       },
     }));
+  const posterUrl =
+    (await cacheRemoteMediaAsset(metadata?.posterUrl, {
+      mediaId: media.id,
+      kind: "poster",
+    })) ?? (isLocalMediaAssetUrl(metadata?.posterUrl) ? metadata?.posterUrl : undefined);
+  const backdropUrl =
+    (await cacheRemoteMediaAsset(metadata?.backdropUrl, {
+      mediaId: media.id,
+      kind: "backdrop",
+    })) ?? (isLocalMediaAssetUrl(metadata?.backdropUrl) ? metadata?.backdropUrl : undefined);
 
   await prisma.mediaTitle.update({
     where: { id: media.id },
@@ -393,8 +404,8 @@ async function upsertMediaRecords(plan: {
       originalTitle: metadata?.originalTitle,
       year: metadata?.year,
       synopsis: metadata?.synopsis,
-      posterUrl: metadata?.posterUrl,
-      backdropUrl: metadata?.backdropUrl,
+      posterUrl,
+      backdropUrl,
     },
   });
   const seasonNumber = candidate?.season ?? 1;
