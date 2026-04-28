@@ -5,8 +5,10 @@ import { prisma } from "@/lib/db";
 import { isLocale } from "@/lib/i18n";
 import { getAppSettings } from "@/lib/settings";
 import { resolveMediaDisplayTitle } from "@/lib/title-display";
+import { getAnimeEpisodeCoverage } from "@/lib/wanted-episodes";
 import { getMessages } from "@/messages";
 import { AnimeTitleActions } from "./anime-title-actions";
+import { MissingEpisodesPanel } from "./missing-episodes-panel";
 
 const directPlayExtensions = new Set([".mp4", ".m4v", ".webm", ".mov"]);
 
@@ -47,6 +49,7 @@ export default async function AnimeTitlePage({
   const t = getMessages(locale);
   const settings = await getAppSettings();
   const display = resolveMediaDisplayTitle(media, settings);
+  const missingCoverage = await getAnimeEpisodeCoverage(media.id);
   const title = splitTitle(display.displayTitle);
   const episodeCount = media.seasons.reduce(
     (count, season) =>
@@ -116,6 +119,12 @@ export default async function AnimeTitlePage({
             ) : null}
           </div>
         </header>
+
+        <MissingEpisodesPanel
+          initialCoverage={missingCoverage}
+          locale={locale}
+          mediaTitleId={media.id}
+        />
 
         <section className="episode-browser">
           <div className="episode-browser-heading">

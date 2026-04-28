@@ -64,6 +64,16 @@ enum TranscodeStatus {
   FAILED
 }
 
+enum WantedEpisodeStatus {
+  MISSING
+  CANDIDATE_FOUND
+  DOWNLOADING
+  DOWNLOADED
+  NEEDS_REVIEW
+  ARCHIVED
+  IGNORED
+}
+
 enum TitleDisplayMode {
   GLOBAL
   ZH_HANT
@@ -91,6 +101,7 @@ model MediaTitle {
   aliases      TitleAlias[]
   metadata     MetadataLink[]
   organizerPlans OrganizerPlan[]
+  wantedEpisodes WantedEpisode[]
 }
 
 model TitleAlias {
@@ -233,6 +244,25 @@ model Download {
   @@index([status])
 }
 
+model WantedEpisode {
+  id                 String              @id @default(cuid())
+  mediaTitleId       String
+  mediaTitle         MediaTitle          @relation(fields: [mediaTitleId], references: [id], onDelete: Cascade)
+  seasonNumber       Int
+  episodeNumber      Int
+  status             WantedEpisodeStatus @default(MISSING)
+  matchedCandidateId String?
+  matchedCandidate   ReleaseCandidate?   @relation(fields: [matchedCandidateId], references: [id], onDelete: SetNull)
+  ignored            Boolean             @default(false)
+  reason             String?
+  createdAt          DateTime            @default(now())
+  updatedAt          DateTime            @updatedAt
+
+  @@unique([mediaTitleId, seasonNumber, episodeNumber])
+  @@index([status])
+  @@index([matchedCandidateId])
+}
+
 model MetadataLink {
   id        String     @id @default(cuid())
   provider  String
@@ -327,6 +357,7 @@ model ReleaseCandidate {
   status            CandidateStatus        @default(NEW)
   downloads         Download[]
   organizerPlans    OrganizerPlan[]
+  wantedEpisodes    WantedEpisode[]
   createdAt         DateTime               @default(now())
   updatedAt         DateTime               @updatedAt
 

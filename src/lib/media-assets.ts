@@ -24,40 +24,44 @@ export async function cacheRemoteMediaAsset(
     kind: "poster" | "backdrop";
   },
 ) {
-  if (!url) {
-    return undefined;
-  }
-  if (url.startsWith("/api/media-assets/")) {
-    return url;
-  }
-  if (!/^https?:\/\//i.test(url)) {
-    return undefined;
-  }
+  try {
+    if (!url) {
+      return undefined;
+    }
+    if (url.startsWith("/api/media-assets/")) {
+      return url;
+    }
+    if (!/^https?:\/\//i.test(url)) {
+      return undefined;
+    }
 
-  const response = await fetch(url, {
-    headers: { "User-Agent": "Kura/0.1" },
-    signal: AbortSignal.timeout(12_000),
-  }).catch(() => null);
-  if (!response?.ok) {
-    return undefined;
-  }
-  const contentType = response.headers.get("content-type")?.split(";")[0]?.toLowerCase();
-  const extension = extensionForAsset(url, contentType);
-  if (!extension || !imageContentTypes.has(extension)) {
-    return undefined;
-  }
+    const response = await fetch(url, {
+      headers: { "User-Agent": "Kura/0.1" },
+      signal: AbortSignal.timeout(12_000),
+    }).catch(() => null);
+    if (!response?.ok) {
+      return undefined;
+    }
+    const contentType = response.headers.get("content-type")?.split(";")[0]?.toLowerCase();
+    const extension = extensionForAsset(url, contentType);
+    if (!extension || !imageContentTypes.has(extension)) {
+      return undefined;
+    }
 
-  const settings = await getAppSettings();
-  const root = path.join(settings.directories.metadataDir, "covers");
-  await fs.mkdir(root, { recursive: true });
-  const filename = `${safeSegment(input.mediaId)}-${input.kind}${extension}`;
-  const filePath = path.join(root, filename);
-  const bytes = Buffer.from(await response.arrayBuffer());
-  if (bytes.length === 0) {
+    const settings = await getAppSettings();
+    const root = path.join(settings.directories.metadataDir, "covers");
+    await fs.mkdir(root, { recursive: true });
+    const filename = `${safeSegment(input.mediaId)}-${input.kind}${extension}`;
+    const filePath = path.join(root, filename);
+    const bytes = Buffer.from(await response.arrayBuffer());
+    if (bytes.length === 0) {
+      return undefined;
+    }
+    await fs.writeFile(filePath, bytes);
+    return `/api/media-assets/covers/${filename}`;
+  } catch {
     return undefined;
   }
-  await fs.writeFile(filePath, bytes);
-  return `/api/media-assets/covers/${filename}`;
 }
 
 export function isLocalMediaAssetUrl(url: string | null | undefined) {

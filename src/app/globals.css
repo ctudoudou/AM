@@ -1697,6 +1697,85 @@ a {
   margin-top: 20px;
 }
 
+.missing-episodes-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin-top: 20px;
+}
+
+.missing-episodes-panel .episode-browser-heading button,
+.missing-episode-actions button {
+  display: inline-flex;
+  min-height: 32px;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  border: 1px solid var(--border-default);
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.08);
+  color: rgba(255, 255, 255, 0.82);
+  padding: 0 11px;
+  font-size: 12px;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.missing-episodes-panel button:disabled,
+.missing-episode-actions button:disabled {
+  cursor: wait;
+  opacity: 0.58;
+}
+
+.missing-episode-list {
+  overflow: hidden;
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.025);
+}
+
+.missing-episode-row {
+  display: grid;
+  min-height: 62px;
+  grid-template-columns: 54px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 14px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.055);
+  padding: 10px 12px;
+}
+
+.missing-episode-row:last-child {
+  border-bottom: 0;
+}
+
+.missing-episode-row strong,
+.missing-episode-row small {
+  display: block;
+}
+
+.missing-episode-row strong {
+  color: rgba(255, 255, 255, 0.84);
+  font-size: 13px;
+  line-height: 18px;
+}
+
+.missing-episode-row small {
+  overflow: hidden;
+  margin-top: 2px;
+  color: var(--text-faint);
+  font-size: 12px;
+  line-height: 16px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.missing-episode-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
 .episode-browser-heading {
   display: flex;
   min-height: 38px;
@@ -2410,6 +2489,7 @@ a {
   .rss-draft,
   .candidate-board,
   .anime-detail-main,
+  .missing-episode-row,
   .episode-row,
   .watch-stage,
   .file-toolbar,
