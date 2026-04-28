@@ -130,6 +130,9 @@ export function selectSubscriptionCandidate(
 
   const second = scored[1];
   const needsReview =
+    (subscription.fallbackPolicy === "manual_review" &&
+      Boolean(subscription.preferredVariantKey) &&
+      best.candidate.variantKey !== subscription.preferredVariantKey) ||
     Boolean(second) &&
     best.score === second.score &&
     best.candidate.variantKey !== second.candidate.variantKey;

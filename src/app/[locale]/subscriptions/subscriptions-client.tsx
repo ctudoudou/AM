@@ -662,7 +662,7 @@ export function SubscriptionsClient({ locale }: { locale: Locale }) {
                                 >
                                   <Play size={14} />
                                   {isSubscribed
-                                    ? t.subscribed
+                                    ? t.matchedSubscribedVersion
                                     : hasOtherSubscription
                                       ? t.switchVersion
                                       : t.subscribeVersion}

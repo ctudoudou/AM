@@ -84,6 +84,7 @@ export const en = {
   subscribe: "Subscribe",
   subscribeVersion: "Subscribe version",
   subscribed: "Subscribed",
+  matchedSubscribedVersion: "Matches subscription",
   unsubscribed: "Unsubscribed",
   cancelBeforeResubscribe: "Cancel to switch",
   switchVersion: "Switch version",

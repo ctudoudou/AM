@@ -16,27 +16,65 @@ export type ParsedAnimeRelease = {
   confidence: number;
 };
 
-const resolutionPattern = /\b(2160p|4k|1080p|720p|480p)\b/i;
+const resolutionPattern = /\b(2160p|4k|1080p|720p|480p|(?:3840|1920|1280|854|720)x(?:2160|1080|720|480))\b/i;
 const codecPattern = /\b(x265|x264|h\.?265|h\.?264|hevc|avc|av1)\b/i;
 const audioPattern = /\b(aac|flac|opus|mp3|truehd|dts)\b/i;
 const subtitlePattern = /(简繁日内封|简日内嵌|繁日内嵌|简繁内嵌|简繁外挂|简体|繁体|简繁|chs|cht|sc|tc|gb|big5)/i;
-const sourcePattern = /\b(web-?dl|webrip|baha|crunchyroll|b-global|netflix|amazon|bilibili|tv|bd|blu-?ray)\b/i;
+const sourcePattern = /\b(web-?dl|webrip|baha|cr|crunchyroll|abema|b-global|netflix|amazon|bilibili|tv|bd|blu-?ray)\b/i;
 const episodePatterns = [
   /\bS(?<season>\d{1,2})E(?<episode>\d{1,4}(?:\.\d)?)\b/i,
   /(?:第|\s|\[| - )(?<episode>\d{1,4}(?:\.\d)?)(?:话|集|\]|\s|v\d|$)/i,
   /\bEP?\s?(?<episode>\d{1,4}(?:\.\d)?)\b/i,
 ];
+const releaseSeasonBannerPattern =
+  /(?:^|[\s\[])(?:★\s*)?(?:\d{1,2}|[一二三四五六七八九十]+)\s*月\s*新番(?:\s*★)?(?:\]|$|\s*)/gi;
+const seasonTitlePatterns = [
+  /第\s*(?<season>[一二三四五六七八九十\d]+)\s*(?:季|期|シリーズ)/i,
+  /\bS(?<season>\d{1,2})\b(?!\s*E\d)/i,
+  /\b(?<season>\d{1,2})(?:st|nd|rd|th)\s+Season\b/i,
+  /\bSeason\s*(?<season>\d{1,2})\b/i,
+];
 
 export function normalizeTitle(title: string) {
-  return canonicalizeTitle(title)
+  const parts = normalizeTitleAliases(title);
+  const preferredPart = parts.find((part) => /[\u3400-\u9fff]/.test(part)) ?? parts[0];
+
+  return preferredPart ?? normalizeTitlePart(title);
+}
+
+export function normalizeTitleAliases(title: string) {
+  const aliases = canonicalizeTitle(title)
+    .split(/\s+\/\s+|｜|\|/)
+    .flatMap((part) => {
+      const normalized = normalizeTitlePart(part);
+      if (!normalized) {
+        return [];
+      }
+      const values = [normalized];
+      if (/^[a-z0-9\s]+$/i.test(normalized) && normalized.includes(" ")) {
+        values.push(normalized.replace(/\s+/g, ""));
+      }
+      return values;
+    })
+    .filter(Boolean);
+
+  return [...new Set(aliases)];
+}
+
+function normalizeTitlePart(title: string) {
+  return stripSeasonWords(toSimplified(title))
     .toLowerCase()
-    .replace(/\[[^\]]+\]|\([^)]+\)|【[^】]+】/g, " ")
+    .replace(/\[[^\]]+\]|【[^】]+】/g, " ")
+    .replace(/\(([^)]+)\)|（([^）]+)）/g, (_match, asciiContent, fullWidthContent) =>
+      isNonTitleBracketContent(asciiContent || fullWidthContent) ? " " : ` ${asciiContent || fullWidthContent} `,
+    )
     .replace(/\[\s*\]/g, " ")
     .replace(/\b(2160p|4k|1080p|720p|480p|x265|x264|h265|h264|hevc|avc|av1|aac|flac|chs|cht)\b/g, " ")
+    .replace(releaseSeasonBannerPattern, " ")
     .replace(/第\s*\d+(\.\d+)?\s*(话|集)/g, " ")
     .replace(/\bs\d{1,2}e\d{1,4}(\.\d+)?\b/g, " ")
     .replace(/\bep?\s?\d{1,4}(\.\d+)?\b/g, " ")
-    .replace(/[._-]+/g, " ")
+    .replace(/[._\-!！?？:：,，。·・、]+/g, " ")
     .replace(/\s+/g, " ")
     .trim();
 }
@@ -69,11 +107,12 @@ export function parseAnimeReleaseTitle(rawTitle: string): ParsedAnimeRelease {
     .map((match) => match[1] || match[2])
     .filter(Boolean);
   const subtitleGroup = releaseTags[0];
-  const resolution = searchableTitle.match(resolutionPattern)?.[1]?.replace(/^4k$/i, "2160p");
+  const resolution = normalizeResolution(searchableTitle.match(resolutionPattern)?.[1]);
   const codec = searchableTitle.match(codecPattern)?.[1]?.toUpperCase().replace(".", "");
   const audio = searchableTitle.match(audioPattern)?.[1]?.toUpperCase();
   const subtitleLanguage = normalizeSubtitleLanguage(rawTitle.match(subtitlePattern)?.[1]);
   const sourceKind = normalizeSourceKind(rawTitle.match(sourcePattern)?.[1]);
+  const bracketTitleTags = extractBracketTitleTags(rawTitle);
   const releaseProfile = deriveReleaseProfile({
     audio,
     codec,
@@ -83,6 +122,7 @@ export function parseAnimeReleaseTitle(rawTitle: string): ParsedAnimeRelease {
     sourceKind,
     subtitleLanguage,
     subtitleGroup,
+    titleTags: bracketTitleTags,
   });
 
   let episodeNumber: number | undefined;
@@ -96,20 +136,34 @@ export function parseAnimeReleaseTitle(rawTitle: string): ParsedAnimeRelease {
     }
   }
 
-  let parsedTitle = rawTitle
-    .replace(/^\s*(\[[^\]]+\]|【[^】]+】)\s*/, "")
-    .replace(resolutionPattern, "")
-    .replace(codecPattern, "")
-    .replace(audioPattern, "");
+  const leadingTitle = extractLeadingTitle(rawTitle);
+  const bracketTitle = bracketTitleTags.length > 0 ? canonicalizeTitle(bracketTitleTags.join(" / ")) : undefined;
+  let parsedTitle = leadingTitle ?? bracketTitle ?? rawTitle;
+  const detectedSeason = detectSeason(parsedTitle) ?? detectSeason(rawTitle);
+  season = season ?? detectedSeason;
+
+  if (!leadingTitle && !bracketTitle) {
+    parsedTitle = parsedTitle
+      .replace(/^\s*(\[[^\]]+\]|【[^】]+】)\s*/, "")
+      .replace(releaseSeasonBannerPattern, " ")
+      .replace(resolutionPattern, "")
+      .replace(codecPattern, "")
+      .replace(audioPattern, "");
+  }
 
   for (const pattern of episodePatterns) {
     parsedTitle = parsedTitle.replace(pattern, " ");
   }
 
   parsedTitle = canonicalizeTitle(parsedTitle
-    .replace(/\[[^\]]+\]|\([^)]+\)|【[^】]+】/g, " ")
+    .replace(releaseSeasonBannerPattern, " ")
+    .replace(/\[[^\]]+\]|【[^】]+】/g, " ")
+    .replace(/\(([^)]+)\)|（([^）]+)）/g, (_match, asciiContent, fullWidthContent) =>
+      isNonTitleBracketContent(asciiContent || fullWidthContent) ? " " : ` ${asciiContent || fullWidthContent} `,
+    )
     .replace(/\[\s*\]/g, " ")
     .replace(/[._]+/g, " ")
+    .replace(/\s*\/\s*$/, "")
     .replace(/\s+-\s+$/, "")
     .replace(/\s+/g, " ")
     .trim());
@@ -149,6 +203,124 @@ export function parseAnimeReleaseTitle(rawTitle: string): ParsedAnimeRelease {
   };
 }
 
+function extractBracketTitleTags(rawTitle: string) {
+  const matches = [...rawTitle.matchAll(/\[([^\]]+)\]|【([^】]+)】/g)];
+  const titleTags: string[] = [];
+
+  for (const [index, match] of matches.entries()) {
+    const tag = (match[1] || match[2] || "").trim();
+    if (!tag) {
+      continue;
+    }
+    if (index === 0 && match.index === 0) {
+      continue;
+    }
+    if (isReleaseSeasonBanner(tag)) {
+      continue;
+    }
+    if (isEpisodeTag(tag) || isPureTechnicalTag(normalizeProfileAtom(tag)) || isSubtitleTag(tag)) {
+      break;
+    }
+    titleTags.push(normalizeBracketTitleTag(tag));
+  }
+
+  return titleTags;
+}
+
+function extractLeadingTitle(rawTitle: string) {
+  const withoutGroup = rawTitle.replace(/^\s*(\[[^\]]+\]|【[^】]+】)\s*/, "");
+  const cleaned = withoutGroup
+    .replace(releaseSeasonBannerPattern, " ")
+    .replace(/^\s+/, "");
+  const match =
+    cleaned.match(/^(?<title>.+?)\s+-\s*(?<episode>\d{1,4}(?:\.\d+)?)(?:\s|\[|\(|v\d|$)/) ??
+    cleaned.match(/^(?<title>.+?)\s+第(?<episode>\d{1,4}(?:\.\d+)?)话(?:\s|\[|\(|$)/);
+  const title = match?.groups?.title?.trim();
+
+  if (!title || isReleaseSeasonBanner(title) || isPureTechnicalTag(normalizeProfileAtom(title))) {
+    return undefined;
+  }
+
+  return canonicalizeTitle(normalizeBracketTitleTag(title));
+}
+
+function normalizeBracketTitleTag(value: string) {
+  return value
+    .replace(/(?<=[\u3400-\u9fff])_(?=[A-Za-z0-9])/g, " / ")
+    .replace(/(?<=[A-Za-z0-9])_(?=[\u3400-\u9fff])/g, " / ")
+    .replace(/\s*_\s*/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function detectSeason(value: string) {
+  for (const pattern of seasonTitlePatterns) {
+    const match = value.match(pattern);
+    const rawSeason = match?.groups?.season;
+    if (rawSeason) {
+      return parseSeasonNumber(rawSeason);
+    }
+  }
+  return undefined;
+}
+
+function stripSeasonWords(value: string) {
+  return seasonTitlePatterns.reduce(
+    (current, pattern) => current.replace(pattern, " "),
+    value,
+  );
+}
+
+function parseSeasonNumber(value: string) {
+  const numeric = Number(value);
+  if (Number.isFinite(numeric)) {
+    return numeric;
+  }
+
+  const numerals: Record<string, number> = {
+    一: 1,
+    二: 2,
+    三: 3,
+    四: 4,
+    五: 5,
+    六: 6,
+    七: 7,
+    八: 8,
+    九: 9,
+    十: 10,
+  };
+
+  if (value === "十") {
+    return 10;
+  }
+  if (value.startsWith("十")) {
+    return 10 + (numerals[value.at(1) ?? ""] ?? 0);
+  }
+  if (value.endsWith("十")) {
+    return (numerals[value.at(0) ?? ""] ?? 1) * 10;
+  }
+  if (value.includes("十")) {
+    const [tens, ones] = value.split("十");
+    return (numerals[tens] ?? 1) * 10 + (numerals[ones] ?? 0);
+  }
+
+  return numerals[value] ?? undefined;
+}
+
+function isEpisodeTag(value: string) {
+  return /^\d{1,4}(?:\.\d+)?(?:v\d+)?$/i.test(value.trim());
+}
+
+function isSubtitleTag(value: string) {
+  return subtitlePattern.test(value) || /^(gb|big5|简中|繁中|简日双语|繁日双语)$/i.test(value.trim());
+}
+
+function isReleaseSeasonBanner(value: string) {
+  return /^(?:★\s*)?(?:\d{1,2}|[一二三四五六七八九十]+)\s*月\s*新番(?:\s*★)?$/i.test(
+    value.trim(),
+  );
+}
+
 function normalizeSubtitleLanguage(value: string | undefined) {
   if (!value) {
     return undefined;
@@ -172,6 +344,20 @@ function normalizeSubtitleLanguage(value: string | undefined) {
   return value.toUpperCase();
 }
 
+function normalizeResolution(value: string | undefined) {
+  if (!value) {
+    return undefined;
+  }
+  if (/^4k$/i.test(value)) {
+    return "2160p";
+  }
+  const dimensionMatch = value.match(/x(2160|1080|720|480)$/i);
+  if (dimensionMatch?.[1]) {
+    return `${dimensionMatch[1]}p`;
+  }
+  return value;
+}
+
 function normalizeSourceKind(value: string | undefined) {
   if (!value) {
     return undefined;
@@ -189,8 +375,14 @@ function normalizeSourceKind(value: string | undefined) {
   if (normalized === "baha") {
     return "Baha";
   }
+  if (normalized === "cr") {
+    return "CR";
+  }
   if (normalized === "crunchyroll") {
     return "Crunchyroll";
+  }
+  if (normalized === "abema") {
+    return "ABEMA";
   }
   if (normalized === "bglobal") {
     return "B-Global";
@@ -219,6 +411,7 @@ function deriveReleaseProfile(input: {
   audio?: string;
   subtitleLanguage?: string;
   sourceKind?: string;
+  titleTags?: string[];
 }) {
   const normalizedAtoms = new Set<string>();
   const skip = new Set(
@@ -236,7 +429,10 @@ function deriveReleaseProfile(input: {
 
   for (const tag of input.releaseTags) {
     const atom = normalizeProfileAtom(tag);
-    if (!atom || skip.has(atom) || isPureTechnicalTag(atom)) {
+    const titleTag = input.titleTags?.some(
+      (title) => normalizeProfileAtom(title) === atom || normalizeProfileAtom(normalizeBracketTitleTag(tag)) === normalizeProfileAtom(title),
+    );
+    if (!atom || skip.has(atom) || titleTag || isPureTechnicalTag(atom) || isReleaseSeasonBanner(tag)) {
       continue;
     }
     normalizedAtoms.add(tag.trim());
@@ -260,7 +456,7 @@ function isPureTechnicalTag(atom: string) {
   }
   const technicalTokens = atom.split(/\s+/).filter(Boolean);
   return technicalTokens.length > 0 && technicalTokens.every((token) =>
-    /^(2160p|4k|1080p|720p|480p|x265|x264|h265|h264|hevc|avc|av1|aac|flac|opus|mp3|truehd|dts|mp4|mkv|10bit|8bit)$/.test(
+    /^(2160p|4k|1080p|720p|480p|\d{3,4}x(?:2160|1080|720|480)|x265|x264|h265|h264|hevc|avc|av1|aac|flac|opus|mp3|truehd|dts|mp4|mkv|10bit|8bit|web|dl|webrip|baha|cr|crunchyroll|abema|b|global|bilibili|gb|big5|简中|繁中)$/.test(
       token,
     ),
   );
@@ -299,10 +495,70 @@ function normalizeProfileAtom(value: string) {
 }
 
 function normalizeComparableTitle(value: string) {
-  return value
+  return normalizeTitlePart(value)
     .toLowerCase()
-    .replace(/\[[^\]]+\]|\([^)]+\)|【[^】]+】/g, " ")
-    .replace(/[._-]+/g, " ")
     .replace(/\s+/g, " ")
     .trim();
+}
+
+function toSimplified(value: string) {
+  const map: Record<string, string> = {
+    間: "间",
+    學: "学",
+    魔: "魔",
+    來: "来",
+    這: "这",
+    檔: "档",
+    關: "关",
+    於: "于",
+    轉: "转",
+    變: "变",
+    體: "体",
+    繁: "繁",
+    簡: "简",
+    與: "与",
+    劍: "剑",
+    譚: "谭",
+    醉: "醉",
+    姿: "姿",
+    百: "百",
+    景: "景",
+    島: "岛",
+    樣: "样",
+    語: "语",
+    戰: "战",
+    鬥: "斗",
+    劇: "剧",
+    毒: "毒",
+    觀: "观",
+    錄: "录",
+    惡: "恶",
+    類: "类",
+    門: "门",
+    個: "个",
+    無: "无",
+    處: "处",
+    點: "点",
+    號: "号",
+    裡: "里",
+    內: "内",
+    聲: "声",
+    樂: "乐",
+    國: "国",
+    歡: "欢",
+    歲: "岁",
+    後: "后",
+    前: "前",
+  };
+
+  return value.replace(/[^\u0000-\u007f]/g, (char) => map[char] ?? char);
+}
+
+function isNonTitleBracketContent(value: string) {
+  const normalized = normalizeProfileAtom(value);
+  return (
+    /^(?:19\d{2}|20\d{2})$/.test(normalized) ||
+    isPureTechnicalTag(normalized) ||
+    isReleaseSeasonBanner(value)
+  );
 }

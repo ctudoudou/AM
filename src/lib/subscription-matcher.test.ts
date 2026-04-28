@@ -86,4 +86,26 @@ describe("subscription matching", () => {
 
     expect(selected.needsReview).toBe(true);
   });
+
+  it("requires manual review when the stored preferred variant no longer matches", () => {
+    const selected = selectSubscriptionCandidate(
+      [
+        {
+          ...baseCandidate,
+          variantKey: "ani|abema|1080p|hevc|aac",
+          sourceKind: "ABEMA",
+          releaseProfile: "ABEMA",
+        },
+      ],
+      {
+        ...baseSubscription,
+        preferredVariantKey: "ani|legacy|hevc|aac",
+        preferredSourceKind: null,
+        preferredReleaseProfile: null,
+      },
+    );
+
+    expect(selected.candidate?.variantKey).toBe("ani|abema|1080p|hevc|aac");
+    expect(selected.needsReview).toBe(true);
+  });
 });

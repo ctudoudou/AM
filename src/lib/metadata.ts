@@ -1,5 +1,6 @@
 import { Prisma, type MediaType } from "@prisma/client";
 import { prisma } from "@/lib/db";
+import { normalizeTitleAliases } from "@/lib/anime-parser";
 
 export type MetadataMatch = {
   provider:
@@ -368,10 +369,17 @@ export async function searchMediaMetadata(
   ).flatMap((result) => (result.status === "fulfilled" ? result.value : []));
 
   return providerResults
-    .map((result) => ({
-      ...result,
-      synopsis: result.synopsis ? cleanDescription(result.synopsis) : undefined,
-    }))
+    .map((result) => {
+      const relevance = scoreMetadataRelevance(query, result);
+      return {
+        ...result,
+        synopsis: result.synopsis ? cleanDescription(result.synopsis) : undefined,
+        score: result.score * 0.65 + relevance * 0.35,
+        relevance,
+      };
+    })
+    .filter((result) => result.relevance >= 0.48)
+    .map(stripRelevance)
     .sort((a, b) => Number(Boolean(b.posterUrl)) - Number(Boolean(a.posterUrl)) || b.score - a.score);
 }
 
@@ -596,6 +604,138 @@ function selectBestMetadataMatch(results: MetadataMatch[]) {
       Number(Boolean(b.backdropUrl)) - Number(Boolean(a.backdropUrl)) ||
       b.score - a.score,
   )[0];
+}
+
+function stripRelevance<T extends MetadataMatch & { relevance: number }>(result: T): MetadataMatch {
+  return {
+    provider: result.provider,
+    externalId: result.externalId,
+    title: result.title,
+    originalTitle: result.originalTitle,
+    year: result.year,
+    synopsis: result.synopsis,
+    posterUrl: result.posterUrl,
+    backdropUrl: result.backdropUrl,
+    language: result.language,
+    score: result.score,
+    raw: result.raw,
+  };
+}
+
+export function scoreMetadataRelevance(query: string, result: MetadataMatch) {
+  const queryAliases = metadataAliasesFromText(query);
+  const resultAliases = metadataAliasesFromMatch(result);
+
+  let best = 0;
+  for (const queryAlias of queryAliases) {
+    for (const resultAlias of resultAliases) {
+      if (queryAlias === resultAlias) {
+        best = Math.max(best, 1);
+        continue;
+      }
+      if (
+        queryAlias.length >= 8 &&
+        resultAlias.length >= 8 &&
+        (queryAlias.includes(resultAlias) || resultAlias.includes(queryAlias))
+      ) {
+        best = Math.max(best, 0.86);
+        continue;
+      }
+      best = Math.max(best, tokenSimilarity(queryAlias, resultAlias));
+    }
+  }
+
+  return best;
+}
+
+function metadataAliasesFromMatch(result: MetadataMatch) {
+  const values = [
+    result.title,
+    result.originalTitle,
+    ...metadataAliasesFromRaw(result.raw),
+  ];
+  return uniqueAliases(values);
+}
+
+function metadataAliasesFromText(value: string | null | undefined) {
+  return uniqueAliases([value]);
+}
+
+function uniqueAliases(values: Array<string | null | undefined>) {
+  return [
+    ...new Set(
+      values
+        .flatMap((value) => normalizeTitleAliases(value ?? ""))
+        .map((value) => value.trim())
+        .filter((value) => value.length >= 3),
+    ),
+  ];
+}
+
+function metadataAliasesFromRaw(raw: unknown): string[] {
+  if (!raw || typeof raw !== "object") {
+    return [];
+  }
+  const record = raw as Record<string, unknown>;
+  const values: string[] = [];
+  for (const key of [
+    "title",
+    "title_english",
+    "title_japanese",
+    "name",
+    "name_cn",
+    "original_title",
+    "original_name",
+    "canonicalTitle",
+  ]) {
+    const value = record[key];
+    if (typeof value === "string") {
+      values.push(value);
+    }
+  }
+  const title = record.title;
+  if (title && typeof title === "object") {
+    values.push(...Object.values(title).filter((value): value is string => typeof value === "string"));
+  }
+  const attrs = record.attributes;
+  if (attrs && typeof attrs === "object") {
+    values.push(...metadataAliasesFromRaw(attrs));
+  }
+  const titles = record.titles;
+  if (Array.isArray(titles)) {
+    for (const item of titles) {
+      if (typeof item === "string") {
+        values.push(item);
+      } else if (item && typeof item === "object") {
+        const value = (item as Record<string, unknown>).title;
+        if (typeof value === "string") {
+          values.push(value);
+        }
+      }
+    }
+  } else if (titles && typeof titles === "object") {
+    values.push(...Object.values(titles).filter((value): value is string => typeof value === "string"));
+  }
+  const synonyms = record.title_synonyms;
+  if (Array.isArray(synonyms)) {
+    values.push(...synonyms.filter((value): value is string => typeof value === "string"));
+  }
+  return values;
+}
+
+function tokenSimilarity(left: string, right: string) {
+  const leftTokens = tokenSet(left);
+  const rightTokens = tokenSet(right);
+  if (leftTokens.size === 0 || rightTokens.size === 0) {
+    return 0;
+  }
+  const intersection = [...leftTokens].filter((token) => rightTokens.has(token)).length;
+  const union = new Set([...leftTokens, ...rightTokens]).size;
+  return intersection / union;
+}
+
+function tokenSet(value: string) {
+  return new Set(value.split(/\s+/).filter((token) => token.length >= 2));
 }
 
 function parseOmdbYear(value: string | undefined) {

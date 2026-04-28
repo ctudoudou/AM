@@ -84,6 +84,7 @@ export const zhHans = {
   subscribe: "订阅",
   subscribeVersion: "订阅此版本",
   subscribed: "已订阅",
+  matchedSubscribedVersion: "匹配订阅",
   unsubscribed: "未订阅",
   cancelBeforeResubscribe: "取消后可改订",
   switchVersion: "改为此版本",
