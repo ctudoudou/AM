@@ -8,6 +8,7 @@ import { serverEnv } from "@/lib/env";
 const SETTINGS_KEY = "app";
 
 const localeSchema = z.enum(locales);
+const titleLanguageSchema = z.enum(["zh-Hant", "ja", "zh-Hans", "en", "romaji"]);
 
 const absolutePathSchema = z
   .string()
@@ -59,6 +60,10 @@ export const aiSettingsSchema = z.object({
 export const generalSettingsSchema = z.object({
   defaultLocale: localeSchema,
   subscriptionFrequencyMinutes: z.coerce.number().int().min(5).max(10_080),
+  animeTitleLanguageOrder: z
+    .array(titleLanguageSchema)
+    .min(1)
+    .default(["zh-Hant", "ja", "zh-Hans", "en", "romaji"]),
 });
 
 export const appSettingsSchema = z.object({
@@ -111,6 +116,7 @@ export const defaultAppSettings: AppSettings = appSettingsSchema.parse({
   general: {
     defaultLocale: defaultSettingsLocale,
     subscriptionFrequencyMinutes: 30,
+    animeTitleLanguageOrder: ["zh-Hant", "ja", "zh-Hans", "en", "romaji"],
   },
 });
 

@@ -1,6 +1,8 @@
 import { jsonError, jsonResponse } from "@/lib/api";
 import { prisma } from "@/lib/db";
+import { getAppSettings } from "@/lib/settings";
 import { getStorageSummary } from "@/lib/storage";
+import { resolveMediaDisplayTitle } from "@/lib/title-display";
 
 export const dynamic = "force-dynamic";
 
@@ -13,6 +15,7 @@ export async function GET() {
       downloads,
       subscriptions,
       storage,
+      settings,
     ] = await Promise.all([
       prisma.watchProgress.findMany({
         where: { completed: false },
@@ -22,7 +25,7 @@ export async function GET() {
           episode: {
             include: {
               files: { orderBy: { updatedAt: "desc" }, take: 1 },
-              season: { include: { media: true } },
+              season: { include: { media: { include: { aliases: true } } } },
             },
           },
         },
@@ -31,6 +34,7 @@ export async function GET() {
         orderBy: { updatedAt: "desc" },
         take: 10,
         include: {
+          aliases: true,
           seasons: {
             include: {
               episodes: {
@@ -67,28 +71,35 @@ export async function GET() {
         include: { candidateGroup: true },
       }),
       getStorageSummary().catch(() => null),
+      getAppSettings(),
     ]);
 
     return jsonResponse({
-      continueWatching: continueWatching.map((progress) => ({
-        episodeId: progress.episodeId,
-        positionSec: progress.positionSec,
-        durationSec: progress.durationSec,
-        mediaFileId: progress.episode.files[0]?.id ?? null,
-        episodeNumber: progress.episode.number,
-        episodeTitle: progress.episode.title,
-        seasonNumber: progress.episode.season.number,
-        title: progress.episode.season.media.primaryTitle,
-        posterUrl: progress.episode.season.media.posterUrl,
-        backdropUrl: progress.episode.season.media.backdropUrl,
-        type: progress.episode.season.media.type,
-      })),
+      continueWatching: continueWatching.map((progress) => {
+        const media = progress.episode.season.media;
+        const display =
+          media.type === "ANIME" ? resolveMediaDisplayTitle(media, settings) : null;
+        return {
+          episodeId: progress.episodeId,
+          positionSec: progress.positionSec,
+          durationSec: progress.durationSec,
+          mediaFileId: progress.episode.files[0]?.id ?? null,
+          episodeNumber: progress.episode.number,
+          episodeTitle: progress.episode.title,
+          seasonNumber: progress.episode.season.number,
+          title: display?.displayTitle ?? media.primaryTitle,
+          posterUrl: media.posterUrl,
+          backdropUrl: media.backdropUrl,
+          type: media.type,
+        };
+      }),
       recentMedia: recentMedia.map((media) => {
+        const display = media.type === "ANIME" ? resolveMediaDisplayTitle(media, settings) : null;
         const episode = media.seasons[0]?.episodes[0];
         return {
           id: media.id,
           type: media.type,
-          title: media.primaryTitle,
+          title: display?.displayTitle ?? media.primaryTitle,
           year: media.year,
           synopsis: media.synopsis,
           posterUrl: media.posterUrl,

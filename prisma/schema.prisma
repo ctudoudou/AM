@@ -64,11 +64,22 @@ enum TranscodeStatus {
   FAILED
 }
 
+enum TitleDisplayMode {
+  GLOBAL
+  ZH_HANT
+  ZH_HANS
+  JA
+  EN
+  CUSTOM
+}
+
 model MediaTitle {
   id           String         @id @default(cuid())
   type         MediaType
   primaryTitle String
   originalTitle String?
+  titleDisplayMode TitleDisplayMode @default(GLOBAL)
+  customDisplayTitle String?
   year         Int?
   synopsis     String?
   posterUrl    String?

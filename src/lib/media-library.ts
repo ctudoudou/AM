@@ -1,13 +1,17 @@
 import type { MediaType } from "@prisma/client";
 import { prisma } from "@/lib/db";
+import { getAppSettings } from "@/lib/settings";
+import { resolveMediaDisplayTitle } from "@/lib/title-display";
 
 const directPlayExtensions = new Set([".mp4", ".m4v", ".webm", ".mov"]);
 
 export async function getMediaLibrary(type: MediaType) {
+  const settings = await getAppSettings();
   const titles = await prisma.mediaTitle.findMany({
     where: { type },
     orderBy: { updatedAt: "desc" },
     include: {
+      aliases: true,
       seasons: {
         orderBy: { number: "asc" },
         include: {
@@ -24,6 +28,7 @@ export async function getMediaLibrary(type: MediaType) {
   });
 
   return titles.map((title) => {
+    const display = type === "ANIME" ? resolveMediaDisplayTitle(title, settings) : null;
     const episodes = title.seasons.flatMap((season) => season.episodes);
     const playableEpisodes = episodes.filter((episode) => episode.files.length > 0);
     const nextEpisode =
@@ -36,6 +41,11 @@ export async function getMediaLibrary(type: MediaType) {
       id: title.id,
       type: title.type,
       primaryTitle: title.primaryTitle,
+      displayTitle: display?.displayTitle ?? title.primaryTitle,
+      secondaryTitles: display?.secondaryTitles ?? [],
+      matchedTitleLocale: display?.matchedLocale ?? null,
+      titleDisplayMode: title.titleDisplayMode,
+      customDisplayTitle: title.customDisplayTitle,
       originalTitle: title.originalTitle,
       year: title.year,
       synopsis: title.synopsis,

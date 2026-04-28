@@ -19,6 +19,7 @@ type PublicSettings = {
   general: {
     defaultLocale: Locale;
     subscriptionFrequencyMinutes: number;
+    animeTitleLanguageOrder: Array<"zh-Hant" | "ja" | "zh-Hans" | "en" | "romaji">;
   };
 };
 
@@ -530,6 +531,26 @@ export function SettingsClient({ locale }: { locale: Locale }) {
             value={settings.general.subscriptionFrequencyMinutes}
           />
         </label>
+        <label>
+          <span>{t.animeTitleLanguageOrder}</span>
+          <select
+            onChange={(event) =>
+              setSettings({
+                ...settings,
+                general: {
+                  ...settings.general,
+                  animeTitleLanguageOrder: titleOrderPreset(event.target.value),
+                },
+              })
+            }
+            value={titleOrderPresetKey(settings.general.animeTitleLanguageOrder)}
+          >
+            <option value="zhHantFirst">{t.titleOrderZhHantFirst}</option>
+            <option value="zhHansFirst">{t.titleOrderZhHansFirst}</option>
+            <option value="jaFirst">{t.titleOrderJaFirst}</option>
+            <option value="enFirst">{t.titleOrderEnFirst}</option>
+          </select>
+        </label>
       </section>
 
       <section className="settings-panel wide">
@@ -590,4 +611,33 @@ export function SettingsClient({ locale }: { locale: Locale }) {
       </section>
     </div>
   );
+}
+
+type TitleLanguage = PublicSettings["general"]["animeTitleLanguageOrder"][number];
+
+function titleOrderPreset(value: string): TitleLanguage[] {
+  if (value === "zhHansFirst") {
+    return ["zh-Hans", "zh-Hant", "ja", "en", "romaji"];
+  }
+  if (value === "jaFirst") {
+    return ["ja", "zh-Hant", "zh-Hans", "en", "romaji"];
+  }
+  if (value === "enFirst") {
+    return ["en", "zh-Hant", "ja", "zh-Hans", "romaji"];
+  }
+  return ["zh-Hant", "ja", "zh-Hans", "en", "romaji"];
+}
+
+function titleOrderPresetKey(order: TitleLanguage[]) {
+  const key = order.join(",");
+  if (key === "zh-Hans,zh-Hant,ja,en,romaji") {
+    return "zhHansFirst";
+  }
+  if (key === "ja,zh-Hant,zh-Hans,en,romaji") {
+    return "jaFirst";
+  }
+  if (key === "en,zh-Hant,ja,zh-Hans,romaji") {
+    return "enFirst";
+  }
+  return "zhHantFirst";
 }

@@ -8,6 +8,8 @@ import type { Locale } from "@/lib/i18n";
 type AnimeTitle = {
   id: string;
   primaryTitle: string;
+  displayTitle: string;
+  secondaryTitles: string[];
   originalTitle?: string | null;
   year?: number | null;
   synopsis?: string | null;
@@ -56,7 +58,7 @@ export function AnimeLibraryClient({ locale }: { locale: Locale }) {
       return titles;
     }
     return titles.filter((title) =>
-      [title.primaryTitle, title.originalTitle ?? ""].some((value) =>
+      [title.displayTitle, title.primaryTitle, title.originalTitle ?? "", ...title.secondaryTitles].some((value) =>
         value.toLowerCase().includes(needle),
       ),
     );
@@ -170,7 +172,7 @@ export function AnimeLibraryClient({ locale }: { locale: Locale }) {
             return (
               <article className="anime-card" key={title.id}>
                 <a
-                  aria-label={title.primaryTitle}
+                  aria-label={title.displayTitle}
                   className="anime-poster anime-poster-link"
                   href={`/${locale}/anime/${title.id}`}
                   style={{
@@ -178,15 +180,15 @@ export function AnimeLibraryClient({ locale }: { locale: Locale }) {
                   }}
                 >
                   {!title.posterUrl ? (
-                    <FallbackCover title={title.primaryTitle} />
+                    <FallbackCover title={title.displayTitle} />
                   ) : null}
                 </a>
                 <div className="anime-card-body">
                   <a className="anime-title-link" href={`/${locale}/anime/${title.id}`}>
-                    <h2>{splitTitle(title.primaryTitle).primary}</h2>
+                    <h2>{splitTitle(title.displayTitle).primary}</h2>
                   </a>
-                  {splitTitle(title.primaryTitle).secondary ? (
-                    <small>{splitTitle(title.primaryTitle).secondary}</small>
+                  {subtitleForTitle(title) ? (
+                    <small>{subtitleForTitle(title)}</small>
                   ) : null}
                   <p>
                     {title.year ?? "-"} · {title.seasonCount} {t.seasons} ·{" "}
@@ -231,6 +233,11 @@ function splitTitle(title: string) {
     primary: primary || title,
     secondary: rest.join(" / "),
   };
+}
+
+function subtitleForTitle(title: AnimeTitle) {
+  const split = splitTitle(title.displayTitle);
+  return split.secondary || title.secondaryTitles[0] || title.originalTitle || null;
 }
 
 function FallbackCover({ title }: { title: string }) {

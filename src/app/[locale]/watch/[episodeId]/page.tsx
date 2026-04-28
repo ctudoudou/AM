@@ -2,6 +2,8 @@ import { notFound } from "next/navigation";
 import { AppSidebar } from "@/components/app-sidebar";
 import { prisma } from "@/lib/db";
 import { isLocale } from "@/lib/i18n";
+import { getAppSettings } from "@/lib/settings";
+import { resolveMediaDisplayTitle } from "@/lib/title-display";
 import { getMessages } from "@/messages";
 import { WatchClient } from "./watch-client";
 
@@ -31,6 +33,7 @@ export default async function WatchPage({
         include: {
           media: {
             include: {
+              aliases: true,
               seasons: {
                 orderBy: { number: "asc" },
                 include: {
@@ -55,6 +58,11 @@ export default async function WatchPage({
   }
 
   const t = getMessages(locale);
+  const settings = await getAppSettings();
+  const mediaDisplay =
+    episode.season.media.type === "ANIME"
+      ? resolveMediaDisplayTitle(episode.season.media, settings)
+      : { displayTitle: episode.season.media.primaryTitle };
   const file = episode.files.find((item) => item.id === requestedFileId) ?? selectPlayableFile(episode.files);
   const episodes = episode.season.media.seasons
     .flatMap((season) =>
@@ -95,7 +103,7 @@ export default async function WatchPage({
       <section className="watch-content">
         <header className="watch-heading">
           <div>
-            <p>{episode.season.media.primaryTitle}</p>
+            <p>{mediaDisplay.displayTitle}</p>
             <h1>
               S{String(episode.season.number).padStart(2, "0")}E
               {String(episode.number).padStart(2, "0")} ·{" "}

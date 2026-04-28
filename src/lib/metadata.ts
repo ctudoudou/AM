@@ -1,6 +1,11 @@
 import { Prisma, type MediaType } from "@prisma/client";
 import { prisma } from "@/lib/db";
 import { normalizeTitleAliases } from "@/lib/anime-parser";
+import {
+  aliasesFromMetadataRaw,
+  aliasesFromTitleTexts,
+  upsertTitleAliases,
+} from "@/lib/title-display";
 
 export type MetadataMatch = {
   provider:
@@ -252,6 +257,10 @@ export async function refreshAnimeMetadata(titleId: string) {
     media.originalTitle,
     ...media.aliases.map((alias) => alias.title),
   ]);
+  await upsertTitleAliases(
+    media.id,
+    aliasesFromTitleTexts([media.primaryTitle, media.originalTitle]),
+  );
   const matches = [];
 
   for (const query of queries) {
@@ -271,6 +280,16 @@ export async function refreshAnimeMetadata(titleId: string) {
       provider: null,
     };
   }
+
+  await upsertTitleAliases(media.id, [
+    ...aliasesFromTitleTexts([
+      media.primaryTitle,
+      media.originalTitle,
+      best.title,
+      best.originalTitle,
+    ]),
+    ...aliasesFromMetadataRaw(best.raw),
+  ]);
 
   const updated = await prisma.mediaTitle.update({
     where: { id: media.id },

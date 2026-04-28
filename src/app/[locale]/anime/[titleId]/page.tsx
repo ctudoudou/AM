@@ -3,6 +3,8 @@ import { ArrowLeft, Play } from "lucide-react";
 import { AppSidebar } from "@/components/app-sidebar";
 import { prisma } from "@/lib/db";
 import { isLocale } from "@/lib/i18n";
+import { getAppSettings } from "@/lib/settings";
+import { resolveMediaDisplayTitle } from "@/lib/title-display";
 import { getMessages } from "@/messages";
 import { AnimeTitleActions } from "./anime-title-actions";
 
@@ -22,6 +24,7 @@ export default async function AnimeTitlePage({
   const media = await prisma.mediaTitle.findUnique({
     where: { id: titleId },
     include: {
+      aliases: true,
       seasons: {
         orderBy: { number: "asc" },
         include: {
@@ -42,7 +45,9 @@ export default async function AnimeTitlePage({
   }
 
   const t = getMessages(locale);
-  const title = splitTitle(media.primaryTitle);
+  const settings = await getAppSettings();
+  const display = resolveMediaDisplayTitle(media, settings);
+  const title = splitTitle(display.displayTitle);
   const episodeCount = media.seasons.reduce(
     (count, season) =>
       count + season.episodes.filter((episode) => episode.files.length > 0).length,
@@ -79,18 +84,25 @@ export default async function AnimeTitlePage({
                 backgroundImage: media.posterUrl ? `url(${media.posterUrl})` : undefined,
               }}
             >
-              {!media.posterUrl ? <FallbackCover title={media.primaryTitle} /> : null}
+              {!media.posterUrl ? <FallbackCover title={display.displayTitle} /> : null}
             </div>
             <div className="anime-detail-copy">
               <p>{t.anime}</p>
               <h1>{title.primary}</h1>
-              {title.secondary ? <small>{title.secondary}</small> : null}
+              {title.secondary || display.secondaryTitles[0] ? (
+                <small>{title.secondary || display.secondaryTitles[0]}</small>
+              ) : null}
               <span>
                 {media.year ?? "-"} · {media.seasons.length} {t.seasons} · {episodeCount}{" "}
                 {t.episodes}
               </span>
               {media.synopsis ? <em>{media.synopsis}</em> : null}
-              <AnimeTitleActions locale={locale} titleId={media.id} />
+              <AnimeTitleActions
+                customDisplayTitle={media.customDisplayTitle}
+                locale={locale}
+                titleDisplayMode={media.titleDisplayMode}
+                titleId={media.id}
+              />
             </div>
             {nextEpisode ? (
               <a className="anime-detail-play" href={`/${locale}/watch/${nextEpisode.id}`}>
@@ -136,7 +148,7 @@ export default async function AnimeTitlePage({
                         <span>{t.episode}</span>
                       </div>
                       <div className="episode-summary">
-                        <strong>{episode.title || media.primaryTitle}</strong>
+                        <strong>{episode.title || display.displayTitle}</strong>
                         <small>
                           {episode.files.length} {t.fileVersions}
                           {progressPercent > 0 ? ` · ${progressPercent}%` : ""}

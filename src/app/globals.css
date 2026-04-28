@@ -1868,6 +1868,22 @@ a {
   margin-top: 12px;
 }
 
+.anime-metadata-actions select,
+.anime-metadata-actions input {
+  min-height: 32px;
+  border: 1px solid var(--border-default);
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.055);
+  color: var(--text-primary);
+  padding: 0 10px;
+  font-size: 12px;
+  outline: 0;
+}
+
+.anime-metadata-actions input {
+  min-width: min(260px, 100%);
+}
+
 .anime-metadata-actions button {
   display: inline-flex;
   min-height: 32px;
