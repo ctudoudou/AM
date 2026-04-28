@@ -1,3 +1,5 @@
+import * as OpenCC from "opencc-js";
+
 export type ParsedAnimeRelease = {
   rawTitle: string;
   parsedTitle: string;
@@ -34,6 +36,7 @@ const seasonTitlePatterns = [
   /\b(?<season>\d{1,2})(?:st|nd|rd|th)\s+Season\b/i,
   /\bSeason\s*(?<season>\d{1,2})\b/i,
 ];
+const toSimplifiedChinese = OpenCC.Converter({ from: "tw", to: "cn" });
 
 export function normalizeTitle(title: string) {
   const parts = normalizeTitleAliases(title);
@@ -502,56 +505,7 @@ function normalizeComparableTitle(value: string) {
 }
 
 function toSimplified(value: string) {
-  const map: Record<string, string> = {
-    間: "间",
-    學: "学",
-    魔: "魔",
-    來: "来",
-    這: "这",
-    檔: "档",
-    關: "关",
-    於: "于",
-    轉: "转",
-    變: "变",
-    體: "体",
-    繁: "繁",
-    簡: "简",
-    與: "与",
-    劍: "剑",
-    譚: "谭",
-    醉: "醉",
-    姿: "姿",
-    百: "百",
-    景: "景",
-    島: "岛",
-    樣: "样",
-    語: "语",
-    戰: "战",
-    鬥: "斗",
-    劇: "剧",
-    毒: "毒",
-    觀: "观",
-    錄: "录",
-    惡: "恶",
-    類: "类",
-    門: "门",
-    個: "个",
-    無: "无",
-    處: "处",
-    點: "点",
-    號: "号",
-    裡: "里",
-    內: "内",
-    聲: "声",
-    樂: "乐",
-    國: "国",
-    歡: "欢",
-    歲: "岁",
-    後: "后",
-    前: "前",
-  };
-
-  return value.replace(/[^\u0000-\u007f]/g, (char) => map[char] ?? char);
+  return toSimplifiedChinese(value);
 }
 
 function isNonTitleBracketContent(value: string) {
