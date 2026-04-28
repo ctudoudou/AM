@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Image as ImageIcon, Loader2, Play, Search } from "lucide-react";
+import { Image as ImageIcon, Loader2, Play, Search, ShieldAlert } from "lucide-react";
 import { getMessages } from "@/messages";
 import type { Locale } from "@/lib/i18n";
 
@@ -24,13 +24,32 @@ type AnimeTitle = {
   } | null;
 };
 
+type AnimeAuditIssue = {
+  mediaId: string;
+  severity: "HIGH" | "MEDIUM";
+  reason: string;
+  evidence: string[];
+};
+
 export function AnimeLibraryClient({ locale }: { locale: Locale }) {
   const t = getMessages(locale);
   const [titles, setTitles] = useState<AnimeTitle[]>([]);
+  const [auditIssues, setAuditIssues] = useState<AnimeAuditIssue[]>([]);
   const [query, setQuery] = useState("");
   const [loading, setLoading] = useState(true);
   const [refreshingMetadata, setRefreshingMetadata] = useState(false);
+  const [auditing, setAuditing] = useState(false);
   const [error, setError] = useState("");
+  const issueByMediaId = useMemo(() => {
+    const map = new Map<string, AnimeAuditIssue>();
+    for (const issue of auditIssues) {
+      const existing = map.get(issue.mediaId);
+      if (!existing || issue.severity === "HIGH") {
+        map.set(issue.mediaId, issue);
+      }
+    }
+    return map;
+  }, [auditIssues]);
   const visibleTitles = useMemo(() => {
     const needle = query.trim().toLowerCase();
     if (!needle) {
@@ -59,12 +78,29 @@ export function AnimeLibraryClient({ locale }: { locale: Locale }) {
     }
   }, [t.animeLibraryLoadError]);
 
+  const auditLibrary = useCallback(async () => {
+    setAuditing(true);
+    try {
+      const response = await fetch("/api/library/anime/audit");
+      if (!response.ok) {
+        throw new Error(t.metadataAuditError);
+      }
+      const body = (await response.json()) as { issues: AnimeAuditIssue[] };
+      setAuditIssues(body.issues);
+    } catch (auditError) {
+      setError(auditError instanceof Error ? auditError.message : t.metadataAuditError);
+    } finally {
+      setAuditing(false);
+    }
+  }, [t.metadataAuditError]);
+
   useEffect(() => {
     const timeout = window.setTimeout(() => {
       void load();
+      void auditLibrary();
     }, 0);
     return () => window.clearTimeout(timeout);
-  }, [load]);
+  }, [auditLibrary, load]);
 
   async function refreshMetadata() {
     setRefreshingMetadata(true);
@@ -108,6 +144,12 @@ export function AnimeLibraryClient({ locale }: { locale: Locale }) {
         <span>
           {visibleTitles.length} {t.titles}
         </span>
+        <button disabled={auditing} onClick={() => void auditLibrary()} type="button">
+          {auditing ? <Loader2 size={14} /> : <ShieldAlert size={14} />}
+          {auditIssues.length > 0
+            ? `${t.libraryAuditIssues} ${auditIssues.length}`
+            : t.auditLibrary}
+        </button>
         <button disabled={refreshingMetadata} onClick={() => void refreshMetadata()} type="button">
           {refreshingMetadata ? <Loader2 size={14} /> : <ImageIcon size={14} />}
           {t.refreshMetadata}
@@ -120,6 +162,7 @@ export function AnimeLibraryClient({ locale }: { locale: Locale }) {
         <section className="anime-grid">
           {visibleTitles.map((title) => {
             const progress = title.nextEpisode?.progress;
+            const auditIssue = issueByMediaId.get(title.id);
             const progressPercent =
               progress?.durationSec && progress.durationSec > 0
                 ? Math.round((progress.positionSec / progress.durationSec) * 100)
@@ -150,6 +193,14 @@ export function AnimeLibraryClient({ locale }: { locale: Locale }) {
                     {title.episodeCount} {t.episodes}
                   </p>
                   {title.synopsis ? <small>{title.synopsis}</small> : null}
+                  {auditIssue ? (
+                    <a className="anime-audit-warning" href={`/${locale}/anime/${title.id}`}>
+                      <ShieldAlert size={13} />
+                      {auditIssue.severity === "HIGH"
+                        ? t.metadataMismatch
+                        : t.metadataNeedsAttention}
+                    </a>
+                  ) : null}
                   {title.nextEpisode?.mediaFileId ? (
                     <a className="anime-play-link" href={`/${locale}/watch/${title.nextEpisode.id}`}>
                       <Play size={14} />

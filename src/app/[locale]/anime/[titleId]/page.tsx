@@ -4,6 +4,7 @@ import { AppSidebar } from "@/components/app-sidebar";
 import { prisma } from "@/lib/db";
 import { isLocale } from "@/lib/i18n";
 import { getMessages } from "@/messages";
+import { AnimeTitleActions } from "./anime-title-actions";
 
 const directPlayExtensions = new Set([".mp4", ".m4v", ".webm", ".mov"]);
 
@@ -89,6 +90,7 @@ export default async function AnimeTitlePage({
                 {t.episodes}
               </span>
               {media.synopsis ? <em>{media.synopsis}</em> : null}
+              <AnimeTitleActions locale={locale} titleId={media.id} />
             </div>
             {nextEpisode ? (
               <a className="anime-detail-play" href={`/${locale}/watch/${nextEpisode.id}`}>

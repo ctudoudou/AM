@@ -1837,6 +1837,7 @@ a {
 }
 
 .anime-play-link,
+.anime-audit-warning,
 .watch-inspector button,
 .watch-heading a {
   display: inline-flex;
@@ -1851,6 +1852,51 @@ a {
   padding: 0 11px;
   text-decoration: none;
   font-size: 12px;
+}
+
+.anime-audit-warning {
+  width: fit-content;
+  border-color: rgba(250, 204, 21, 0.24);
+  background: rgba(250, 204, 21, 0.08);
+  color: rgba(254, 240, 138, 0.86);
+}
+
+.anime-metadata-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.anime-metadata-actions button {
+  display: inline-flex;
+  min-height: 32px;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  border: 1px solid var(--border-default);
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.06);
+  color: rgba(255, 255, 255, 0.78);
+  padding: 0 11px;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.anime-metadata-actions button:hover {
+  border-color: var(--border-strong);
+  background: rgba(255, 255, 255, 0.1);
+}
+
+.anime-metadata-actions button:disabled {
+  cursor: wait;
+  opacity: 0.62;
+}
+
+.anime-metadata-actions small {
+  display: inline-flex;
+  align-items: center;
+  margin: 0;
 }
 
 .watch-content {

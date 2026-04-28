@@ -3,7 +3,7 @@ import path from "node:path";
 import { Prisma, type MediaType } from "@prisma/client";
 import { prisma } from "@/lib/db";
 import { getAppSettings } from "@/lib/settings";
-import { matchMetadataForGroup } from "@/lib/metadata";
+import { matchMetadataForGroup, type MetadataMatch } from "@/lib/metadata";
 
 const videoExtensions = new Set([
   ".mkv",
@@ -59,6 +59,13 @@ export async function createOrganizerPlanForDownload(downloadId: string) {
   }
 
   const metadata = await matchMetadataForGroup(download.candidate.groupId);
+  const metadataReliable = isReliableMetadataMatch(metadata);
+  const planMetadata = metadataReliable
+    ? metadata
+    : buildCandidateMetadataFallback({
+        candidate: download.candidate,
+        metadata,
+      });
   const sourceRoot = download.targetPath || download.downloadDir;
   if (!sourceRoot) {
     return prisma.organizerPlan.create({
@@ -69,7 +76,7 @@ export async function createOrganizerPlanForDownload(downloadId: string) {
         status: "NEEDS_REVIEW",
         confidence: 0,
         reason: "Download has no completed file path",
-        metadata: metadata as Prisma.InputJsonValue,
+        metadata: planMetadata as Prisma.InputJsonValue,
       },
     });
   }
@@ -85,21 +92,21 @@ export async function createOrganizerPlanForDownload(downloadId: string) {
         status: "NEEDS_REVIEW",
         confidence: 0.2,
         reason: "No video file found",
-        metadata: metadata as Prisma.InputJsonValue,
+        metadata: planMetadata as Prisma.InputJsonValue,
       },
     });
   }
 
   const candidate = download.candidate;
-  const confidence = Math.min(candidate.confidence, metadata.score);
+  const confidence = Math.min(candidate.confidence, planMetadata.score);
   const itemInputs = await Promise.all(
     files.map(async (sourcePath) => {
       const stat = await fs.stat(sourcePath);
       const targetPath = buildTargetPath({
         mediaType: candidate.mediaType,
         roots: settings.directories,
-        title: metadata.title || candidate.group?.displayTitle || candidate.parsedTitle,
-        year: metadata.year,
+        title: planMetadata.title || candidate.group?.displayTitle || candidate.parsedTitle,
+        year: planMetadata.year,
         season: candidate.season ?? 1,
         episode: candidate.episodeNumber,
         episodeTitle: candidate.parsedTitle,
@@ -125,13 +132,16 @@ export async function createOrganizerPlanForDownload(downloadId: string) {
   const hasPlayableIdentity =
     candidate.mediaType === "MOVIE" ||
     (candidate.episodeNumber !== null && candidate.episodeNumber !== undefined);
-  const readyForConfirmation = confidence >= 0.82 && hasPlayableIdentity && !hasConflict;
+  const readyForConfirmation =
+    metadataReliable && confidence >= 0.82 && hasPlayableIdentity && !hasConflict;
   const status = hasConflict ? "CONFLICT" : readyForConfirmation ? "PENDING" : "NEEDS_REVIEW";
   const reason = hasConflict
     ? "Target path conflict"
     : readyForConfirmation
       ? "Ready for confirmation"
-      : "Needs manual confirmation";
+      : metadataReliable
+        ? "Needs manual confirmation"
+        : "Metadata needs manual confirmation";
 
   const plan = await prisma.organizerPlan.create({
     data: {
@@ -142,7 +152,7 @@ export async function createOrganizerPlanForDownload(downloadId: string) {
       confidence,
       autoExecutable: false,
       reason,
-      metadata: metadata as Prisma.InputJsonValue,
+      metadata: planMetadata as Prisma.InputJsonValue,
       items: {
         create: itemInputs,
       },
@@ -156,6 +166,34 @@ export async function createOrganizerPlanForDownload(downloadId: string) {
   });
 
   return plan;
+}
+
+function isReliableMetadataMatch(metadata: MetadataMatch) {
+  return metadata.provider !== "fallback" && (metadata.relevance ?? 0) >= 0.82;
+}
+
+function buildCandidateMetadataFallback(input: {
+  candidate: {
+    parsedTitle: string;
+    group: { displayTitle: string } | null;
+  };
+  metadata: MetadataMatch;
+}): MetadataMatch {
+  const title = input.candidate.group?.displayTitle || input.candidate.parsedTitle || input.metadata.title;
+  return {
+    provider: "fallback",
+    externalId: input.metadata.externalId,
+    title,
+    score: Math.min(input.metadata.score, 0.72),
+    relevance: 1,
+    raw: {
+      reason: "Provider metadata was not relevant enough to trust for organizing",
+      rejectedProvider: input.metadata.provider,
+      rejectedTitle: input.metadata.title,
+      rejectedOriginalTitle: input.metadata.originalTitle,
+      rejectedRelevance: input.metadata.relevance ?? null,
+    },
+  };
 }
 
 export async function executeOrganizerPlan(planId: string, automatic = false) {

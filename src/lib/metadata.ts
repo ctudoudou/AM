@@ -22,6 +22,7 @@ export type MetadataMatch = {
   backdropUrl?: string;
   language?: string;
   score: number;
+  relevance?: number;
   raw: unknown;
 };
 
@@ -166,6 +167,7 @@ export async function matchMetadataForGroup(groupId: string) {
             externalId: group.id,
             title: group.displayTitle,
             score: 0.55,
+            relevance: 1,
             raw: { reason: "No metadata provider returned a result" },
           },
         ];
@@ -380,7 +382,11 @@ export async function searchMediaMetadata(
     })
     .filter((result) => result.relevance >= 0.48)
     .map(stripRelevance)
-    .sort((a, b) => Number(Boolean(b.posterUrl)) - Number(Boolean(a.posterUrl)) || b.score - a.score);
+    .sort(
+      (a, b) =>
+        b.score - a.score ||
+        Number(Boolean(b.posterUrl)) - Number(Boolean(a.posterUrl)),
+    );
 }
 
 async function searchAniList(query: string): Promise<MetadataMatch[]> {
@@ -600,9 +606,9 @@ async function searchOmdb(query: string, mediaType: MediaType): Promise<Metadata
 function selectBestMetadataMatch(results: MetadataMatch[]) {
   return [...results].sort(
     (a, b) =>
+      b.score - a.score ||
       Number(Boolean(b.posterUrl)) - Number(Boolean(a.posterUrl)) ||
-      Number(Boolean(b.backdropUrl)) - Number(Boolean(a.backdropUrl)) ||
-      b.score - a.score,
+      Number(Boolean(b.backdropUrl)) - Number(Boolean(a.backdropUrl)),
   )[0];
 }
 
@@ -618,6 +624,7 @@ function stripRelevance<T extends MetadataMatch & { relevance: number }>(result:
     backdropUrl: result.backdropUrl,
     language: result.language,
     score: result.score,
+    relevance: result.relevance,
     raw: result.raw,
   };
 }
