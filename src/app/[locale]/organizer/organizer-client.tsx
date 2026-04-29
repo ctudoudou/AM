@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Check, FolderSearch, Loader2, RefreshCw, X } from "lucide-react";
+import { Check, FolderSearch, Loader2, RefreshCw, WandSparkles, X } from "lucide-react";
 import { getMessages } from "@/messages";
 import type { Locale } from "@/lib/i18n";
 
@@ -36,6 +36,7 @@ export function OrganizerClient({ locale }: { locale: Locale }) {
   const [filter, setFilter] = useState("ALL");
   const [importDraft, setImportDraft] = useState({ root: "", mediaType: "AUTO" });
   const [importing, setImporting] = useState(false);
+  const [reviewing, setReviewing] = useState(false);
   const [status, setStatus] = useState("");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -79,6 +80,30 @@ export function OrganizerClient({ locale }: { locale: Locale }) {
       setError(body?.message || t.organizerLoadError);
       return;
     }
+    await load();
+  }
+
+  async function runAiReview() {
+    setReviewing(true);
+    setStatus("");
+    setError("");
+    const response = await fetch("/api/jobs/run", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ job: "organizer.aiReviewPlans" }),
+    });
+    setReviewing(false);
+    if (!response.ok) {
+      const body = await response.json().catch(() => null);
+      setError(body?.message || t.aiReviewPlansError);
+      return;
+    }
+    const body = (await response.json()) as {
+      result?: { reviewed?: number; filteredItems?: number; flagged?: number; skipped?: number };
+    };
+    setStatus(
+      `${t.aiReviewPlansDone} reviewed: ${body.result?.reviewed ?? 0}, filtered: ${body.result?.filteredItems ?? 0}, flagged: ${body.result?.flagged ?? 0}, skipped: ${body.result?.skipped ?? 0}.`,
+    );
     await load();
   }
 
@@ -148,10 +173,16 @@ export function OrganizerClient({ locale }: { locale: Locale }) {
           <h2>{t.organizerPlans}</h2>
           <p>{t.organizerPlansDescription}</p>
         </div>
-        <button onClick={runInspect} type="button">
-          <RefreshCw size={14} />
-          {t.inspectCompleted}
-        </button>
+        <div className="toolbar-actions">
+          <button disabled={reviewing} onClick={() => void runAiReview()} type="button">
+            {reviewing ? <Loader2 size={14} /> : <WandSparkles size={14} />}
+            {t.aiReviewPlans}
+          </button>
+          <button onClick={runInspect} type="button">
+            <RefreshCw size={14} />
+            {t.inspectCompleted}
+          </button>
+        </div>
       </div>
       <div className="organizer-import-panel">
         <div>

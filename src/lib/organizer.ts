@@ -7,6 +7,11 @@ import { getAppSettings } from "@/lib/settings";
 import { matchMetadataForGroup, type MetadataMatch } from "@/lib/metadata";
 import { normalizeTitleAliases } from "@/lib/anime-parser";
 import { parseMediaReleaseTitle } from "@/lib/media-parser";
+import {
+  reviewOrganizerPlanWithOpenRouter,
+  type OrganizerAiReview,
+  type OrganizerReviewInput,
+} from "@/lib/openrouter";
 
 const videoExtensions = new Set([
   ".mkv",
@@ -347,6 +352,45 @@ export async function cleanupPollutedOrganizerPlans() {
   return { inspected: plans.length, deleted: polluted.length, plans: polluted.map((plan) => plan.id) };
 }
 
+export async function reviewOrganizerPlansWithAi(limit = 30) {
+  const plans = await prisma.organizerPlan.findMany({
+    where: {
+      status: { in: ["PENDING", "NEEDS_REVIEW", "CONFLICT"] },
+      items: { some: {} },
+      candidate: { isNot: null },
+    },
+    include: {
+      items: true,
+      candidate: { include: { group: true } },
+    },
+    orderBy: { updatedAt: "desc" },
+    take: limit,
+  });
+  let reviewed = 0;
+  let filteredItems = 0;
+  let flagged = 0;
+  let skipped = 0;
+
+  for (const plan of plans) {
+    const input = buildOrganizerReviewInput(plan);
+    if (!input) {
+      skipped += 1;
+      continue;
+    }
+    const review = await reviewOrganizerPlanWithOpenRouter(input);
+    if (!review) {
+      skipped += 1;
+      continue;
+    }
+    reviewed += 1;
+    const result = await applyOrganizerAiReview(plan.id, review, plan.items);
+    filteredItems += result.filteredItems;
+    flagged += result.flagged ? 1 : 0;
+  }
+
+  return { inspected: plans.length, reviewed, filteredItems, flagged, skipped };
+}
+
 async function findVideoFiles(sourceRoot: string, allowedRoots: string[]) {
   const root = assertInsideConfiguredRoots(sourceRoot, allowedRoots);
   const stat = await fs.stat(root);
@@ -364,6 +408,99 @@ async function findVideoFiles(sourceRoot: string, allowedRoots: string[]) {
     }
   }
   return results;
+}
+
+function buildOrganizerReviewInput(plan: {
+  id: string;
+  mediaType: MediaType;
+  metadata: unknown;
+  candidate: {
+    mediaType: MediaType;
+    parsedTitle: string;
+    normalizedTitle: string;
+    episodeNumber: number | null;
+    season: number | null;
+    group: { displayTitle: string; normalizedTitle: string; aliases: unknown } | null;
+  } | null;
+  items: Array<{ sourcePath: string; targetPath: string }>;
+}): OrganizerReviewInput | null {
+  const candidate = plan.candidate;
+  if (!candidate) {
+    return null;
+  }
+  const metadata = plan.metadata as { title?: string } | null;
+  const candidateAliases = [
+    candidate.parsedTitle,
+    candidate.normalizedTitle,
+    candidate.group?.displayTitle,
+    candidate.group?.normalizedTitle,
+    ...groupAliases(candidate.group?.aliases),
+  ].filter((value): value is string => Boolean(value));
+
+  return {
+    planId: plan.id,
+    mediaType: plan.mediaType,
+    candidateTitle: candidate.group?.displayTitle || candidate.parsedTitle,
+    candidateAliases,
+    episodeNumber: candidate.episodeNumber,
+    season: candidate.season ?? 1,
+    targetTitle: metadata?.title ?? null,
+    items: plan.items.map((item) => {
+      const parsed = parseMediaReleaseTitle(
+        path.basename(item.sourcePath, path.extname(item.sourcePath)),
+        candidate.mediaType,
+      );
+      return {
+        sourcePath: item.sourcePath,
+        targetPath: item.targetPath,
+        parsedTitle: parsed.parsedTitle,
+        parsedEpisodeNumber: parsed.episodeNumber ?? null,
+        parsedSeason: parsed.season ?? null,
+      };
+    }),
+  };
+}
+
+export async function applyOrganizerAiReview(
+  planId: string,
+  review: OrganizerAiReview,
+  items: Array<{ id: string; sourcePath: string }>,
+) {
+  const knownPaths = new Set(items.map((item) => item.sourcePath));
+  const rejectedPaths = new Set(
+    review.rejectedSourcePaths.filter((sourcePath) => knownPaths.has(sourcePath)),
+  );
+  let filteredItems = 0;
+  if (review.confidence >= 0.75 && rejectedPaths.size > 0) {
+    const deleted = await prisma.organizerPlanItem.deleteMany({
+      where: {
+        planId,
+        sourcePath: { in: [...rejectedPaths] },
+      },
+    });
+    filteredItems = deleted.count;
+  }
+
+  const remaining = items.length - filteredItems;
+  const flagged = review.riskLevel !== "OK" || filteredItems > 0 || remaining === 0;
+  const plan = await prisma.organizerPlan.findUnique({
+    where: { id: planId },
+    select: { metadata: true },
+  });
+  const metadata =
+    plan?.metadata && typeof plan.metadata === "object" && !Array.isArray(plan.metadata)
+      ? { ...(plan.metadata as Record<string, unknown>), aiReview: review }
+      : { aiReview: review };
+  await prisma.organizerPlan.update({
+    where: { id: planId },
+    data: {
+      status: flagged ? "NEEDS_REVIEW" : undefined,
+      reason: `AI review: ${review.summary || review.riskLevel}`,
+      metadata: metadata as Prisma.InputJsonValue,
+    },
+  });
+
+  return { filteredItems, flagged };
 }
 
 function isPollutedOrganizerPlan(plan: {

@@ -15,6 +15,14 @@ const aiGroupSchema = z.object({
   ),
 });
 
+const organizerReviewSchema = z.object({
+  riskLevel: z.enum(["OK", "REVIEW", "REJECT"]),
+  confidence: z.number().min(0).max(1),
+  summary: z.string().default(""),
+  acceptedSourcePaths: z.array(z.string()).default([]),
+  rejectedSourcePaths: z.array(z.string()).default([]),
+});
+
 export type AiCandidateInput = {
   id: string;
   rawTitle: string;
@@ -26,6 +34,25 @@ export type AiCandidateInput = {
   resolution?: string | null;
   codec?: string | null;
 };
+
+export type OrganizerReviewInput = {
+  planId: string;
+  mediaType: string;
+  candidateTitle: string;
+  candidateAliases: string[];
+  episodeNumber?: number | null;
+  season?: number | null;
+  targetTitle?: string | null;
+  items: Array<{
+    sourcePath: string;
+    targetPath: string;
+    parsedTitle?: string;
+    parsedEpisodeNumber?: number | null;
+    parsedSeason?: number | null;
+  }>;
+};
+
+export type OrganizerAiReview = z.infer<typeof organizerReviewSchema>;
 
 export async function groupCandidatesWithOpenRouter(candidates: AiCandidateInput[]) {
   const settings = await getAppSettings();
@@ -87,6 +114,59 @@ export async function groupCandidatesWithOpenRouter(candidates: AiCandidateInput
   }
 }
 
+export async function reviewOrganizerPlanWithOpenRouter(
+  input: OrganizerReviewInput,
+): Promise<OrganizerAiReview | null> {
+  const settings = await getAppSettings();
+
+  if (!settings.ai.openRouterApiKey) {
+    return null;
+  }
+
+  let response: Response;
+  try {
+    response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
+      method: "POST",
+      signal: AbortSignal.timeout(20_000),
+      headers: {
+        Authorization: `Bearer ${settings.ai.openRouterApiKey}`,
+        "Content-Type": "application/json",
+        "HTTP-Referer": "http://localhost:3000",
+        "X-Title": "Kura",
+      },
+      body: JSON.stringify({
+        model: settings.ai.model || "glm5.1",
+        messages: [
+          {
+            role: "system",
+            content:
+              "You review NAS anime organizer plans. Decide which source files belong to the candidate title and episode. Return strict JSON only: {\"riskLevel\":\"OK|REVIEW|REJECT\",\"confidence\":0.9,\"summary\":\"\",\"acceptedSourcePaths\":[\"\"],\"rejectedSourcePaths\":[\"\"]}. Reject unrelated titles, wrong episodes, and files that should not be moved into the target title. Do not invent paths.",
+          },
+          {
+            role: "user",
+            content: JSON.stringify(input),
+          },
+        ],
+      }),
+    });
+  } catch {
+    return null;
+  }
+
+  if (!response.ok) {
+    return null;
+  }
+
+  try {
+    const payload = await response.json();
+    const content = payload?.choices?.[0]?.message?.content;
+    const json = typeof content === "string" ? parseJsonObject(content) : content;
+    return organizerReviewSchema.parse(json);
+  } catch {
+    return null;
+  }
+}
+
 function heuristicGroups(
   candidates: AiCandidateInput[],
   summary = "Heuristic grouping used because OpenRouter is not configured.",
@@ -108,4 +188,16 @@ function heuristicGroups(
     aliases: [...new Set(items.map((item) => item.parsedTitle))],
     summary,
   }));
+}
+
+function parseJsonObject(value: string) {
+  try {
+    return JSON.parse(value);
+  } catch {
+    const match = value.match(/\{[\s\S]*\}/);
+    if (!match) {
+      throw new Error("No JSON object found");
+    }
+    return JSON.parse(match[0]);
+  }
 }
