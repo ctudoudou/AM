@@ -1,21 +1,23 @@
 "use client";
 
-import Hls from "hls.js";
-import { useCallback, useEffect, useRef, useState } from "react";
 import {
-  FastForward,
+  MediaPlayer,
+  MediaProvider,
+  type MediaPlayerInstance,
+  type PlayerSrc,
+} from "@vidstack/react";
+import {
+  DefaultVideoLayout,
+  defaultLayoutIcons,
+} from "@vidstack/react/player/layouts/default";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
   ListVideo,
   Loader2,
-  Maximize,
-  Pause,
-  Play,
   RefreshCw,
-  Rewind,
   RotateCcw,
   SkipBack,
   SkipForward,
-  Volume2,
-  VolumeX,
 } from "lucide-react";
 import { getMessages } from "@/messages";
 import type { Locale } from "@/lib/i18n";
@@ -79,21 +81,14 @@ export function WatchClient({
   previousEpisode: EpisodeLink | null;
 }) {
   const t = getMessages(locale);
-  const playerRef = useRef<HTMLDivElement | null>(null);
-  const videoRef = useRef<HTMLVideoElement | null>(null);
+  const playerRef = useRef<MediaPlayerInstance | null>(null);
   const descriptorRef = useRef<PlaybackDescriptor | null>(null);
+  const currentTimeRef = useRef(initialPositionSec);
+  const durationRef = useRef(0);
+  const restoredRef = useRef(false);
   const [descriptor, setDescriptor] = useState<PlaybackDescriptor | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
-  const [isPlaying, setIsPlaying] = useState(false);
-  const [currentTime, setCurrentTime] = useState(initialPositionSec);
-  const [duration, setDuration] = useState(0);
-  const [bufferedUntil, setBufferedUntil] = useState(0);
-  const [playbackRate, setPlaybackRate] = useState(1);
-  const [muted, setMuted] = useState(false);
-  const [volume, setVolumeState] = useState(1);
-  const [controlsVisible, setControlsVisible] = useState(true);
-  const [nativeControls, setNativeControls] = useState(false);
   const [panelOpen, setPanelOpen] = useState(true);
   const [ended, setEnded] = useState(false);
 
@@ -105,10 +100,11 @@ export function WatchClient({
       }
       const body = (await response.json()) as PlaybackDescriptor;
       if (body.sourceDurationSec && body.sourceDurationSec > 0) {
-        setDuration(body.sourceDurationSec);
+        durationRef.current = body.sourceDurationSec;
       }
       setDescriptor(body);
       descriptorRef.current = body;
+      setEnded(false);
       setError("");
       return body;
     } catch (loadError) {
@@ -143,8 +139,7 @@ export function WatchClient({
   }, [mediaFileId]);
 
   const saveProgress = useCallback(async () => {
-    const video = videoRef.current;
-    if (!video || Number.isNaN(video.currentTime)) {
+    if (Number.isNaN(currentTimeRef.current)) {
       return;
     }
     await fetch("/api/watch-progress", {
@@ -152,82 +147,23 @@ export function WatchClient({
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         episodeId,
-        positionSec: Math.floor(video.currentTime),
-        durationSec: Number.isFinite(video.duration) ? Math.floor(video.duration) : undefined,
+        positionSec: Math.floor(currentTimeRef.current),
+        durationSec:
+          Number.isFinite(durationRef.current) && durationRef.current > 0
+            ? Math.floor(durationRef.current)
+            : undefined,
       }),
     }).catch(() => undefined);
   }, [episodeId]);
 
-  const togglePlay = useCallback(() => {
-    const video = videoRef.current;
-    if (!video) {
-      return;
-    }
-    if (video.paused) {
-      void video.play();
-    } else {
-      video.pause();
-    }
-  }, []);
-
-  const seekBy = useCallback((seconds: number) => {
-    const video = videoRef.current;
-    if (!video) {
-      return;
-    }
-    const seekLimit = seekableLimit(video, duration);
-    video.currentTime = Math.min(Math.max(video.currentTime + seconds, 0), seekLimit);
-    setCurrentTime(video.currentTime);
-  }, [duration]);
-
   const seekTo = useCallback((seconds: number) => {
-    const video = videoRef.current;
-    if (!video) {
-      return;
-    }
-    const nextTime = Math.min(Math.max(seconds, 0), seekableLimit(video, duration));
-    video.currentTime = nextTime;
-    setCurrentTime(nextTime);
-  }, [duration]);
-
-  const setVolume = useCallback((nextVolume: number) => {
-    const video = videoRef.current;
-    const normalized = Math.min(Math.max(nextVolume, 0), 1);
-    setVolumeState(normalized);
-    if (video) {
-      video.volume = normalized;
-      video.muted = normalized === 0;
-    }
-    setMuted(normalized === 0);
-  }, []);
-
-  const toggleMute = useCallback(() => {
-    const video = videoRef.current;
-    if (!video) {
-      return;
-    }
-    video.muted = !video.muted;
-    setMuted(video.muted);
-  }, []);
-
-  const toggleFullscreen = useCallback(() => {
     const player = playerRef.current;
     if (!player) {
       return;
     }
-    if (document.fullscreenElement) {
-      void document.exitFullscreen();
-    } else {
-      void player.requestFullscreen();
-    }
-  }, []);
-
-  const changePlaybackRate = useCallback((rate: number) => {
-    const video = videoRef.current;
-    setPlaybackRate(rate);
-    if (video) {
-      video.playbackRate = rate;
-    }
+    const nextTime = Math.max(seconds, 0);
+    player.currentTime = nextTime;
+    currentTimeRef.current = nextTime;
   }, []);
 
   useEffect(() => {
@@ -276,132 +212,24 @@ export function WatchClient({
   const streamUrl = descriptor?.streamUrl ?? null;
   const hlsUrl = descriptor?.hlsUrl ?? null;
   const sourceDurationSec = descriptor?.sourceDurationSec ?? null;
+  const playerSource = useMemo<PlayerSrc | undefined>(() => {
+    if (hlsUrl) {
+      return { src: hlsUrl, type: "application/vnd.apple.mpegurl" };
+    }
+    if (streamUrl) {
+      return {
+        src: streamUrl,
+        type: mimeTypeForFile(descriptor?.mediaFile.originalName),
+      };
+    }
+    return undefined;
+  }, [descriptor?.mediaFile.originalName, hlsUrl, streamUrl]);
 
   useEffect(() => {
-    const video = videoRef.current;
-    if (!video) {
-      return;
-    }
-    const sourceUrl = streamUrl ?? hlsUrl;
-    if (!sourceUrl) {
-      return;
-    }
-
-    let hls: Hls | null = null;
-    if (hlsUrl && Hls.isSupported()) {
-      hls = new Hls({
-        backBufferLength: 30,
-        enableWorker: true,
-        startFragPrefetch: true,
-      });
-      hls.loadSource(hlsUrl);
-      hls.attachMedia(video);
-    } else {
-      video.src = sourceUrl;
-    }
-
-    const restore = () => {
-      if (initialPositionSec > 0 && video.duration > initialPositionSec) {
-        video.currentTime = initialPositionSec;
-        setCurrentTime(initialPositionSec);
-      }
-      const sourceDuration = sourceDurationSec ?? 0;
-      setDuration(sourceDuration || (Number.isFinite(video.duration) ? video.duration : 0));
-    };
-    video.addEventListener("loadedmetadata", restore, { once: true });
-
-    return () => {
-      hls?.destroy();
-      video.removeEventListener("loadedmetadata", restore);
-      video.removeAttribute("src");
-      video.load();
-    };
-  }, [hlsUrl, initialPositionSec, sourceDurationSec, streamUrl]);
-
-  useEffect(() => {
-    const video = videoRef.current;
-    if (!video) {
-      return;
-    }
-    video.volume = volume;
-    video.muted = muted;
-    video.playbackRate = playbackRate;
-
-    const handlePlay = () => {
-      setIsPlaying(true);
-      setEnded(false);
-    };
-    const handlePause = () => setIsPlaying(false);
-    const updateBuffered = () => setBufferedUntil(bufferedEnd(video));
-    const handleTime = () => {
-      setCurrentTime(video.currentTime);
-      updateBuffered();
-    };
-    const handleDuration = () => {
-      const sourceDuration = descriptorRef.current?.sourceDurationSec ?? 0;
-      setDuration(sourceDuration || (Number.isFinite(video.duration) ? video.duration : 0));
-      updateBuffered();
-    };
-    const handleEnded = () => {
-      setEnded(true);
-      setIsPlaying(false);
-      setControlsVisible(true);
-      void saveProgress();
-    };
-    video.addEventListener("play", handlePlay);
-    video.addEventListener("pause", handlePause);
-    video.addEventListener("timeupdate", handleTime);
-    video.addEventListener("progress", updateBuffered);
-    video.addEventListener("durationchange", handleDuration);
-    video.addEventListener("ended", handleEnded);
-    return () => {
-      video.removeEventListener("play", handlePlay);
-      video.removeEventListener("pause", handlePause);
-      video.removeEventListener("timeupdate", handleTime);
-      video.removeEventListener("progress", updateBuffered);
-      video.removeEventListener("durationchange", handleDuration);
-      video.removeEventListener("ended", handleEnded);
-    };
-  }, [muted, playbackRate, saveProgress, volume]);
-
-  useEffect(() => {
-    if (!isPlaying || !controlsVisible || nativeControls) {
-      return;
-    }
-    const timeout = window.setTimeout(() => setControlsVisible(false), 2600);
-    return () => window.clearTimeout(timeout);
-  }, [controlsVisible, isPlaying, nativeControls]);
-
-  useEffect(() => {
-    const onKeyDown = (event: KeyboardEvent) => {
-      const target = event.target as HTMLElement | null;
-      if (
-        target?.tagName === "INPUT" ||
-        target?.tagName === "TEXTAREA" ||
-        target?.tagName === "SELECT" ||
-        target?.isContentEditable
-      ) {
-        return;
-      }
-      if (event.code === "Space") {
-        event.preventDefault();
-        togglePlay();
-      } else if (event.key === "ArrowLeft") {
-        event.preventDefault();
-        seekBy(-10);
-      } else if (event.key === "ArrowRight") {
-        event.preventDefault();
-        seekBy(10);
-      } else if (event.key.toLowerCase() === "m") {
-        toggleMute();
-      } else if (event.key.toLowerCase() === "f") {
-        toggleFullscreen();
-      }
-      setControlsVisible(true);
-    };
-    window.addEventListener("keydown", onKeyDown);
-    return () => window.removeEventListener("keydown", onKeyDown);
-  }, [seekBy, toggleFullscreen, toggleMute, togglePlay]);
+    currentTimeRef.current = initialPositionSec;
+    durationRef.current = sourceDurationSec ?? 0;
+    restoredRef.current = false;
+  }, [initialPositionSec, mediaFileId, sourceDurationSec]);
 
   useEffect(() => {
     const timer = window.setInterval(() => {
@@ -428,36 +256,68 @@ export function WatchClient({
   }
 
   const sourceReady = Boolean(descriptor?.streamUrl || descriptor?.hlsUrl);
-  const processingHls = descriptor?.transcodeStatus === "PROCESSING";
-  const seekMax =
-    processingHls && bufferedUntil > 0
-      ? Math.max(currentTime, Math.min(duration || bufferedUntil, bufferedUntil))
-      : duration;
-  const progressPercent = seekMax > 0 ? (currentTime / seekMax) * 100 : 0;
 
   return (
     <div className={`watch-stage ${panelOpen ? "panel-open" : ""}`}>
       <div className="watch-player-shell">
-        <div
-          className="watch-player"
-          onMouseMove={() => setControlsVisible(true)}
-          ref={playerRef}
-        >
-          {sourceReady ? (
+        <div className="watch-player">
+          {sourceReady && playerSource ? (
             <>
-              <video
-                controls={nativeControls}
+              <MediaPlayer
+                aspectRatio="16/9"
+                className="kura-media-player"
+                onDurationChange={(nextDuration) => {
+                  durationRef.current = Number.isFinite(nextDuration)
+                    ? nextDuration
+                    : durationRef.current;
+                }}
+                onEnded={() => {
+                  setEnded(true);
+                  void saveProgress();
+                }}
+                onError={() => setError(t.playbackLoadError)}
+                onLoadedMetadata={() => {
+                  if (!restoredRef.current && initialPositionSec > 0 && playerRef.current) {
+                    playerRef.current.currentTime = initialPositionSec;
+                  }
+                  restoredRef.current = true;
+                }}
                 onPause={() => void saveProgress()}
+                onPlay={() => setEnded(false)}
+                onSeeked={(nextTime) => {
+                  currentTimeRef.current = nextTime;
+                  void saveProgress();
+                }}
+                onSeeking={(nextTime) => {
+                  currentTimeRef.current = nextTime;
+                }}
+                onTimeUpdate={(detail) => {
+                  currentTimeRef.current = detail.currentTime;
+                }}
                 playsInline
-                ref={videoRef}
-              />
+                preload="metadata"
+                ref={playerRef}
+                src={playerSource}
+                streamType="on-demand"
+                title={currentEpisodeLabel(currentEpisode)}
+                viewType="video"
+              >
+                <MediaProvider />
+                <DefaultVideoLayout
+                  colorScheme="dark"
+                  icons={defaultLayoutIcons}
+                  playbackRates={[0.5, 0.75, 1, 1.25, 1.5, 1.75, 2]}
+                  seekStep={10}
+                  smallLayoutWhen={({ width, height }) => width < 620 || height < 420}
+                />
+              </MediaPlayer>
               {ended ? (
                 <div className="watch-ended">
                   <strong>{t.playbackEnded}</strong>
                   <div>
                     <button onClick={() => {
                       seekTo(0);
-                      void videoRef.current?.play();
+                      void playerRef.current?.play();
                     }} type="button">
                       <RotateCcw size={14} />
                       {t.replay}
@@ -471,70 +331,14 @@ export function WatchClient({
                   </div>
                 </div>
               ) : null}
-              {!nativeControls ? (
-                <div className={`watch-controls ${controlsVisible || !isPlaying ? "visible" : ""}`}>
-                  <input
-                    aria-label={t.seek}
-                    max={seekMax || 0}
-                    min={0}
-                    onChange={(event) => seekTo(Number(event.target.value))}
-                    step={1}
-                    style={{ backgroundSize: `${progressPercent}% 100%` }}
-                    type="range"
-                    value={Math.min(currentTime, seekMax || currentTime)}
-                  />
-                  <div className="watch-control-row">
-                    <div className="watch-control-cluster">
-                      <button aria-label={t.playPause} onClick={togglePlay} type="button">
-                        {isPlaying ? <Pause size={16} /> : <Play size={16} />}
-                      </button>
-                      <button aria-label={t.rewind10} onClick={() => seekBy(-10)} type="button">
-                        <Rewind size={16} />
-                      </button>
-                      <button aria-label={t.forward10} onClick={() => seekBy(10)} type="button">
-                        <FastForward size={16} />
-                      </button>
-                      <span>
-                        {formatTime(currentTime)} / {formatTime(duration)}
-                        {processingHls && bufferedUntil > currentTime
-                          ? ` · ${t.seekableReady} ${formatTime(bufferedUntil)}`
-                          : ""}
-                      </span>
-                    </div>
-                    <div className="watch-control-cluster">
-                      <button aria-label={t.mute} onClick={toggleMute} type="button">
-                        {muted ? <VolumeX size={16} /> : <Volume2 size={16} />}
-                      </button>
-                      <input
-                        aria-label={t.volume}
-                        max={1}
-                        min={0}
-                        onChange={(event) => setVolume(Number(event.target.value))}
-                        step={0.05}
-                        type="range"
-                        value={muted ? 0 : volume}
-                      />
-                      <select
-                        aria-label={t.playbackRate}
-                        onChange={(event) => changePlaybackRate(Number(event.target.value))}
-                        value={playbackRate}
-                      >
-                        {playbackRateOptions.map((rate) => (
-                          <option key={rate} value={rate}>
-                            {rate}x
-                          </option>
-                        ))}
-                      </select>
-                      <button aria-label={t.episodePanel} onClick={() => setPanelOpen((value) => !value)} type="button">
-                        <ListVideo size={16} />
-                      </button>
-                      <button aria-label={t.fullscreen} onClick={toggleFullscreen} type="button">
-                        <Maximize size={16} />
-                      </button>
-                    </div>
-                  </div>
-                </div>
-              ) : null}
+              <button
+                aria-label={t.episodePanel}
+                className="watch-panel-toggle"
+                onClick={() => setPanelOpen((value) => !value)}
+                type="button"
+              >
+                <ListVideo size={16} />
+              </button>
             </>
           ) : (
             <div className="watch-state">
@@ -552,9 +356,7 @@ export function WatchClient({
               {t.previousEpisode}
             </a>
           ) : <span />}
-          <button onClick={() => setNativeControls((value) => !value)} type="button">
-            {nativeControls ? t.customControls : t.nativeControls}
-          </button>
+          <span>{descriptor?.playbackMode ?? "-"}</span>
           {nextEpisode ? (
             <a href={`/${locale}/watch/${nextEpisode.id}`}>
               {t.nextEpisode}
@@ -648,39 +450,6 @@ export function WatchClient({
   );
 }
 
-const playbackRateOptions = [0.5, 0.75, 1, 1.25, 1.5, 1.75, 2];
-
-function formatTime(value: number) {
-  if (!Number.isFinite(value) || value <= 0) {
-    return "00:00";
-  }
-  const total = Math.floor(value);
-  const hours = Math.floor(total / 3600);
-  const minutes = Math.floor((total % 3600) / 60);
-  const seconds = total % 60;
-  if (hours > 0) {
-    return `${hours}:${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}`;
-  }
-  return `${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}`;
-}
-
-function seekableLimit(video: HTMLVideoElement, fallbackDuration: number) {
-  const buffered = bufferedEnd(video);
-  if (buffered > 0) {
-    return buffered;
-  }
-  return Number.isFinite(video.duration) && video.duration > 0
-    ? video.duration
-    : fallbackDuration;
-}
-
-function bufferedEnd(video: HTMLVideoElement) {
-  if (video.buffered.length === 0) {
-    return 0;
-  }
-  return video.buffered.end(video.buffered.length - 1);
-}
-
 function formatMediaFileLabel(file: WatchMediaFile) {
   return [
     file.sourceResolution ?? file.resolution,
@@ -692,4 +461,12 @@ function formatMediaFileLabel(file: WatchMediaFile) {
 
 function currentEpisodeLabel(episode: EpisodeLink) {
   return `S${String(episode.seasonNumber).padStart(2, "0")}E${String(episode.number).padStart(2, "0")}`;
+}
+
+function mimeTypeForFile(fileName?: string | null) {
+  const lower = fileName?.toLowerCase() ?? "";
+  if (lower.endsWith(".webm")) {
+    return "video/webm";
+  }
+  return "video/mp4";
 }

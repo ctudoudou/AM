@@ -739,8 +739,11 @@ function formatSubscriptionPolicy(subscription: Subscription) {
 }
 
 function candidateMatchesSubscription(candidate: Candidate, subscription: Subscription) {
+  if (subscription.preferredVariantKey) {
+    return candidate.variantKey === subscription.preferredVariantKey;
+  }
+
   const checks = [
-    [subscription.preferredVariantKey, candidate.variantKey],
     [subscription.preferredGroup, candidate.subtitleGroup],
     [subscription.preferredResolution, candidate.resolution],
     [subscription.preferredCodec, candidate.codec],
@@ -749,6 +752,10 @@ function candidateMatchesSubscription(candidate: Candidate, subscription: Subscr
     [subscription.preferredReleaseProfile, candidate.releaseProfile],
     [subscription.preferredSourceKind, candidate.sourceKind],
   ] as const;
+
+  if (!checks.some(([preferred]) => Boolean(preferred))) {
+    return candidate.status === "SUBSCRIBED";
+  }
 
   return checks.every(([preferred, actual]) => !preferred || preferred === actual);
 }

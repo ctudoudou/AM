@@ -1,4 +1,7 @@
 @import "tailwindcss";
+@import "@vidstack/react/player/styles/base.css";
+@import "@vidstack/react/player/styles/default/theme.css";
+@import "@vidstack/react/player/styles/default/layouts/video.css";
 
 :root {
   --background: #000000;
@@ -2037,20 +2040,50 @@ a {
 
 .watch-player {
   position: relative;
-  display: grid;
-  min-height: 560px;
+  display: block;
+  min-height: 520px;
   overflow: hidden;
-  place-items: center;
   border: 1px solid var(--border-subtle);
   border-radius: 14px;
   background: #030303;
 }
 
-.watch-player video {
+.kura-media-player {
   width: 100%;
+  min-height: 520px;
   max-height: calc(100vh - 150px);
-  min-height: 460px;
+  --media-brand: var(--accent-success);
+  --media-focus-ring-color: rgba(0, 212, 146, 0.62);
+  --video-border-radius: 14px;
   background: #000;
+  color: #fff;
+}
+
+.kura-media-player video {
+  object-fit: contain;
+  background: #000;
+}
+
+.watch-panel-toggle {
+  position: absolute;
+  top: 14px;
+  right: 14px;
+  z-index: 3;
+  display: inline-flex;
+  width: 34px;
+  height: 34px;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 9px;
+  background: rgba(8, 8, 8, 0.72);
+  color: rgba(255, 255, 255, 0.86);
+  cursor: pointer;
+  backdrop-filter: blur(16px);
+}
+
+.watch-panel-toggle:hover {
+  background: rgba(255, 255, 255, 0.12);
 }
 
 .watch-controls {
@@ -2532,7 +2565,7 @@ a {
     min-height: 320px;
   }
 
-  .watch-player video {
+  .kura-media-player {
     min-height: 260px;
   }
 

@@ -53,7 +53,7 @@ export async function enqueueCandidateDownload(candidateId: string) {
 
   await prisma.releaseCandidate.update({
     where: { id: candidate.id },
-    data: { status: "DOWNLOADED" },
+    data: { status: "SUBSCRIBED" },
   });
 
   return download;
@@ -132,6 +132,12 @@ export async function syncSingleAria2Download(downloadId: string) {
     },
   });
   if (nextStatus === "COMPLETED") {
+    if (download.candidateId) {
+      await prisma.releaseCandidate.update({
+        where: { id: download.candidateId },
+        data: { status: "DOWNLOADED" },
+      });
+    }
     await createOrganizerPlanForDownload(download.id).catch(async (error) => {
       await prisma.download.update({
         where: { id: download.id },
