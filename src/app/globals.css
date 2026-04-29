@@ -1751,6 +1751,18 @@ a {
   border-bottom: 0;
 }
 
+.missing-episode-item {
+  border-bottom: 1px solid rgba(255, 255, 255, 0.055);
+}
+
+.missing-episode-item:last-child {
+  border-bottom: 0;
+}
+
+.missing-episode-item .missing-episode-row {
+  border-bottom: 0;
+}
+
 .missing-episode-row strong,
 .missing-episode-row small {
   display: block;
@@ -1777,6 +1789,101 @@ a {
   flex-wrap: wrap;
   justify-content: flex-end;
   gap: 8px;
+}
+
+.wanted-search-results {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 0 12px 12px 80px;
+  border-top: 1px solid rgba(255, 255, 255, 0.055);
+  padding-top: 10px;
+}
+
+.wanted-search-heading {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.wanted-search-heading strong {
+  color: var(--text-primary);
+  font-size: 12px;
+  line-height: 18px;
+}
+
+.wanted-search-heading span,
+.wanted-search-results p {
+  margin: 0;
+  color: var(--text-faint);
+  font-size: 11px;
+  line-height: 16px;
+}
+
+.wanted-search-result {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 12px;
+  border: 1px solid rgba(255, 255, 255, 0.055);
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.035);
+  padding: 10px;
+}
+
+.wanted-search-result strong,
+.wanted-search-result small {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.wanted-search-result strong {
+  color: rgba(255, 255, 255, 0.84);
+  font-size: 12px;
+  line-height: 18px;
+}
+
+.wanted-search-result small {
+  margin-top: 2px;
+  color: var(--text-faint);
+  font-size: 11px;
+  line-height: 16px;
+}
+
+.wanted-search-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 4px;
+}
+
+.wanted-search-meta span {
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.04);
+  color: var(--text-muted);
+  padding: 2px 7px;
+  font-size: 10px;
+  line-height: 14px;
+}
+
+.wanted-search-result button {
+  display: inline-flex;
+  min-height: 32px;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  border: 1px solid var(--border-default);
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.08);
+  color: rgba(255, 255, 255, 0.82);
+  padding: 0 11px;
+  font-size: 12px;
+  white-space: nowrap;
+  cursor: pointer;
 }
 
 .episode-browser-heading {
@@ -2558,6 +2665,20 @@ a {
   }
 
   .episode-row {
+    align-items: stretch;
+  }
+
+  .wanted-search-results {
+    margin-left: 12px;
+  }
+
+  .wanted-search-heading,
+  .wanted-search-result {
+    grid-template-columns: 1fr;
+  }
+
+  .wanted-search-heading {
+    flex-direction: column;
     align-items: stretch;
   }
 

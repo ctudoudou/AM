@@ -1,0 +1,4 @@
+docker run --rm \
+    -e DATABASE_URL='postgresql://kura:kura@192.168.8.7:5432/kura?schema=public' \
+    ctudoudou/kura-worker:latest \
+    npm run prisma:migrate:deploy

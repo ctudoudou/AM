@@ -5,11 +5,18 @@ import { Download, Loader2, RefreshCw, Search, X } from "lucide-react";
 import { getMessages } from "@/messages";
 import type { Locale } from "@/lib/i18n";
 import type { EpisodeCoverageItem } from "@/lib/wanted-episodes";
+import type { WantedSearchResult } from "@/lib/wanted-rss-search";
 
 type MissingEpisodesPayload = {
   mediaTitleId: string;
   episodes: EpisodeCoverageItem[];
   missingCount: number;
+};
+
+type WantedSearchState = {
+  loading: boolean;
+  results: WantedSearchResult[];
+  error: string;
 };
 
 export function MissingEpisodesPanel({
@@ -25,6 +32,7 @@ export function MissingEpisodesPanel({
   const [coverage, setCoverage] = useState(initialCoverage);
   const [loading, setLoading] = useState(false);
   const [busyId, setBusyId] = useState<string | null>(null);
+  const [searches, setSearches] = useState<Record<string, WantedSearchState>>({});
   const [error, setError] = useState("");
   const visibleEpisodes = useMemo(
     () => coverage.episodes.filter((episode) => episode.status !== "AVAILABLE"),
@@ -67,6 +75,56 @@ export function MissingEpisodesPanel({
     }
   }
 
+  async function searchWantedSources(wantedId: string) {
+    setSearches((current) => ({
+      ...current,
+      [wantedId]: { loading: true, results: current[wantedId]?.results ?? [], error: "" },
+    }));
+    setError("");
+    try {
+      const response = await fetch(`/api/wanted-episodes/${wantedId}/search`, {
+        method: "POST",
+      });
+      if (!response.ok) {
+        throw new Error(t.missingEpisodeActionError);
+      }
+      const body = (await response.json()) as { results: WantedSearchResult[] };
+      setSearches((current) => ({
+        ...current,
+        [wantedId]: { loading: false, results: body.results, error: "" },
+      }));
+    } catch (searchError) {
+      setSearches((current) => ({
+        ...current,
+        [wantedId]: {
+          loading: false,
+          results: current[wantedId]?.results ?? [],
+          error: searchError instanceof Error ? searchError.message : t.missingEpisodeActionError,
+        },
+      }));
+    }
+  }
+
+  async function selectWantedResult(wantedId: string, result: WantedSearchResult) {
+    setBusyId(`${wantedId}:${result.key}`);
+    setError("");
+    try {
+      const response = await fetch(`/api/wanted-episodes/${wantedId}/select-download`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(result),
+      });
+      if (!response.ok) {
+        throw new Error(t.downloadCreateError);
+      }
+      await scan();
+    } catch (selectError) {
+      setError(selectError instanceof Error ? selectError.message : t.downloadCreateError);
+    } finally {
+      setBusyId(null);
+    }
+  }
+
   return (
     <section className="missing-episodes-panel">
       <div className="episode-browser-heading">
@@ -84,48 +142,102 @@ export function MissingEpisodesPanel({
         <div className="empty-panel">{t.noMissingEpisodes}</div>
       ) : (
         <div className="missing-episode-list">
-          {visibleEpisodes.map((episode) => (
-            <article
-              className={`missing-episode-row status-${episode.status.toLowerCase()}`}
-              key={`${episode.seasonNumber}-${episode.episodeNumber}`}
-            >
-              <div className="episode-index">
-                <strong>{String(episode.episodeNumber).padStart(2, "0")}</strong>
-                <span>S{String(episode.seasonNumber).padStart(2, "0")}</span>
-              </div>
-              <div>
-                <strong>{labelForStatus(episode.status, t)}</strong>
-                <small>{episode.candidateTitle || episode.reason || t.noCandidateFound}</small>
-              </div>
-              <div className="missing-episode-actions">
-                {episode.wantedId && episode.candidateId ? (
-                  <button
-                    disabled={busyId === episode.wantedId}
-                    onClick={() => void runWantedAction(episode.wantedId as string, "download")}
-                    type="button"
-                  >
-                    {busyId === episode.wantedId ? <Loader2 size={14} /> : <Download size={14} />}
-                    {t.download}
-                  </button>
-                ) : (
-                  <button disabled type="button">
-                    <Search size={14} />
-                    {t.noCandidateFound}
-                  </button>
-                )}
-                {episode.wantedId ? (
-                  <button
-                    disabled={busyId === episode.wantedId}
-                    onClick={() => void runWantedAction(episode.wantedId as string, "ignore")}
-                    type="button"
-                  >
-                    <X size={14} />
-                    {t.ignoreEpisode}
-                  </button>
+          {visibleEpisodes.map((episode) => {
+            const wantedId = episode.wantedId;
+            const searchState = wantedId ? searches[wantedId] : undefined;
+            return (
+              <div className="missing-episode-item" key={`${episode.seasonNumber}-${episode.episodeNumber}`}>
+                <article className={`missing-episode-row status-${episode.status.toLowerCase()}`}>
+                  <div className="episode-index">
+                    <strong>{String(episode.episodeNumber).padStart(2, "0")}</strong>
+                    <span>S{String(episode.seasonNumber).padStart(2, "0")}</span>
+                  </div>
+                  <div>
+                    <strong>{labelForStatus(episode.status, t)}</strong>
+                    <small>{episode.candidateTitle || episode.reason || t.noCandidateFound}</small>
+                  </div>
+                  <div className="missing-episode-actions">
+                    {wantedId && episode.candidateId ? (
+                      <button
+                        disabled={busyId === wantedId}
+                        onClick={() => void runWantedAction(wantedId, "download")}
+                        type="button"
+                      >
+                        {busyId === wantedId ? <Loader2 size={14} /> : <Download size={14} />}
+                        {t.download}
+                      </button>
+                    ) : wantedId ? (
+                      <button
+                        disabled={searchState?.loading}
+                        onClick={() => void searchWantedSources(wantedId)}
+                        type="button"
+                      >
+                        {searchState?.loading ? <Loader2 size={14} /> : <Search size={14} />}
+                        {searchState?.loading ? t.searchingWantedSources : t.searchWantedSources}
+                      </button>
+                    ) : (
+                      <button disabled type="button">
+                        <Search size={14} />
+                        {t.scanMissingEpisodes}
+                      </button>
+                    )}
+                    {wantedId ? (
+                      <button
+                        disabled={busyId === wantedId}
+                        onClick={() => void runWantedAction(wantedId, "ignore")}
+                        type="button"
+                      >
+                        <X size={14} />
+                        {t.ignoreEpisode}
+                      </button>
+                    ) : null}
+                  </div>
+                </article>
+                {wantedId && searchState ? (
+                  <div className="wanted-search-results">
+                    <div className="wanted-search-heading">
+                      <strong>{t.wantedSearchResults}</strong>
+                      <span>{t.wantedSearchHint}</span>
+                    </div>
+                    {searchState.error ? <div className="settings-alert">{searchState.error}</div> : null}
+                    {!searchState.loading && searchState.results.length === 0 ? (
+                      <p>{t.noWantedSearchResults}</p>
+                    ) : null}
+                    {searchState.results.map((result) => (
+                      <article className="wanted-search-result" key={result.key}>
+                        <div>
+                          <div className="wanted-search-meta">
+                            <span>{result.sourceName}</span>
+                            <span>{result.match === "strong" ? t.strongWantedMatch : t.relatedWantedMatch}</span>
+                            {result.parsed.resolution ? <span>{result.parsed.resolution}</span> : null}
+                          </div>
+                          <strong>{result.title}</strong>
+                          <small>
+                            {[
+                              result.parsed.subtitleGroup,
+                              result.parsed.episodeNumber ? `${t.episode}${result.parsed.episodeNumber}` : null,
+                              result.size,
+                              result.seeders !== null ? `Seed ${result.seeders}` : null,
+                            ]
+                              .filter(Boolean)
+                              .join(" · ")}
+                          </small>
+                        </div>
+                        <button
+                          disabled={busyId === `${wantedId}:${result.key}` || result.match !== "strong"}
+                          onClick={() => void selectWantedResult(wantedId, result)}
+                          type="button"
+                        >
+                          {busyId === `${wantedId}:${result.key}` ? <Loader2 size={14} /> : <Download size={14} />}
+                          {t.selectWantedResult}
+                        </button>
+                      </article>
+                    ))}
+                  </div>
                 ) : null}
               </div>
-            </article>
-          ))}
+            );
+          })}
         </div>
       )}
     </section>
