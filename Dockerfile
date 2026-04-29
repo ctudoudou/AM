@@ -1,13 +1,20 @@
+# syntax=docker/dockerfile:1.7
+
 FROM node:24-alpine AS deps
 WORKDIR /app
 COPY package.json package-lock.json* ./
-RUN npm install
+RUN --mount=type=cache,target=/root/.npm npm ci
 
 FROM node:24-alpine AS builder
 WORKDIR /app
 COPY --from=deps /app/node_modules ./node_modules
 COPY . .
-RUN npm run prisma:generate
+RUN --mount=type=cache,target=/root/.cache/prisma \
+    for attempt in 1 2 3 4 5; do \
+      npm run prisma:generate && break; \
+      if [ "$attempt" = "5" ]; then exit 1; fi; \
+      sleep $((attempt * 5)); \
+    done
 RUN npm run build
 
 FROM node:24-alpine AS runner
@@ -28,5 +35,10 @@ ENV NODE_ENV=production
 RUN apk add --no-cache ffmpeg
 COPY --from=deps /app/node_modules ./node_modules
 COPY . .
-RUN npm run prisma:generate
+RUN --mount=type=cache,target=/root/.cache/prisma \
+    for attempt in 1 2 3 4 5; do \
+      npm run prisma:generate && break; \
+      if [ "$attempt" = "5" ]; then exit 1; fi; \
+      sleep $((attempt * 5)); \
+    done
 CMD ["npm", "run", "worker"]
