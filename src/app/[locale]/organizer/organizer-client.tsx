@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Check, Loader2, RefreshCw, X } from "lucide-react";
+import { Check, FolderSearch, Loader2, RefreshCw, X } from "lucide-react";
 import { getMessages } from "@/messages";
 import type { Locale } from "@/lib/i18n";
 
@@ -34,6 +34,9 @@ export function OrganizerClient({ locale }: { locale: Locale }) {
   const t = getMessages(locale);
   const [plans, setPlans] = useState<OrganizerPlan[]>([]);
   const [filter, setFilter] = useState("ALL");
+  const [importDraft, setImportDraft] = useState({ root: "", mediaType: "AUTO" });
+  const [importing, setImporting] = useState(false);
+  const [status, setStatus] = useState("");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const visiblePlans = useMemo(
@@ -65,6 +68,7 @@ export function OrganizerClient({ locale }: { locale: Locale }) {
   }, [load]);
 
   async function runInspect() {
+    setStatus("");
     const response = await fetch("/api/jobs/run", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -75,6 +79,28 @@ export function OrganizerClient({ locale }: { locale: Locale }) {
       setError(body?.message || t.organizerLoadError);
       return;
     }
+    await load();
+  }
+
+  async function runImportScan() {
+    setImporting(true);
+    setError("");
+    setStatus("");
+    const response = await fetch("/api/organizer/import-scan", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(importDraft),
+    });
+    setImporting(false);
+    if (!response.ok) {
+      const body = await response.json().catch(() => null);
+      setError(body?.message || t.importScanError);
+      return;
+    }
+    const body = (await response.json()) as { planned: number; skipped: number; lowConfidence: number };
+    setStatus(
+      `${t.importScanCreated} ${t.importScanPlanned}: ${body.planned}, ${t.importScanSkipped}: ${body.skipped}, ${t.importScanReview}: ${body.lowConfidence}.`,
+    );
     await load();
   }
 
@@ -127,6 +153,30 @@ export function OrganizerClient({ locale }: { locale: Locale }) {
           {t.inspectCompleted}
         </button>
       </div>
+      <div className="organizer-import-panel">
+        <div>
+          <strong>{t.importScan}</strong>
+          <span>{t.importScanDescription}</span>
+        </div>
+        <input
+          onChange={(event) => setImportDraft({ ...importDraft, root: event.target.value })}
+          placeholder={t.importRoot}
+          value={importDraft.root}
+        />
+        <select
+          onChange={(event) => setImportDraft({ ...importDraft, mediaType: event.target.value })}
+          value={importDraft.mediaType}
+        >
+          <option value="AUTO">{t.autoDetect}</option>
+          <option value="ANIME">{t.anime}</option>
+          <option value="MOVIE">{t.movies}</option>
+          <option value="TV">{t.tv}</option>
+        </select>
+        <button disabled={importing || !importDraft.root.trim()} onClick={() => void runImportScan()} type="button">
+          {importing ? <Loader2 size={14} /> : <FolderSearch size={14} />}
+          {t.importScan}
+        </button>
+      </div>
       <div className="filter-tabs">
         {["ALL", "PENDING", "NEEDS_REVIEW", "CONFLICT", "FAILED", "REJECTED", "EXECUTED"].map((status) => (
           <button
@@ -140,6 +190,7 @@ export function OrganizerClient({ locale }: { locale: Locale }) {
         ))}
       </div>
       {error ? <div className="settings-alert">{error}</div> : null}
+      {status ? <div className="settings-success">{status}</div> : null}
       <div className="organizer-list">
         {visiblePlans.length === 0 ? (
           <p>{t.noOrganizerPlans}</p>

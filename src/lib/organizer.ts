@@ -40,7 +40,6 @@ export async function inspectCompletedDownloads() {
 }
 
 export async function createOrganizerPlanForDownload(downloadId: string) {
-  const settings = await getAppSettings();
   const download = await prisma.download.findUniqueOrThrow({
     where: { id: downloadId },
     include: { candidate: { include: { group: true } } },
@@ -59,16 +58,15 @@ export async function createOrganizerPlanForDownload(downloadId: string) {
     });
   }
 
-  const metadata = await matchMetadataForGroup(download.candidate.groupId);
-  const metadataReliable = isReliableMetadataMatch(metadata);
-  const planMetadata = metadataReliable
-    ? metadata
-    : buildCandidateMetadataFallback({
-        candidate: download.candidate,
-        metadata,
-      });
   const sourceRoot = download.targetPath || download.downloadDir;
   if (!sourceRoot) {
+    const metadata = await matchMetadataForGroup(download.candidate.groupId);
+    const planMetadata = isReliableMetadataMatch(metadata)
+      ? metadata
+      : buildCandidateMetadataFallback({
+          candidate: download.candidate,
+          metadata,
+        });
     return prisma.organizerPlan.create({
       data: {
         downloadId,
@@ -82,14 +80,62 @@ export async function createOrganizerPlanForDownload(downloadId: string) {
     });
   }
 
+  const plan = await createOrganizerPlanForCandidateSource({
+    candidateId: download.candidate.id,
+    downloadId,
+    sourceRoot,
+  });
+
+  await prisma.download.update({
+    where: { id: download.id },
+    data: {
+      archiveStatus: plan.status === "PENDING" ? "ready_to_archive" : "planned",
+    },
+  });
+
+  return plan;
+}
+
+export async function createOrganizerPlanForCandidateSource(input: {
+  candidateId: string;
+  sourceRoot: string;
+  downloadId?: string;
+}) {
+  const settings = await getAppSettings();
+  const candidate = await prisma.releaseCandidate.findUniqueOrThrow({
+    where: { id: input.candidateId },
+    include: { group: true },
+  });
+
+  if (!candidate.groupId) {
+    return prisma.organizerPlan.create({
+      data: {
+        downloadId: input.downloadId,
+        candidateId: candidate.id,
+        mediaType: candidate.mediaType,
+        status: "NEEDS_REVIEW",
+        confidence: 0,
+        reason: "Candidate has no grouped title",
+      },
+    });
+  }
+
+  const metadata = await matchMetadataForGroup(candidate.groupId);
+  const metadataReliable = isReliableMetadataMatch(metadata);
+  const planMetadata = metadataReliable
+    ? metadata
+    : buildCandidateMetadataFallback({
+        candidate,
+        metadata,
+      });
   const allowedRoots = allowedOrganizerRoots(settings.directories);
-  const files = await findVideoFiles(sourceRoot, allowedRoots);
+  const files = await findVideoFiles(input.sourceRoot, allowedRoots);
   if (files.length === 0) {
     return prisma.organizerPlan.create({
       data: {
-        downloadId,
-        candidateId: download.candidateId,
-        mediaType: download.candidate.mediaType,
+        downloadId: input.downloadId,
+        candidateId: candidate.id,
+        mediaType: candidate.mediaType,
         status: "NEEDS_REVIEW",
         confidence: 0.2,
         reason: "No video file found",
@@ -98,7 +144,6 @@ export async function createOrganizerPlanForDownload(downloadId: string) {
     });
   }
 
-  const candidate = download.candidate;
   const confidence = Math.min(candidate.confidence, planMetadata.score);
   const itemInputs = await Promise.all(
     files.map(async (sourcePath) => {
@@ -146,7 +191,7 @@ export async function createOrganizerPlanForDownload(downloadId: string) {
 
   const plan = await prisma.organizerPlan.create({
     data: {
-      downloadId,
+      downloadId: input.downloadId,
       candidateId: candidate.id,
       mediaType: candidate.mediaType,
       status,
@@ -159,11 +204,6 @@ export async function createOrganizerPlanForDownload(downloadId: string) {
       },
     },
     include: { items: true },
-  });
-
-  await prisma.download.update({
-    where: { id: download.id },
-    data: { archiveStatus: readyForConfirmation ? "ready_to_archive" : "planned" },
   });
 
   return plan;
