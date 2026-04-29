@@ -4,6 +4,7 @@ import {
   addMagnetToAria2,
   addTorrentToAria2,
   addTorrentUrlToAria2,
+  type Aria2Status,
   mapAria2Status,
   pauseAria2Download,
   removeAria2Download,
@@ -63,7 +64,10 @@ export async function syncAria2Downloads() {
   const downloads = await prisma.download.findMany({
     where: {
       aria2Gid: { not: null },
-      status: { in: ["WAITING", "ACTIVE", "PAUSED"] },
+      OR: [
+        { status: { in: ["WAITING", "ACTIVE", "PAUSED"] } },
+        { status: "COMPLETED", targetPath: null },
+      ],
     },
   });
   let synced = 0;
@@ -97,6 +101,7 @@ export async function syncSingleAria2Download(downloadId: string) {
   let status: Awaited<ReturnType<typeof tellKnownDownload>>;
   try {
     status = await tellKnownDownload(download.aria2Gid);
+    status = await resolveFollowedAria2Status(status);
   } catch (error) {
     return prisma.download.update({
       where: { id: download.id },
@@ -120,6 +125,7 @@ export async function syncSingleAria2Download(downloadId: string) {
   const updated = await prisma.download.update({
     where: { id: download.id },
     data: {
+      aria2Gid: status.gid,
       status: nextStatus,
       totalBytes,
       completedBytes,
@@ -138,17 +144,39 @@ export async function syncSingleAria2Download(downloadId: string) {
         data: { status: "DOWNLOADED" },
       });
     }
-    await createOrganizerPlanForDownload(download.id).catch(async (error) => {
-      await prisma.download.update({
-        where: { id: download.id },
-        data: {
-          archiveStatus: "organizer_failed",
-          errorMessage: error instanceof Error ? error.message : "Organizer failed",
-        },
-      });
+    const organizerPlanCount = await prisma.organizerPlan.count({
+      where: { downloadId: download.id },
     });
+    if (organizerPlanCount === 0) {
+      await createOrganizerPlanForDownload(download.id).catch(async (error) => {
+        await prisma.download.update({
+          where: { id: download.id },
+          data: {
+            archiveStatus: "organizer_failed",
+            errorMessage: error instanceof Error ? error.message : "Organizer failed",
+          },
+        });
+      });
+    }
   }
   return updated;
+}
+
+async function resolveFollowedAria2Status(status: Aria2Status) {
+  if (!isMetadataOnlyAria2Status(status)) {
+    return status;
+  }
+  for (const gid of status.followedBy ?? []) {
+    const followedStatus = await tellKnownDownload(gid).catch(() => null);
+    if (followedStatus && selectTargetPath(followedStatus.files)) {
+      return followedStatus;
+    }
+  }
+  return status;
+}
+
+export function isMetadataOnlyAria2Status(status: Aria2Status) {
+  return !selectTargetPath(status.files) && Boolean(status.followedBy?.length);
 }
 
 export async function controlAria2Download(
@@ -203,7 +231,7 @@ export async function controlAria2Download(
   }
 }
 
-function selectTargetPath(
+export function selectTargetPath(
   files?: Array<{ path?: string; length?: string; completedLength?: string; selected?: string }>,
 ) {
   return (files ?? [])

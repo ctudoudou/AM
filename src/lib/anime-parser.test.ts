@@ -18,6 +18,19 @@ describe("parseAnimeReleaseTitle", () => {
     expect(parsed.normalizedTitle).toContain("sousou no frieren");
   });
 
+  it("does not keep video file extensions in parsed titles", () => {
+    const parsed = parseAnimeReleaseTitle(
+      "[Ends with Love] Aishiteru Game wo Owarasetai [03][WebRip 1080P AVC-8bit AAC][CHT].mp4",
+    );
+
+    expect(parsed.parsedTitle).toBe("Aishiteru Game wo Owarasetai");
+    expect(parsed.normalizedTitle).toBe("aishiteru game wo owarasetai");
+    expect(parsed.episodeNumber).toBe(3);
+    expect(parsed.resolution).toBe("1080P");
+    expect(parsed.codec).toBe("AVC");
+    expect(parsed.subtitleLanguage).toBe("CHT");
+  });
+
   it("parses SxxExx style releases", () => {
     const parsed = parseAnimeReleaseTitle(
       "[Group] Cyber City S02E03 2160p HEVC FLAC",

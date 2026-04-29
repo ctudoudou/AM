@@ -5,6 +5,8 @@ import { prisma } from "@/lib/db";
 import { cacheRemoteMediaAsset, isLocalMediaAssetUrl } from "@/lib/media-assets";
 import { getAppSettings } from "@/lib/settings";
 import { matchMetadataForGroup, type MetadataMatch } from "@/lib/metadata";
+import { normalizeTitleAliases } from "@/lib/anime-parser";
+import { parseMediaReleaseTitle } from "@/lib/media-parser";
 
 const videoExtensions = new Set([
   ".mkv",
@@ -58,7 +60,7 @@ export async function createOrganizerPlanForDownload(downloadId: string) {
     });
   }
 
-  const sourceRoot = download.targetPath || download.downloadDir;
+  const sourceRoot = download.targetPath;
   if (!sourceRoot) {
     const metadata = await matchMetadataForGroup(download.candidate.groupId);
     const planMetadata = isReliableMetadataMatch(metadata)
@@ -74,7 +76,7 @@ export async function createOrganizerPlanForDownload(downloadId: string) {
         mediaType: download.candidate.mediaType,
         status: "NEEDS_REVIEW",
         confidence: 0,
-        reason: "Download has no completed file path",
+        reason: "Download has no resolved video file path",
         metadata: planMetadata as Prisma.InputJsonValue,
       },
     });
@@ -314,6 +316,37 @@ export async function rejectOrganizerPlan(planId: string) {
   });
 }
 
+export async function cleanupPollutedOrganizerPlans() {
+  const plans = await prisma.organizerPlan.findMany({
+    where: {
+      status: { in: ["PENDING", "NEEDS_REVIEW", "CONFLICT", "FAILED"] },
+      items: { some: {} },
+    },
+    include: {
+      items: true,
+      candidate: { include: { group: true } },
+    },
+  });
+  const polluted = plans.filter(isPollutedOrganizerPlan);
+  const affectedDownloadIds = [
+    ...new Set(polluted.map((plan) => plan.downloadId).filter((id): id is string => Boolean(id))),
+  ];
+
+  for (const plan of polluted) {
+    await prisma.organizerPlan.delete({
+      where: { id: plan.id },
+    });
+  }
+  if (affectedDownloadIds.length > 0) {
+    await prisma.download.updateMany({
+      where: { id: { in: affectedDownloadIds } },
+      data: { archiveStatus: null },
+    });
+  }
+
+  return { inspected: plans.length, deleted: polluted.length, plans: polluted.map((plan) => plan.id) };
+}
+
 async function findVideoFiles(sourceRoot: string, allowedRoots: string[]) {
   const root = assertInsideConfiguredRoots(sourceRoot, allowedRoots);
   const stat = await fs.stat(root);
@@ -331,6 +364,70 @@ async function findVideoFiles(sourceRoot: string, allowedRoots: string[]) {
     }
   }
   return results;
+}
+
+function isPollutedOrganizerPlan(plan: {
+  downloadId?: string | null;
+  items: Array<{ sourcePath: string; targetPath: string }>;
+  candidate: {
+    mediaType: MediaType;
+    parsedTitle: string;
+    normalizedTitle: string;
+    group: { displayTitle: string; normalizedTitle: string; aliases: unknown } | null;
+  } | null;
+}) {
+  if (!plan.candidate || plan.items.length === 0) {
+    return false;
+  }
+  const candidate = plan.candidate;
+
+  const targetPaths = plan.items.map((item) => item.targetPath).filter(Boolean);
+  const hasDuplicateTargets = targetPaths.length > 1 && new Set(targetPaths).size < targetPaths.length;
+  const mismatchedItems = plan.items.filter(
+    (item) => !sourcePathMatchesCandidate(item.sourcePath, candidate),
+  );
+
+  return hasDuplicateTargets || mismatchedItems.length === plan.items.length;
+}
+
+function sourcePathMatchesCandidate(
+  sourcePath: string,
+  candidate: {
+    mediaType: MediaType;
+    parsedTitle: string;
+    normalizedTitle: string;
+    group: { displayTitle: string; normalizedTitle: string; aliases: unknown } | null;
+  },
+) {
+  const parsed = parseMediaReleaseTitle(
+    path.basename(sourcePath, path.extname(sourcePath)),
+    candidate.mediaType,
+  );
+  if (parsed.confidence < 0.7) {
+    return true;
+  }
+  const candidateAliases = new Set(
+    [
+      candidate.parsedTitle,
+      candidate.normalizedTitle,
+      candidate.group?.displayTitle,
+      candidate.group?.normalizedTitle,
+      ...groupAliases(candidate.group?.aliases),
+    ].flatMap((value) => normalizeTitleAliases(value ?? "")),
+  );
+  const sourceAliases = [
+    parsed.parsedTitle,
+    parsed.normalizedTitle,
+  ].flatMap((value) => normalizeTitleAliases(value ?? ""));
+
+  return sourceAliases.some((alias) => candidateAliases.has(alias));
+}
+
+function groupAliases(value: unknown) {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  return value.filter((item): item is string => typeof item === "string");
 }
 
 function buildTargetPath(input: {

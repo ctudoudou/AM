@@ -1,13 +1,20 @@
 import fs from "node:fs/promises";
 import { getAppSettings } from "@/lib/settings";
 
-type Aria2Status = {
+export type Aria2Status = {
   gid: string;
   status: "active" | "waiting" | "paused" | "complete" | "error" | "removed";
   totalLength?: string;
   completedLength?: string;
   downloadSpeed?: string;
   errorMessage?: string;
+  followedBy?: string[];
+  following?: string;
+  bittorrent?: {
+    info?: {
+      name?: string;
+    };
+  };
   files?: Array<{
     path?: string;
     length?: string;
@@ -81,6 +88,9 @@ export async function tellKnownDownload(gid: string) {
       "completedLength",
       "downloadSpeed",
       "errorMessage",
+      "followedBy",
+      "following",
+      "bittorrent",
       "files",
     ],
   ]);

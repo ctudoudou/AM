@@ -93,6 +93,7 @@ async function createImportCandidate(
       mediaType: parsed.mediaType,
       title: parsed.rawTitle,
       link: `file://${filePath}`,
+      status: "GROUPED",
       raw: {
         filePath,
         originalName: path.basename(filePath),

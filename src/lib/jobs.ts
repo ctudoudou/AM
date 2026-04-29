@@ -2,7 +2,7 @@ import { fetchAllRssSources, parseNewRssItems } from "@/lib/rss-fetcher";
 import { groupUngroupedCandidates, repairCandidateGroups } from "@/lib/candidate-grouper";
 import { syncAria2Downloads } from "@/lib/downloads";
 import { matchSubscriptionsToCandidates } from "@/lib/subscription-matcher";
-import { inspectCompletedDownloads } from "@/lib/organizer";
+import { cleanupPollutedOrganizerPlans, inspectCompletedDownloads } from "@/lib/organizer";
 import { scanLibraryRoots } from "@/lib/library-scan";
 
 export const jobNames = [
@@ -13,6 +13,7 @@ export const jobNames = [
   "subscriptions.matchNewCandidates",
   "downloads.syncAria2",
   "organizer.inspectCompletedDownloads",
+  "organizer.cleanupPollutedPlans",
   "library.scan",
 ] as const;
 
@@ -39,6 +40,8 @@ export async function runJob(name: JobName) {
       return syncAria2Downloads();
     case "organizer.inspectCompletedDownloads":
       return inspectCompletedDownloads();
+    case "organizer.cleanupPollutedPlans":
+      return cleanupPollutedOrganizerPlans();
     case "library.scan":
       return scanLibraryRoots();
   }

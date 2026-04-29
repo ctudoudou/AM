@@ -23,6 +23,7 @@ const codecPattern = /\b(x265|x264|h\.?265|h\.?264|hevc|avc|av1)\b/i;
 const audioPattern = /\b(aac|flac|opus|mp3|truehd|dts)\b/i;
 const subtitlePattern = /(简繁日内封|简日内嵌|繁日内嵌|简繁内嵌|简繁外挂|简体|繁体|简繁|chs|cht|sc|tc|gb|big5)/i;
 const sourcePattern = /\b(web-?dl|webrip|baha|cr|crunchyroll|abema|b-global|netflix|amazon|bilibili|tv|bd|blu-?ray)\b/i;
+const videoExtensionPattern = /\.(mkv|mp4|avi|mov|webm|m4v|ts)$/i;
 const episodePatterns = [
   /\bS(?<season>\d{1,2})E(?<episode>\d{1,4}(?:\.\d)?)\b/i,
   /(?:第|\s|\[| - )(?<episode>\d{1,4}(?:\.\d)?)(?:话|集|\]|\s|v\d|$)/i,
@@ -105,21 +106,22 @@ export function canonicalizeTitle(title: string) {
 }
 
 export function parseAnimeReleaseTitle(rawTitle: string): ParsedAnimeRelease {
-  const searchableTitle = rawTitle.replace(/[_.-]+/g, " ");
-  const releaseTags = [...rawTitle.matchAll(/\[([^\]]+)\]|【([^】]+)】/g)]
+  const releaseTitle = stripReleaseFileExtension(rawTitle);
+  const searchableTitle = releaseTitle.replace(/[_.-]+/g, " ");
+  const releaseTags = [...releaseTitle.matchAll(/\[([^\]]+)\]|【([^】]+)】/g)]
     .map((match) => match[1] || match[2])
     .filter(Boolean);
   const subtitleGroup = releaseTags[0];
   const resolution = normalizeResolution(searchableTitle.match(resolutionPattern)?.[1]);
   const codec = searchableTitle.match(codecPattern)?.[1]?.toUpperCase().replace(".", "");
   const audio = searchableTitle.match(audioPattern)?.[1]?.toUpperCase();
-  const subtitleLanguage = normalizeSubtitleLanguage(rawTitle.match(subtitlePattern)?.[1]);
-  const sourceKind = normalizeSourceKind(rawTitle.match(sourcePattern)?.[1]);
-  const bracketTitleTags = extractBracketTitleTags(rawTitle);
+  const subtitleLanguage = normalizeSubtitleLanguage(releaseTitle.match(subtitlePattern)?.[1]);
+  const sourceKind = normalizeSourceKind(releaseTitle.match(sourcePattern)?.[1]);
+  const bracketTitleTags = extractBracketTitleTags(releaseTitle);
   const releaseProfile = deriveReleaseProfile({
     audio,
     codec,
-    rawTitle,
+    rawTitle: releaseTitle,
     releaseTags,
     resolution,
     sourceKind,
@@ -131,7 +133,7 @@ export function parseAnimeReleaseTitle(rawTitle: string): ParsedAnimeRelease {
   let episodeNumber: number | undefined;
   let season: number | undefined;
   for (const pattern of episodePatterns) {
-    const match = rawTitle.match(pattern);
+    const match = releaseTitle.match(pattern);
     if (match?.groups?.episode) {
       episodeNumber = Number(match.groups.episode);
       season = match.groups.season ? Number(match.groups.season) : undefined;
@@ -139,10 +141,10 @@ export function parseAnimeReleaseTitle(rawTitle: string): ParsedAnimeRelease {
     }
   }
 
-  const leadingTitle = extractLeadingTitle(rawTitle);
+  const leadingTitle = extractLeadingTitle(releaseTitle);
   const bracketTitle = bracketTitleTags.length > 0 ? canonicalizeTitle(bracketTitleTags.join(" / ")) : undefined;
-  let parsedTitle = leadingTitle ?? bracketTitle ?? rawTitle;
-  const detectedSeason = detectSeason(parsedTitle) ?? detectSeason(rawTitle);
+  let parsedTitle = leadingTitle ?? bracketTitle ?? releaseTitle;
+  const detectedSeason = detectSeason(parsedTitle) ?? detectSeason(releaseTitle);
   season = season ?? detectedSeason;
 
   if (!leadingTitle && !bracketTitle) {
@@ -204,6 +206,10 @@ export function parseAnimeReleaseTitle(rawTitle: string): ParsedAnimeRelease {
     releaseTags,
     confidence: Math.min(0.95, 0.35 + signals * 0.15),
   };
+}
+
+function stripReleaseFileExtension(value: string) {
+  return value.replace(videoExtensionPattern, "");
 }
 
 function extractBracketTitleTags(rawTitle: string) {
