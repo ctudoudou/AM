@@ -7,6 +7,7 @@ import type { Locale } from "@/lib/i18n";
 
 const roots = [
   "dataRoot",
+  "importRoot",
   "downloadsDir",
   "animeLibraryDir",
   "moviesLibraryDir",

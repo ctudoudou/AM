@@ -20,6 +20,7 @@ const absolutePathSchema = z
 
 const directorySettingsObjectSchema = z.object({
     dataRoot: absolutePathSchema,
+    importRoot: absolutePathSchema.default(serverEnv.IMPORT_ROOT),
     downloadsDir: absolutePathSchema,
     stagingDir: absolutePathSchema,
     animeLibraryDir: absolutePathSchema,
@@ -96,6 +97,7 @@ const defaultSettingsLocale: Locale =
 export const defaultAppSettings: AppSettings = appSettingsSchema.parse({
   directories: {
     dataRoot: serverEnv.DATA_ROOT,
+    importRoot: serverEnv.IMPORT_ROOT,
     downloadsDir: serverEnv.DOWNLOADS_DIR,
     stagingDir: serverEnv.STAGING_DIR,
     animeLibraryDir: serverEnv.ANIME_LIBRARY_DIR,

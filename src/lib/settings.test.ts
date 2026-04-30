@@ -10,6 +10,7 @@ describe("directorySettingsSchema", () => {
     expect(
       directorySettingsSchema.parse({
         dataRoot: "/data",
+        importRoot: "/data/import",
         downloadsDir: "/data/downloads",
         stagingDir: "/data/staging",
         animeLibraryDir: "/data/library/anime",
@@ -20,6 +21,7 @@ describe("directorySettingsSchema", () => {
       }),
     ).toMatchObject({
       dataRoot: "/data",
+      importRoot: "/data/import",
       animeLibraryDir: "/data/library/anime",
     });
   });
@@ -28,6 +30,7 @@ describe("directorySettingsSchema", () => {
     expect(() =>
       directorySettingsSchema.parse({
         dataRoot: "/data",
+        importRoot: "/data/import",
         downloadsDir: "/tmp/downloads",
         stagingDir: "/data/staging",
         animeLibraryDir: "/data/library/anime",

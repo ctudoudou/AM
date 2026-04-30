@@ -27,6 +27,7 @@ Default container layout:
 
 ```txt
 /data
+  /import
   /downloads
   /staging
   /library
@@ -41,6 +42,7 @@ Recommended environment variables:
 
 ```env
 DATA_ROOT=/data
+IMPORT_ROOT=/data/import
 DOWNLOADS_DIR=/data/downloads
 STAGING_DIR=/data/staging
 ANIME_LIBRARY_DIR=/data/library/anime

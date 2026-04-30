@@ -25,6 +25,7 @@ type PublicSettings = {
 
 type DirectorySettings = {
   dataRoot: string;
+  importRoot: string;
   downloadsDir: string;
   stagingDir: string;
   animeLibraryDir: string;
@@ -61,6 +62,7 @@ type Aria2DebugResult = {
 
 const directoryFields = [
   ["dataRoot", "DATA_ROOT"],
+  ["importRoot", "IMPORT_ROOT"],
   ["downloadsDir", "DOWNLOADS_DIR"],
   ["stagingDir", "STAGING_DIR"],
   ["animeLibraryDir", "ANIME_LIBRARY_DIR"],

@@ -6,6 +6,7 @@ import { getAppSettings } from "@/lib/settings";
 
 const rootSchema = z.enum([
   "dataRoot",
+  "importRoot",
   "downloadsDir",
   "animeLibraryDir",
   "moviesLibraryDir",

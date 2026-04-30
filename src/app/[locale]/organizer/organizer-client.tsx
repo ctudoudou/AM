@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Check, FolderSearch, Loader2, RefreshCw, WandSparkles, X } from "lucide-react";
+import { Check, FolderSearch, Loader2, RefreshCw, ShieldCheck, WandSparkles, X } from "lucide-react";
 import { getMessages } from "@/messages";
 import type { Locale } from "@/lib/i18n";
 
@@ -30,6 +30,12 @@ type OrganizerPlan = {
   } | null;
 };
 
+type OrganizerSettings = {
+  directories: {
+    importRoot: string;
+  };
+};
+
 export function OrganizerClient({ locale }: { locale: Locale }) {
   const t = getMessages(locale);
   const [plans, setPlans] = useState<OrganizerPlan[]>([]);
@@ -37,6 +43,7 @@ export function OrganizerClient({ locale }: { locale: Locale }) {
   const [importDraft, setImportDraft] = useState({ root: "", mediaType: "AUTO" });
   const [importing, setImporting] = useState(false);
   const [reviewing, setReviewing] = useState(false);
+  const [repairing, setRepairing] = useState(false);
   const [status, setStatus] = useState("");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -61,12 +68,31 @@ export function OrganizerClient({ locale }: { locale: Locale }) {
     }
   }, [t.organizerLoadError]);
 
+  const loadImportRoot = useCallback(async () => {
+    const response = await fetch("/api/settings");
+    if (!response.ok) {
+      return;
+    }
+    const body = (await response.json()) as OrganizerSettings;
+    setImportDraft((current) => ({
+      ...current,
+      root: current.root.trim() ? current.root : body.directories.importRoot,
+    }));
+  }, []);
+
   useEffect(() => {
     const timeout = window.setTimeout(() => {
       void load();
     }, 0);
     return () => window.clearTimeout(timeout);
   }, [load]);
+
+  useEffect(() => {
+    const timeout = window.setTimeout(() => {
+      void loadImportRoot();
+    }, 0);
+    return () => window.clearTimeout(timeout);
+  }, [loadImportRoot]);
 
   async function runInspect() {
     setStatus("");
@@ -104,6 +130,39 @@ export function OrganizerClient({ locale }: { locale: Locale }) {
     setStatus(
       `${t.aiReviewPlansDone} reviewed: ${body.result?.reviewed ?? 0}, filtered: ${body.result?.filteredItems ?? 0}, flagged: ${body.result?.flagged ?? 0}, skipped: ${body.result?.skipped ?? 0}.`,
     );
+    await load();
+  }
+
+  async function runRepairPipeline() {
+    setRepairing(true);
+    setStatus("");
+    setError("");
+    const jobs = [
+      "organizer.cleanupPollutedPlans",
+      "downloads.syncAria2",
+      "organizer.inspectCompletedDownloads",
+      "organizer.aiReviewPlans",
+    ];
+    const results: Array<{ job: string; result: Record<string, unknown> }> = [];
+
+    for (const job of jobs) {
+      const response = await fetch("/api/jobs/run", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ job }),
+      });
+      if (!response.ok) {
+        const body = await response.json().catch(() => null);
+        setRepairing(false);
+        setError(body?.message || t.repairOrganizerPipelineError);
+        return;
+      }
+      const body = (await response.json()) as { result?: Record<string, unknown> };
+      results.push({ job, result: body.result ?? {} });
+    }
+
+    setRepairing(false);
+    setStatus(formatRepairSummary(t, results));
     await load();
   }
 
@@ -174,6 +233,10 @@ export function OrganizerClient({ locale }: { locale: Locale }) {
           <p>{t.organizerPlansDescription}</p>
         </div>
         <div className="toolbar-actions">
+          <button disabled={repairing} onClick={() => void runRepairPipeline()} type="button">
+            {repairing ? <Loader2 size={14} /> : <ShieldCheck size={14} />}
+            {t.repairOrganizerPipeline}
+          </button>
           <button disabled={reviewing} onClick={() => void runAiReview()} type="button">
             {reviewing ? <Loader2 size={14} /> : <WandSparkles size={14} />}
             {t.aiReviewPlans}
@@ -317,4 +380,27 @@ function formatMediaType(
     return t.movies;
   }
   return t.tv;
+}
+
+function formatRepairSummary(
+  t: ReturnType<typeof getMessages>,
+  results: Array<{ job: string; result: Record<string, unknown> }>,
+) {
+  const byJob = new Map(results.map((item) => [item.job, item.result]));
+  const cleanup = byJob.get("organizer.cleanupPollutedPlans");
+  const sync = byJob.get("downloads.syncAria2");
+  const inspect = byJob.get("organizer.inspectCompletedDownloads");
+  const review = byJob.get("organizer.aiReviewPlans");
+  return [
+    t.repairOrganizerPipelineDone,
+    `deleted: ${numberValue(cleanup?.deleted)}`,
+    `synced: ${numberValue(sync?.synced)}`,
+    `plans: ${numberValue(inspect?.inspected)}`,
+    `ai reviewed: ${numberValue(review?.reviewed)}`,
+    `filtered: ${numberValue(review?.filteredItems)}`,
+  ].join(" ");
+}
+
+function numberValue(value: unknown) {
+  return typeof value === "number" ? value : 0;
 }

@@ -3,6 +3,7 @@ import { z } from "zod";
 
 const envSchema = z.object({
   DATA_ROOT: z.string().default("/data"),
+  IMPORT_ROOT: z.string().optional(),
   DOWNLOADS_DIR: z.string().default("/data/downloads"),
   STAGING_DIR: z.string().default("/data/staging"),
   ANIME_LIBRARY_DIR: z.string().default("/data/library/anime"),
@@ -17,10 +18,16 @@ const envSchema = z.object({
   OMDB_API_KEY: z.string().default(""),
 });
 
-export const serverEnv = envSchema.parse(process.env);
+const parsedEnv = envSchema.parse(process.env);
+
+export const serverEnv = {
+  ...parsedEnv,
+  IMPORT_ROOT: parsedEnv.IMPORT_ROOT || path.join(parsedEnv.DATA_ROOT, "import"),
+};
 
 export const allowedRoots = [
   serverEnv.DATA_ROOT,
+  serverEnv.IMPORT_ROOT,
   serverEnv.DOWNLOADS_DIR,
   serverEnv.STAGING_DIR,
   serverEnv.ANIME_LIBRARY_DIR,

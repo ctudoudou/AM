@@ -48,6 +48,7 @@ services:
     environment:
       DATABASE_URL: postgresql://kura:kura@postgres:5432/kura?schema=public
       DATA_ROOT: /data
+      IMPORT_ROOT: /data/import
       DOWNLOADS_DIR: /data/downloads
       STAGING_DIR: /data/staging
       ANIME_LIBRARY_DIR: /data/library/anime
@@ -78,6 +79,7 @@ services:
     environment:
       DATABASE_URL: postgresql://kura:kura@postgres:5432/kura?schema=public
       DATA_ROOT: /data
+      IMPORT_ROOT: /data/import
       DOWNLOADS_DIR: /data/downloads
       STAGING_DIR: /data/staging
       ANIME_LIBRARY_DIR: /data/library/anime
@@ -110,6 +112,7 @@ services:
     environment:
       DATABASE_URL: postgresql://kura:kura@postgres:5432/kura?schema=public
       DATA_ROOT: /data
+      IMPORT_ROOT: /data/import
       DOWNLOADS_DIR: /data/downloads
       STAGING_DIR: /data/staging
       ANIME_LIBRARY_DIR: /data/library/anime

@@ -19,6 +19,7 @@ Create these directories on Unraid:
 
 ```text
 /mnt/user/Kura/downloads
+/mnt/user/Kura/import
 /mnt/user/Kura/staging
 /mnt/user/Kura/library/anime
 /mnt/user/Kura/library/movies
@@ -45,6 +46,7 @@ Required:
 DATABASE_URL=postgresql://kura:your-password@your-postgres-host:5432/kura?schema=public
 
 DATA_ROOT=/data
+IMPORT_ROOT=/data/import
 DOWNLOADS_DIR=/data/downloads
 STAGING_DIR=/data/staging
 ANIME_LIBRARY_DIR=/data/library/anime
