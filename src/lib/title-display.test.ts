@@ -52,4 +52,22 @@ describe("resolveMediaDisplayTitle", () => {
     expect(title.displayTitle).toBe("淡島百景 自定义");
     expect(title.matchedLocale).toBe("custom");
   });
+
+  it("does not show broadcast edition markers as part of anime titles", () => {
+    const title = resolveMediaDisplayTitle(
+      {
+        primaryTitle: "弱弱老师 放送版 / Yowayowa Sensei On-air version",
+        originalTitle: "よわよわ先生",
+        aliases: [
+          { title: "弱弱老師 放送版", locale: "zh-Hant" },
+          { title: "Yowayowa Sensei On-air version", locale: "en" },
+        ],
+      },
+      settings,
+    );
+
+    expect(title.displayTitle).toBe("弱弱老師");
+    expect(title.secondaryTitles).toContain("よわよわ先生");
+    expect(title.secondaryTitles).toContain("弱弱老师");
+  });
 });

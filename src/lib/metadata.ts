@@ -123,6 +123,9 @@ type KitsuSearchResponse = {
   data?: KitsuAnime[];
 };
 
+const releaseEditionPattern =
+  /(?:^|[\s（(【\[])(?:放送版|オンエア版|先行放送版|先行版|無修正版|修正版|on[\s-]?air\s+version|broadcast\s+version|uncensored|censored)(?:$|[\s）)】\]])/gi;
+
 type OmdbSearchItem = {
   imdbID: string;
   Title?: string;
@@ -317,6 +320,9 @@ export async function refreshAnimeMetadata(titleId: string) {
   const updated = await prisma.mediaTitle.update({
     where: { id: media.id },
     data: {
+      primaryTitle: shouldReplaceReleaseEditionTitle(media.primaryTitle, best.title)
+        ? best.title
+        : undefined,
       originalTitle: media.originalTitle ?? best.originalTitle,
       year: media.year ?? best.year,
       synopsis: media.synopsis ?? best.synopsis,
@@ -854,8 +860,18 @@ function cleanSearchTitle(value: string) {
   return value
     .replace(/\[[^\]]*]/g, " ")
     .replace(/\([^)]*(?:1080p|2160p|720p|x26[45]|hevc|avc|web-dl|baha|b-global)[^)]*\)/gi, " ")
+    .replace(releaseEditionPattern, " ")
     .replace(/\s+/g, " ")
     .trim();
+}
+
+function shouldReplaceReleaseEditionTitle(currentTitle: string, providerTitle: string | undefined) {
+  releaseEditionPattern.lastIndex = 0;
+  return Boolean(
+    providerTitle?.trim() &&
+      releaseEditionPattern.test(currentTitle) &&
+      providerTitle.trim().length >= 2,
+  );
 }
 
 function stripSeasonWords(value: string) {

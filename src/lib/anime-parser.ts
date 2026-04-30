@@ -24,6 +24,8 @@ const audioPattern = /\b(aac|flac|opus|mp3|truehd|dts)\b/i;
 const subtitlePattern = /(简繁日内封|简日内嵌|繁日内嵌|简繁内嵌|简繁外挂|简体|繁体|简繁|chs|cht|sc|tc|gb|big5)/i;
 const sourcePattern = /\b(web-?dl|webrip|baha|cr|crunchyroll|abema|b-global|netflix|amazon|bilibili|tv|bd|blu-?ray)\b/i;
 const videoExtensionPattern = /\.(mkv|mp4|avi|mov|webm|m4v|ts)$/i;
+const releaseEditionPattern =
+  /(?:^|[\s（(【\[])(?:放送版|オンエア版|先行放送版|先行版|無修正版|修正版|on[\s-]?air\s+version|broadcast\s+version|uncensored|censored)(?:$|[\s）)】\]])/i;
 const episodePatterns = [
   /\bS(?<season>\d{1,2})E(?<episode>\d{1,4}(?:\.\d)?)\b/i,
   /(?:第|\s|\[| - )(?<episode>\d{1,4}(?:\.\d)?)(?:话|集|\]|\s|v\d|$)/i,
@@ -72,6 +74,7 @@ function normalizeTitlePart(title: string) {
     .replace(/\(([^)]+)\)|（([^）]+)）/g, (_match, asciiContent, fullWidthContent) =>
       isNonTitleBracketContent(asciiContent || fullWidthContent) ? " " : ` ${asciiContent || fullWidthContent} `,
     )
+    .replace(releaseEditionPattern, " ")
     .replace(/\[\s*\]/g, " ")
     .replace(/\b(2160p|4k|1080p|720p|480p|x265|x264|h265|h264|hevc|avc|av1|aac|flac|chs|cht)\b/g, " ")
     .replace(releaseSeasonBannerPattern, " ")
@@ -166,6 +169,7 @@ export function parseAnimeReleaseTitle(rawTitle: string): ParsedAnimeRelease {
     .replace(/\(([^)]+)\)|（([^）]+)）/g, (_match, asciiContent, fullWidthContent) =>
       isNonTitleBracketContent(asciiContent || fullWidthContent) ? " " : ` ${asciiContent || fullWidthContent} `,
     )
+    .replace(releaseEditionPattern, " ")
     .replace(/\[\s*\]/g, " ")
     .replace(/[._]+/g, " ")
     .replace(/\s*\/\s*$/, "")
@@ -518,7 +522,12 @@ function isNonTitleBracketContent(value: string) {
   const normalized = normalizeProfileAtom(value);
   return (
     /^(?:19\d{2}|20\d{2})$/.test(normalized) ||
+    isReleaseEdition(value) ||
     isPureTechnicalTag(normalized) ||
     isReleaseSeasonBanner(value)
   );
+}
+
+function isReleaseEdition(value: string) {
+  return releaseEditionPattern.test(value);
 }

@@ -59,6 +59,9 @@ const builtinSearchSources = [
     url: "https://share.dmhy.org/topics/rss/rss.xml?keyword={query}",
   },
 ];
+const wantedReleaseEditionPattern =
+  /(?:^|[\s（(【\[])(?:放送版|オンエア版|先行放送版|先行版|無修正版|修正版|on[\s-]?air\s+version|broadcast\s+version|uncensored|censored)(?:$|[\s）)】\]])/gi;
+const wantedVideoExtensionPattern = /\.(mkv|mp4|avi|mov|webm|m4v|ts)$/i;
 
 export async function searchWantedEpisodeSources(wantedEpisodeId: string) {
   const wanted = await loadWanted(wantedEpisodeId);
@@ -273,7 +276,7 @@ export function buildWantedEpisodeSearchQueries(wanted: WantedWithMedia) {
     wanted.mediaTitle.originalTitle,
     ...wanted.mediaTitle.aliases.map((alias) => alias.title),
   ]
-    .filter((title): title is string => Boolean(title?.trim()))
+    .flatMap((title) => wantedSearchTitleCandidates(title))
     .filter(uniqueByNormalized);
   const queries: string[] = [];
 
@@ -454,7 +457,41 @@ function mediaAliases(media: WantedWithMedia["mediaTitle"]) {
       media.primaryTitle,
       media.originalTitle,
       ...media.aliases.map((alias) => alias.title),
-    ].flatMap((value) => normalizeTitleAliases(value ?? "")),
+    ].flatMap((value) =>
+      wantedSearchTitleCandidates(value).flatMap((title) => normalizeTitleAliases(title)),
+    ),
+  );
+}
+
+function wantedSearchTitleCandidates(value: string | null | undefined) {
+  const raw = value?.trim();
+  if (!raw) {
+    return [];
+  }
+  const base = cleanWantedSearchTitle(raw);
+  const candidates: string[] = [];
+  for (const part of base.split(/\s+\/\s+|｜|\|/)) {
+    candidates.push(cleanWantedSearchTitle(part));
+  }
+  candidates.push(base);
+  return candidates.filter((title) => title.length >= 2 && !looksLikeReleaseFileTitle(title));
+}
+
+function cleanWantedSearchTitle(value: string) {
+  return value
+    .replace(wantedVideoExtensionPattern, "")
+    .replace(/\[[^\]]*]|\([^)]*(?:1080p|2160p|720p|x26[45]|hevc|avc|aac|mkv|mp4|web-?dl|webrip|baha|abema|cr)[^)]*\)|【[^】]*】/gi, " ")
+    .replace(/\s+-\s*S\d{1,2}E\d{1,4}(?:\.\d+)?\b.*$/i, " ")
+    .replace(/\s+-\s*\d{1,4}(?:\.\d+)?\b.*$/i, " ")
+    .replace(wantedReleaseEditionPattern, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function looksLikeReleaseFileTitle(value: string) {
+  return (
+    wantedVideoExtensionPattern.test(value) ||
+    /\b(?:1080p|2160p|720p|x26[45]|hevc|avc|aac|mkv|mp4|web-?dl|webrip)\b/i.test(value)
   );
 }
 

@@ -150,4 +150,15 @@ describe("parseAnimeReleaseTitle", () => {
     expect(crunchyroll.variantKey).toContain("cr");
     expect(abema.variantKey).not.toBe(crunchyroll.variantKey);
   });
+
+  it("treats broadcast edition markers as release metadata, not title text", () => {
+    const parsed = parseAnimeReleaseTitle(
+      "[黒ネズミたち] 弱弱老师（放送版） / Yowayowa Sensei (On-air version) - 03 (ABEMA 1920x1080 AVC AAC MKV)",
+    );
+
+    expect(parsed.parsedTitle).toBe("弱弱老师 / Yowayowa Sensei");
+    expect(parsed.normalizedTitle).toBe("弱弱老师");
+    expect(parsed.episodeNumber).toBe(3);
+    expect(parsed.sourceKind).toBe("ABEMA");
+  });
 });

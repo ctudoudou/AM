@@ -50,6 +50,43 @@ describe("wanted RSS search", () => {
     );
   });
 
+  it("prioritizes clean title aliases for broadcast-edition releases", () => {
+    expect(
+      buildWantedEpisodeSearchQueries({
+        ...wanted,
+        episodeNumber: 1,
+        mediaTitle: {
+          ...wanted.mediaTitle,
+          primaryTitle: "弱弱老师 放送版 / Yowayowa Sensei On-air version",
+          originalTitle: "よわよわ先生",
+          aliases: [
+            {
+              id: "alias-yowa-1",
+              mediaId: "media-1",
+              title: "弱弱老師",
+              locale: "zh-Hant",
+              createdAt: new Date(),
+            },
+            {
+              id: "alias-yowa-2",
+              mediaId: "media-1",
+              title: "[Dynamis One] Yowayowa Sensei (On-air version) - 03 (ABEMA 1920x1080 AVC AAC MKV).mkv",
+              locale: "en",
+              createdAt: new Date(),
+            },
+          ],
+        },
+      }).slice(0, 6),
+    ).toEqual([
+      "弱弱老师 01",
+      "弱弱老师 1",
+      "Yowayowa Sensei 01",
+      "Yowayowa Sensei 1",
+      "よわよわ先生 01",
+      "よわよわ先生 1",
+    ]);
+  });
+
   it("parses RSS results with magnet and torrent links", () => {
     const results = parseWantedSearchFeed(
       `<?xml version="1.0" encoding="UTF-8" ?>

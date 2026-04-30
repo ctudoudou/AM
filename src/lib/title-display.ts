@@ -15,6 +15,8 @@ export const defaultAnimeTitleLanguageOrder: TitleLanguage[] = [
 
 const toSimplifiedChinese = OpenCC.Converter({ from: "tw", to: "cn" });
 const toTraditionalChinese = OpenCC.Converter({ from: "cn", to: "tw" });
+const releaseEditionPattern =
+  /(?:^|[\s（(【\[])(?:放送版|オンエア版|先行放送版|先行版|無修正版|修正版|on[\s-]?air\s+version|broadcast\s+version|uncensored|censored)(?:$|[\s）)】\]])/gi;
 
 type TitleAliasInput = {
   title: string;
@@ -261,7 +263,12 @@ function splitTitleParts(value: string) {
 }
 
 function cleanTitle(value: string | null | undefined) {
-  return value?.replace(/\s+/g, " ").trim() || "";
+  return (
+    value
+      ?.replace(releaseEditionPattern, " ")
+      .replace(/\s+/g, " ")
+      .trim() || ""
+  );
 }
 
 function uniqueTitles(values: string[]) {
