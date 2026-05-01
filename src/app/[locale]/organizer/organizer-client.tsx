@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { Check, FolderSearch, Loader2, RefreshCw, ShieldCheck, WandSparkles, X } from "lucide-react";
 import { getMessages } from "@/messages";
 import type { Locale } from "@/lib/i18n";
@@ -36,10 +36,25 @@ type OrganizerSettings = {
   };
 };
 
+const organizerFilters = [
+  "ACTIVE",
+  "PENDING",
+  "NEEDS_REVIEW",
+  "CONFLICT",
+  "FAILED",
+  "HISTORY",
+  "EXECUTED",
+  "REJECTED",
+  "AUTO_ARCHIVED",
+  "ALL",
+] as const;
+
+type OrganizerFilter = (typeof organizerFilters)[number];
+
 export function OrganizerClient({ locale }: { locale: Locale }) {
   const t = getMessages(locale);
   const [plans, setPlans] = useState<OrganizerPlan[]>([]);
-  const [filter, setFilter] = useState("ALL");
+  const [filter, setFilter] = useState<OrganizerFilter>("ACTIVE");
   const [importDraft, setImportDraft] = useState({ root: "", mediaType: "AUTO" });
   const [importing, setImporting] = useState(false);
   const [reviewing, setReviewing] = useState(false);
@@ -47,14 +62,10 @@ export function OrganizerClient({ locale }: { locale: Locale }) {
   const [status, setStatus] = useState("");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
-  const visiblePlans = useMemo(
-    () => plans.filter((plan) => filter === "ALL" || plan.status === filter),
-    [filter, plans],
-  );
 
   const load = useCallback(async () => {
     try {
-      const response = await fetch("/api/organizer/plans");
+      const response = await fetch(`/api/organizer/plans?${organizerPlanParams(filter)}`);
       if (!response.ok) {
         throw new Error(t.organizerLoadError);
       }
@@ -66,7 +77,7 @@ export function OrganizerClient({ locale }: { locale: Locale }) {
     } finally {
       setLoading(false);
     }
-  }, [t.organizerLoadError]);
+  }, [filter, t.organizerLoadError]);
 
   const loadImportRoot = useCallback(async () => {
     const response = await fetch("/api/settings");
@@ -272,24 +283,24 @@ export function OrganizerClient({ locale }: { locale: Locale }) {
         </button>
       </div>
       <div className="filter-tabs">
-        {["ALL", "PENDING", "NEEDS_REVIEW", "CONFLICT", "FAILED", "REJECTED", "EXECUTED"].map((status) => (
+        {organizerFilters.map((status) => (
           <button
             className={filter === status ? "active" : ""}
             key={status}
             onClick={() => setFilter(status)}
             type="button"
           >
-            {status}
+            {formatOrganizerFilter(status, t)}
           </button>
         ))}
       </div>
       {error ? <div className="settings-alert">{error}</div> : null}
       {status ? <div className="settings-success">{status}</div> : null}
       <div className="organizer-list">
-        {visiblePlans.length === 0 ? (
+        {plans.length === 0 ? (
           <p>{t.noOrganizerPlans}</p>
         ) : (
-          visiblePlans.map((plan) => {
+          plans.map((plan) => {
             const executable = canExecutePlan(plan);
             const rejectable = canRejectPlan(plan);
             const title =
@@ -367,6 +378,35 @@ function canExecutePlan(plan: OrganizerPlan) {
 
 function canRejectPlan(plan: OrganizerPlan) {
   return !["AUTO_ARCHIVED", "EXECUTED", "REJECTED"].includes(plan.status);
+}
+
+function organizerPlanParams(filter: OrganizerFilter) {
+  const params = new URLSearchParams();
+  if (filter === "ACTIVE") {
+    params.set("view", "active");
+  } else if (filter === "HISTORY") {
+    params.set("view", "history");
+  } else if (filter === "ALL") {
+    params.set("view", "all");
+    params.set("limit", "300");
+  } else {
+    params.set("status", filter);
+    params.set("limit", ["EXECUTED", "REJECTED", "AUTO_ARCHIVED"].includes(filter) ? "100" : "200");
+  }
+  return params.toString();
+}
+
+function formatOrganizerFilter(filter: OrganizerFilter, t: ReturnType<typeof getMessages>) {
+  if (filter === "ACTIVE") {
+    return t.activeOrganizerPlans;
+  }
+  if (filter === "HISTORY") {
+    return t.organizerHistory;
+  }
+  if (filter === "ALL") {
+    return t.allOrganizerPlans;
+  }
+  return filter;
 }
 
 function formatMediaType(
