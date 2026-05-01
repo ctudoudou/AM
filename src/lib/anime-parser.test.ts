@@ -179,4 +179,51 @@ describe("parseAnimeReleaseTitle", () => {
     expect(parsed.episodeNumber).toBe(3);
     expect(parsed.sourceKind).toBe("ABEMA");
   });
+
+  it("skips chained release prefixes before leading titles", () => {
+    const parsed = parseAnimeReleaseTitle(
+      "[搬運][ANi] A Hundred Scenes of AWAJIMA / 淡島百景 - 04 [1080P][Baha][WEB-DL][AAC AVC][CHT][MP4]",
+    );
+    const batch = parseAnimeReleaseTitle(
+      "[個人製作合集][LoliHouse] 叹气的亡灵想隐退 / Nageki no Bourei wa Intai shitai - 14-24 [WebRip 1080p HEVC-10bit AAC][简繁内封字幕]",
+    );
+
+    expect(parsed.parsedTitle).toBe("A Hundred Scenes of AWAJIMA / 淡島百景");
+    expect(parsed.normalizedTitle).toBe("淡岛百景");
+    expect(parsed.episodeNumber).toBe(4);
+    expect(parsed.parsedTitle).not.toBe("ANi");
+    expect(batch.parsedTitle).toBe("叹气的亡灵想隐退 / Nageki no Bourei wa Intai shitai");
+    expect(batch.parsedTitle).not.toBe("LoliHouse");
+  });
+
+  it("parses star-delimited release titles without keeping release metadata", () => {
+    const parsed = parseAnimeReleaseTitle(
+      "六四位元字幕组★哪里有温柔对待阿宅的辣妹！？ Otaku ni Yasashii Gal wa Inai★04★1920x1080★AVC AAC MP4★繁体中文",
+    );
+
+    expect(parsed.parsedTitle).toBe("哪里有温柔对待阿宅的辣妹！？ Otaku ni Yasashii Gal wa Inai");
+    expect(parsed.episodeNumber).toBe(4);
+    expect(parsed.resolution).toBe("1080p");
+    expect(parsed.parsedTitle).not.toContain("MP4");
+  });
+
+  it("drops descriptive batch ranges from bracket title aliases", () => {
+    const parsed = parseAnimeReleaseTitle(
+      "[SweetSub][正相反的你与我][Seihantai na Kimi to Boku][01-12 精校合集][WebRip][1080P][AVC 8bit][简日双语]（检索用：相反的你和我）",
+    );
+
+    expect(parsed.parsedTitle).toBe("正相反的你与我 / Seihantai na Kimi to Boku");
+    expect(parsed.normalizedTitle).toBe("正相反的你与我");
+    expect(parsed.parsedTitle).not.toContain("01-12");
+  });
+
+  it("does not parse bracketed years as episode numbers", () => {
+    const parsed = parseAnimeReleaseTitle(
+      "十二国记.日语.内挂英文(外挂俄语+俄文字幕).Juuni Kokuki (The Twelve Kingdoms, Двенадцать королевств) [TV 45, 2002][BDRip][MC]",
+    );
+
+    expect(parsed.episodeNumber).toBeUndefined();
+    expect(parsed.parsedTitle).not.toBe("TV 45, / BDRip / MC");
+    expect(parsed.parsedTitle).not.toBe("MC");
+  });
 });
