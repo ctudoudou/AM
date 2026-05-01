@@ -247,10 +247,16 @@ function extractLeadingTitle(rawTitle: string) {
     .replace(/^\s+/, "");
   const match =
     cleaned.match(/^(?<title>.+?)\s+-\s*(?<episode>\d{1,4}(?:\.\d+)?)(?:\s|\[|\(|v\d|$)/) ??
-    cleaned.match(/^(?<title>.+?)\s+第(?<episode>\d{1,4}(?:\.\d+)?)话(?:\s|\[|\(|$)/);
+    cleaned.match(/^(?<title>.+?)\s+第(?<episode>\d{1,4}(?:\.\d+)?)话(?:\s|\[|\(|$)/) ??
+    cleaned.match(/^(?<title>.+?)\s*(?:\[|【)(?<episode>\d{1,4}(?:\.\d+)?(?:\s*[-~～]\s*\d{1,4}(?:\.\d+)?)?\s*(?:fin|final|end|完|完结|完結|全集|全)?)(?:\]|】)/i);
   const title = match?.groups?.title?.trim();
 
-  if (!title || isReleaseSeasonBanner(title) || isPureTechnicalTag(normalizeProfileAtom(title))) {
+  if (
+    !title ||
+    /[\[\]【】]/.test(title) ||
+    isReleaseSeasonBanner(title) ||
+    isPureTechnicalTag(normalizeProfileAtom(title))
+  ) {
     return undefined;
   }
 
@@ -321,7 +327,9 @@ function parseSeasonNumber(value: string) {
 }
 
 function isEpisodeTag(value: string) {
-  return /^\d{1,4}(?:\.\d+)?(?:v\d+)?$/i.test(value.trim());
+  return /^(?:ep?\s*)?\d{1,4}(?:\.\d+)?(?:v\d+)?(?:\s*[-~～]\s*\d{1,4}(?:\.\d+)?)?\s*(?:fin|final|end|完|完结|完結|全集|全)?$/i.test(
+    value.trim(),
+  );
 }
 
 function isSubtitleTag(value: string) {
@@ -445,7 +453,7 @@ function deriveReleaseProfile(input: {
     const titleTag = input.titleTags?.some(
       (title) => normalizeProfileAtom(title) === atom || normalizeProfileAtom(normalizeBracketTitleTag(tag)) === normalizeProfileAtom(title),
     );
-    if (!atom || skip.has(atom) || titleTag || isPureTechnicalTag(atom) || isReleaseSeasonBanner(tag)) {
+    if (!atom || skip.has(atom) || titleTag || isEpisodeTag(tag) || isPureTechnicalTag(atom) || isReleaseSeasonBanner(tag)) {
       continue;
     }
     normalizedAtoms.add(tag.trim());

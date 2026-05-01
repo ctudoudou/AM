@@ -102,4 +102,106 @@ describe("buildWantedEpisodeCoverage", () => {
       }),
     );
   });
+
+  it("does not treat empty organizer plans as actionable waiting work", () => {
+    const coverage = buildWantedEpisodeCoverage(
+      {
+        ...baseMedia,
+        seasons: [{ number: 1, episodes: [] }],
+      },
+      [
+        {
+          id: "candidate-2",
+          groupId: "group-1",
+          rssItemId: "rss-1",
+          mediaType: "ANIME",
+          rawTitle: "淡島百景 - 02",
+          parsedTitle: "淡島百景",
+          normalizedTitle: "淡島百景",
+          subtitleGroup: null,
+          episodeNumber: 2,
+          season: 1,
+          resolution: null,
+          codec: null,
+          audio: null,
+          subtitleLanguage: null,
+          releaseProfile: null,
+          sourceKind: null,
+          variantKey: null,
+          releaseTags: null,
+          magnetUrl: "magnet:?xt=urn:btih:test",
+          torrentUrl: null,
+          torrentFilePath: null,
+          sourceUrl: null,
+          confidence: 0.9,
+          status: "DOWNLOADED",
+          createdAt: new Date(),
+          updatedAt: new Date(),
+          downloads: [{ status: "COMPLETED" }],
+          organizerPlans: [{ status: "NEEDS_REVIEW", items: [] }],
+          group: { displayTitle: "淡島百景", normalizedTitle: "淡島百景", aliases: [] },
+        },
+      ],
+      [],
+    );
+
+    expect(coverage.episodes).toContainEqual(
+      expect.objectContaining({
+        episodeNumber: 2,
+        status: "DOWNLOADED",
+        reason: "Download completed but organizer plan has no files; run organizer scan",
+      }),
+    );
+  });
+
+  it("marks downloaded episodes as waiting for organizer only when the plan has files", () => {
+    const coverage = buildWantedEpisodeCoverage(
+      {
+        ...baseMedia,
+        seasons: [{ number: 1, episodes: [] }],
+      },
+      [
+        {
+          id: "candidate-2",
+          groupId: "group-1",
+          rssItemId: "rss-1",
+          mediaType: "ANIME",
+          rawTitle: "淡島百景 - 02",
+          parsedTitle: "淡島百景",
+          normalizedTitle: "淡島百景",
+          subtitleGroup: null,
+          episodeNumber: 2,
+          season: 1,
+          resolution: null,
+          codec: null,
+          audio: null,
+          subtitleLanguage: null,
+          releaseProfile: null,
+          sourceKind: null,
+          variantKey: null,
+          releaseTags: null,
+          magnetUrl: "magnet:?xt=urn:btih:test",
+          torrentUrl: null,
+          torrentFilePath: null,
+          sourceUrl: null,
+          confidence: 0.9,
+          status: "DOWNLOADED",
+          createdAt: new Date(),
+          updatedAt: new Date(),
+          downloads: [{ status: "COMPLETED" }],
+          organizerPlans: [{ status: "NEEDS_REVIEW", items: [{ id: "item-1" }] }],
+          group: { displayTitle: "淡島百景", normalizedTitle: "淡島百景", aliases: [] },
+        },
+      ],
+      [],
+    );
+
+    expect(coverage.episodes).toContainEqual(
+      expect.objectContaining({
+        episodeNumber: 2,
+        status: "DOWNLOADED",
+        reason: "Downloaded and waiting for organizer",
+      }),
+    );
+  });
 });

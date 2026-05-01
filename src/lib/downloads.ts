@@ -144,10 +144,11 @@ export async function syncSingleAria2Download(downloadId: string) {
         data: { status: "DOWNLOADED" },
       });
     }
-    const organizerPlanCount = await prisma.organizerPlan.count({
+    const organizerPlans = await prisma.organizerPlan.findMany({
       where: { downloadId: download.id },
+      select: { items: { select: { id: true } } },
     });
-    if (organizerPlanCount === 0) {
+    if (!organizerPlans.some((plan) => plan.items.length > 0)) {
       await createOrganizerPlanForDownload(download.id).catch(async (error) => {
         await prisma.download.update({
           where: { id: download.id },

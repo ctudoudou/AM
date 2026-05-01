@@ -94,6 +94,24 @@ describe("parseAnimeReleaseTitle", () => {
     expect(parsed.releaseProfile).not.toContain("04月新番");
   });
 
+  it("extracts real titles before complete episode range tags", () => {
+    const witchWatch = parseAnimeReleaseTitle(
+      "[桜都字幕组] 魔女与使魔 / Witch Watch [01-25Fin][1080P][简体内嵌]",
+    );
+    const agents = parseAnimeReleaseTitle(
+      "[❀拨雪寻春❀] 春夏秋冬代行者 春之舞 / Shunkashuutou Daikousha - Haru no Mai / Agents of the Four Seasons [01-05][WebRip][HEVC-10bit 1080p][简繁日内封]",
+    );
+
+    expect(witchWatch.parsedTitle).toBe("魔女与使魔 / Witch Watch");
+    expect(witchWatch.normalizedTitle).toBe("魔女与使魔");
+    expect(witchWatch.releaseProfile).not.toContain("01-25Fin");
+    expect(agents.parsedTitle).toBe(
+      "春夏秋冬代行者 春之舞 / Shunkashuutou Daikousha - Haru no Mai / Agents of the Four Seasons",
+    );
+    expect(agents.normalizedTitle).toBe("春夏秋冬代行者 春之舞");
+    expect(agents.releaseProfile).not.toContain("01-05");
+  });
+
   it("keeps adjacent bracket title aliases while dropping release banners", () => {
     const parsed = parseAnimeReleaseTitle(
       "[爱恋字幕社][4月新番][春夏秋冬代行者][Shunkashuutou Daikousha - Haru no Mai][04][1080p][MP4][GB][简中]",

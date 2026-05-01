@@ -73,14 +73,14 @@ type Subscription = {
   } | null;
 };
 
+type CandidateFilter = "ACTIVE" | "UNSUBSCRIBED" | "SUBSCRIBED" | "EMPTY" | "ALL";
+
 export function SubscriptionsClient({ locale }: { locale: Locale }) {
   const t = getMessages(locale);
   const [groups, setGroups] = useState<CandidateGroup[]>([]);
   const [subscriptions, setSubscriptions] = useState<Subscription[]>([]);
   const [rssSources, setRssSources] = useState<RssSource[]>([]);
-  const [candidateFilter, setCandidateFilter] = useState<
-    "ALL" | "WITH_CANDIDATES" | "UNSUBSCRIBED" | "SUBSCRIBED" | "EMPTY"
-  >("WITH_CANDIDATES");
+  const [candidateFilter, setCandidateFilter] = useState<CandidateFilter>("ACTIVE");
   const [candidateStats, setCandidateStats] = useState<CandidateStats>({
     totalGroups: 0,
     emptyGroups: 0,
@@ -109,11 +109,8 @@ export function SubscriptionsClient({ locale }: { locale: Locale }) {
     );
     return groups
       .filter((group) => {
-        if (candidateFilter === "WITH_CANDIDATES") {
+        if (candidateFilter === "ACTIVE" || candidateFilter === "UNSUBSCRIBED") {
           return group.candidates.length > 0;
-        }
-        if (candidateFilter === "UNSUBSCRIBED") {
-          return !subscriptionGroupIds.has(group.id) && group.candidates.length > 0;
         }
         if (candidateFilter === "SUBSCRIBED") {
           return subscriptionGroupIds.has(group.id);
@@ -136,8 +133,9 @@ export function SubscriptionsClient({ locale }: { locale: Locale }) {
 
   const load = useCallback(async () => {
     try {
+      const params = subscriptionCandidateParams(candidateFilter);
       const [candidateResponse, rssResponse, subscriptionsResponse] = await Promise.all([
-        fetch("/api/subscription-candidates"),
+        fetch(`/api/subscription-candidates?${params}`),
         fetch("/api/rss-sources"),
         fetch("/api/subscriptions"),
       ]);
@@ -168,7 +166,7 @@ export function SubscriptionsClient({ locale }: { locale: Locale }) {
     } finally {
       setLoading(false);
     }
-  }, [t.subscriptionsLoadError]);
+  }, [candidateFilter, t.subscriptionsLoadError]);
 
   useEffect(() => {
     const timeout = window.setTimeout(() => {
@@ -566,7 +564,7 @@ export function SubscriptionsClient({ locale }: { locale: Locale }) {
           </div>
           <div className="filter-tabs">
             {[
-              ["WITH_CANDIDATES", t.withVersions],
+              ["ACTIVE", t.currentCandidates],
               ["UNSUBSCRIBED", t.unsubscribed],
               ["SUBSCRIBED", t.subscribed],
               ["EMPTY", t.futureOnly],
@@ -577,12 +575,7 @@ export function SubscriptionsClient({ locale }: { locale: Locale }) {
                 key={key}
                 onClick={() =>
                   setCandidateFilter(
-                    key as
-                      | "ALL"
-                      | "WITH_CANDIDATES"
-                      | "UNSUBSCRIBED"
-                      | "SUBSCRIBED"
-                      | "EMPTY",
+                    key as CandidateFilter,
                   )
                 }
                 type="button"
@@ -782,4 +775,20 @@ function formatMediaType(
     return t.tv;
   }
   return t.autoDetect;
+}
+
+function subscriptionCandidateParams(filter: CandidateFilter) {
+  const params = new URLSearchParams();
+  if (filter === "SUBSCRIBED") {
+    params.set("view", "subscribed");
+  } else if (filter === "EMPTY") {
+    params.set("view", "empty");
+  } else if (filter === "ALL") {
+    params.set("view", "all");
+    params.set("limit", "200");
+  } else {
+    params.set("view", "active");
+    params.set("limit", "100");
+  }
+  return params.toString();
 }

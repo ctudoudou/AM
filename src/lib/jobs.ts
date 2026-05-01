@@ -29,14 +29,14 @@ export async function runJob(name: JobName) {
     case "rss.fetchAll": {
       const fetched = await fetchAllRssSources();
       const parsed = await parseNewRssItems();
-      const grouped = await groupUngroupedCandidates(200, { regroupExisting: true });
+      const grouped = await groupUngroupedCandidates(1000);
       const matched = await matchSubscriptionsToCandidates();
       return { fetched, parsed, grouped, matched };
     }
     case "rss.parseItems":
       return parseNewRssItems();
     case "ai.groupCandidates":
-      return groupUngroupedCandidates(200, { regroupExisting: true });
+      return groupUngroupedCandidates(1000);
     case "ai.repairCandidateGroups":
       return repairCandidateGroups(200);
     case "subscriptions.matchNewCandidates":

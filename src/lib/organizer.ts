@@ -31,13 +31,13 @@ export async function inspectCompletedDownloads() {
     },
     include: {
       candidate: { include: { group: true } },
-      organizerPlans: { select: { id: true } },
+      organizerPlans: { select: { id: true, items: { select: { id: true } } } },
     },
   });
   const results = [];
 
   for (const download of downloads) {
-    if (download.organizerPlans.length > 0) {
+    if (download.organizerPlans.some((plan) => plan.items.length > 0)) {
       continue;
     }
     results.push(await createOrganizerPlanForDownload(download.id));

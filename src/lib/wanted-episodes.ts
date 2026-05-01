@@ -5,7 +5,7 @@ import { enqueueCandidateDownload } from "@/lib/downloads";
 
 type CandidateWithState = ReleaseCandidate & {
   downloads: Array<{ status: string }>;
-  organizerPlans: Array<{ status: string }>;
+  organizerPlans: Array<{ status: string; items: Array<{ id: string }> }>;
   group: { displayTitle: string; normalizedTitle: string; aliases: unknown } | null;
 };
 
@@ -161,7 +161,7 @@ async function findCandidatesForMedia(media: MediaWithEpisodes) {
     },
     include: {
       downloads: { select: { status: true } },
-      organizerPlans: { select: { status: true } },
+      organizerPlans: { select: { status: true, items: { select: { id: true } } } },
       group: { select: { displayTitle: true, normalizedTitle: true, aliases: true } },
     },
     orderBy: [{ episodeNumber: "asc" }, { createdAt: "desc" }],
@@ -298,14 +298,22 @@ function candidatePriority(candidate: CandidateWithState) {
 }
 
 function stateForCandidate(candidate: CandidateWithState, candidateCount: number) {
-  if (candidate.organizerPlans.some((plan) => ["PENDING", "NEEDS_REVIEW", "CONFLICT", "FAILED"].includes(plan.status))) {
+  const activeOrganizerPlans = candidate.organizerPlans.filter((plan) =>
+    ["PENDING", "NEEDS_REVIEW", "CONFLICT", "FAILED"].includes(plan.status),
+  );
+  if (activeOrganizerPlans.some((plan) => plan.items.length > 0)) {
     return { status: "DOWNLOADED" as const, reason: "Downloaded and waiting for organizer" };
   }
   if (candidate.downloads.some((download) => ["WAITING", "ACTIVE", "PAUSED"].includes(download.status))) {
     return { status: "DOWNLOADING" as const, reason: "Download in progress" };
   }
   if (candidate.downloads.some((download) => download.status === "COMPLETED")) {
-    return { status: "DOWNLOADED" as const, reason: "Download completed" };
+    return {
+      status: "DOWNLOADED" as const,
+      reason: activeOrganizerPlans.length > 0
+        ? "Download completed but organizer plan has no files; run organizer scan"
+        : "Download completed",
+    };
   }
   if (candidate.status === "REVIEW" || candidateCount > 1) {
     return { status: "NEEDS_REVIEW" as const, reason: "Multiple or review-required candidates found" };

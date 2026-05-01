@@ -3,10 +3,28 @@ import { prisma } from "@/lib/db";
 
 export const dynamic = "force-dynamic";
 
-export async function GET() {
+export async function GET(request: Request) {
   try {
+    const url = new URL(request.url);
+    const view = url.searchParams.get("view") ?? "active";
+    const requestedLimit = Number(url.searchParams.get("limit"));
+    const limit = Number.isFinite(requestedLimit)
+      ? Math.min(Math.max(Math.floor(requestedLimit), 1), 300)
+      : view === "all"
+        ? 200
+        : 100;
+    const where =
+      view === "subscribed"
+        ? { subscriptions: { some: { enabled: true } } }
+        : view === "empty"
+          ? { candidates: { none: {} }, subscriptions: { none: { enabled: true } } }
+          : view === "all"
+            ? {}
+            : { candidates: { some: {} }, subscriptions: { none: { enabled: true } } };
     const groups = await prisma.releaseCandidateGroup.findMany({
+      where,
       orderBy: [{ candidates: { _count: "desc" } }, { updatedAt: "desc" }],
+      take: limit,
       include: {
         _count: { select: { candidates: true, subscriptions: true } },
         candidates: {

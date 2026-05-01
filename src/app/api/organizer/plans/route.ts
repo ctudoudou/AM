@@ -1,3 +1,4 @@
+import type { OrganizerPlanStatus } from "@prisma/client";
 import { jsonError, jsonResponse } from "@/lib/api";
 import { prisma } from "@/lib/db";
 
@@ -19,9 +20,9 @@ export async function GET(request: Request) {
       : view === "history"
         ? 100
         : 200;
-    const statusFilter =
+    const statusFilter: OrganizerPlanStatus[] =
       status && statusSet.has(status)
-        ? [status]
+        ? [status as OrganizerPlanStatus]
         : view === "history"
           ? [...historyStatuses]
           : view === "all"
