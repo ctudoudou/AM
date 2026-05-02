@@ -1,7 +1,14 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Image as ImageIcon, Loader2, Play, Search, ShieldAlert } from "lucide-react";
+import {
+  Image as ImageIcon,
+  Loader2,
+  Play,
+  Search,
+  ShieldAlert,
+  WandSparkles,
+} from "lucide-react";
 import { getMessages } from "@/messages";
 import type { Locale } from "@/lib/i18n";
 
@@ -40,6 +47,8 @@ export function AnimeLibraryClient({ locale }: { locale: Locale }) {
   const [query, setQuery] = useState("");
   const [loading, setLoading] = useState(true);
   const [refreshingMetadata, setRefreshingMetadata] = useState(false);
+  const [repairingLibrary, setRepairingLibrary] = useState(false);
+  const [repairMessage, setRepairMessage] = useState("");
   const [auditing, setAuditing] = useState(false);
   const [error, setError] = useState("");
   const issueByMediaId = useMemo(() => {
@@ -106,6 +115,7 @@ export function AnimeLibraryClient({ locale }: { locale: Locale }) {
 
   async function refreshMetadata() {
     setRefreshingMetadata(true);
+    setRepairMessage("");
     try {
       const response = await fetch("/api/library/anime/metadata", {
         method: "POST",
@@ -116,10 +126,42 @@ export function AnimeLibraryClient({ locale }: { locale: Locale }) {
         throw new Error(t.metadataRefreshError);
       }
       await load();
+      await auditLibrary();
     } catch (refreshError) {
       setError(refreshError instanceof Error ? refreshError.message : t.metadataRefreshError);
     } finally {
       setRefreshingMetadata(false);
+    }
+  }
+
+  async function repairLibrary() {
+    setRepairingLibrary(true);
+    setRepairMessage("");
+    setError("");
+    try {
+      const mergeResponse = await fetch("/api/jobs/run", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ job: "library.mergeDuplicateAnimeTitles" }),
+      });
+      if (!mergeResponse.ok) {
+        throw new Error(t.repairAnimeLibraryError);
+      }
+      const metadataResponse = await fetch("/api/library/anime/metadata", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ onlyMissing: true }),
+      });
+      if (!metadataResponse.ok) {
+        throw new Error(t.repairAnimeLibraryError);
+      }
+      await load();
+      await auditLibrary();
+      setRepairMessage(t.repairAnimeLibraryDone);
+    } catch (repairError) {
+      setError(repairError instanceof Error ? repairError.message : t.repairAnimeLibraryError);
+    } finally {
+      setRepairingLibrary(false);
     }
   }
 
@@ -146,18 +188,31 @@ export function AnimeLibraryClient({ locale }: { locale: Locale }) {
         <span>
           {visibleTitles.length} {t.titles}
         </span>
-        <button disabled={auditing} onClick={() => void auditLibrary()} type="button">
+        <button
+          disabled={auditing || repairingLibrary}
+          onClick={() => void auditLibrary()}
+          type="button"
+        >
           {auditing ? <Loader2 size={14} /> : <ShieldAlert size={14} />}
           {auditIssues.length > 0
             ? `${t.libraryAuditIssues} ${auditIssues.length}`
             : t.auditLibrary}
         </button>
-        <button disabled={refreshingMetadata} onClick={() => void refreshMetadata()} type="button">
+        <button
+          disabled={refreshingMetadata || repairingLibrary}
+          onClick={() => void refreshMetadata()}
+          type="button"
+        >
           {refreshingMetadata ? <Loader2 size={14} /> : <ImageIcon size={14} />}
           {t.refreshMetadata}
         </button>
+        <button disabled={repairingLibrary} onClick={() => void repairLibrary()} type="button">
+          {repairingLibrary ? <Loader2 size={14} /> : <WandSparkles size={14} />}
+          {t.repairAnimeLibrary}
+        </button>
       </div>
       {error ? <div className="settings-alert">{error}</div> : null}
+      {repairMessage ? <div className="settings-success">{repairMessage}</div> : null}
       {visibleTitles.length === 0 ? (
         <div className="empty-panel">{t.noAnimeTitles}</div>
       ) : (
