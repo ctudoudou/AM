@@ -58,6 +58,21 @@ describe("parseAnimeReleaseTitle", () => {
     expect(parsed.variantKey).toContain("chs+cht+jpn");
   });
 
+  it("treats Cantonese broadcast tags as audio profile metadata, not subtitle groups", () => {
+    const parsed = parseAnimeReleaseTitle(
+      "[TVB粵語][粵語+][WEB YUE] Some Anime - 03 [1080p][AVC AAC]",
+    );
+
+    expect(parsed.parsedTitle).toBe("Some Anime");
+    expect(parsed.episodeNumber).toBe(3);
+    expect(parsed.subtitleGroup).toBeUndefined();
+    expect(parsed.sourceKind).toBe("WEB");
+    expect(parsed.releaseProfile).toContain("TVB 粤语");
+    expect(parsed.releaseProfile).toContain("粤语音轨");
+    expect(parsed.releaseProfile).not.toContain("TVB粵語");
+    expect(parsed.releaseProfile).not.toContain("WEB YUE");
+  });
+
   it("does not leave empty episode brackets in parsed titles", () => {
     const parsed = parseAnimeReleaseTitle(
       "[桜都字幕组] 入间同学入魔了 第四季 / Mairimashita! Iruma-kun (2026) [01][1080P][简繁内封]",

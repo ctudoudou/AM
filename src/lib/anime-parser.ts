@@ -22,7 +22,8 @@ const resolutionPattern = /\b(2160p|4k|1080p|720p|480p|(?:3840|1920|1280|854|720
 const codecPattern = /\b(x265|x264|h\.?265|h\.?264|hevc|avc|av1)\b/i;
 const audioPattern = /\b(aac|flac|opus|mp3|truehd|dts)\b/i;
 const subtitlePattern = /(简繁日内封|简日内嵌|繁日内嵌|简繁内嵌|简繁外挂|简体|繁体|简繁|chs|cht|sc|tc|gb|big5)/i;
-const sourcePattern = /\b(web-?dl|webrip|baha|cr|crunchyroll|abema|b-global|netflix|amazon|bilibili|tv|bd|blu-?ray)\b/i;
+const sourcePattern = /\b(web-?dl|webrip|web|baha|cr|crunchyroll|abema|b-global|netflix|amazon|bilibili|tv|bd|blu-?ray)\b/i;
+const cantoneseAudioPattern = /(?:粵語|粤语|廣東話|广东话|\byue\b|cantonese)/i;
 const videoExtensionPattern = /\.(mkv|mp4|avi|mov|webm|m4v|ts)$/i;
 const releaseEditionPattern =
   /(?:^|[\s（(【\[])(?:放送版|オンエア版|先行放送版|先行版|無修正版|修正版|on[\s-]?air\s+version|broadcast\s+version|uncensored|censored)(?:$|[\s）)】\]])/i;
@@ -117,12 +118,16 @@ export function parseAnimeReleaseTitle(rawTitle: string): ParsedAnimeRelease {
   const releaseTags = [...releaseTitle.matchAll(/\[([^\]]+)\]|【([^】]+)】/g)]
     .map((match) => match[1] || match[2])
     .filter(Boolean);
-  const subtitleGroup = releaseTags[0];
+  const subtitleGroup = releaseTags.find((tag, index) =>
+    isSubtitleGroupTag(tag, index),
+  );
   const resolution = normalizeResolution(searchableTitle.match(resolutionPattern)?.[1]);
   const codec = searchableTitle.match(codecPattern)?.[1]?.toUpperCase().replace(".", "");
   const audio = searchableTitle.match(audioPattern)?.[1]?.toUpperCase();
   const subtitleLanguage = normalizeSubtitleLanguage(releaseTitle.match(subtitlePattern)?.[1]);
-  const sourceKind = normalizeSourceKind(releaseTitle.match(sourcePattern)?.[1]);
+  const sourceKind =
+    normalizeSourceKind(releaseTitle.match(sourcePattern)?.[1]) ??
+    normalizeSourceKindFromTags(releaseTags);
   const bracketTitleTags = extractBracketTitleTags(releaseTitle);
   const releaseProfile = deriveReleaseProfile({
     audio,
@@ -240,7 +245,14 @@ function extractBracketTitleTags(rawTitle: string) {
     const matchIndex = match.index ?? -1;
     const isLeadingTag =
       inLeadingPrefix && matchIndex >= 0 && rawTitle.slice(leadingCursor, matchIndex).trim() === "";
-    if (isLeadingTag && (index === 0 || isLeadingReleasePrefixTag(tag) || isReleaseSeasonBanner(tag))) {
+    if (
+      isLeadingTag &&
+      (index === 0 ||
+        isLeadingReleasePrefixTag(tag) ||
+        isReleaseSeasonBanner(tag) ||
+        isAudioLanguageTag(tag) ||
+        isSourceProfileTag(tag))
+    ) {
       leadingCursor = matchIndex + match[0].length;
       continue;
     }
@@ -296,7 +308,13 @@ function stripLeadingReleasePrefixes(rawTitle: string) {
     if (!match || !tag) {
       break;
     }
-    if (!stripped || isLeadingReleasePrefixTag(tag) || isReleaseSeasonBanner(tag)) {
+    if (
+      !stripped ||
+      isLeadingReleasePrefixTag(tag) ||
+      isReleaseSeasonBanner(tag) ||
+      isAudioLanguageTag(tag) ||
+      isSourceProfileTag(tag)
+    ) {
       value = value.slice(match[0].length).trimStart();
       stripped = true;
       continue;
@@ -419,6 +437,33 @@ function isSubtitleTag(value: string) {
   return subtitlePattern.test(value) || /^(gb|big5|简中|繁中|简日双语|繁日双语)$/i.test(value.trim());
 }
 
+function isAudioLanguageTag(value: string) {
+  return cantoneseAudioPattern.test(value);
+}
+
+function isSourceProfileTag(value: string) {
+  const normalized = normalizeProfileAtom(value);
+  return /^(?:web|web dl|webrip|baha|cr|crunchyroll|abema|b global|netflix|amazon|bilibili|tv|bd|blu ray)$/.test(
+    normalized,
+  );
+}
+
+function isSubtitleGroupTag(value: string, index: number) {
+  const atom = normalizeProfileAtom(value);
+  if (
+    !atom ||
+    isEpisodeTag(value) ||
+    isSubtitleTag(value) ||
+    isAudioLanguageTag(value) ||
+    isSourceProfileTag(value) ||
+    isPureTechnicalTag(atom) ||
+    isReleaseSeasonBanner(value)
+  ) {
+    return false;
+  }
+  return index === 0 || isLeadingReleasePrefixTag(value);
+}
+
 function isReleaseSeasonBanner(value: string) {
   return /^(?:★\s*)?(?:\d{1,2}|[一二三四五六七八九十]+)\s*月\s*新番(?:\s*★)?$/i.test(
     value.trim(),
@@ -428,7 +473,7 @@ function isReleaseSeasonBanner(value: string) {
 function isLeadingReleasePrefixTag(value: string) {
   const normalized = normalizeProfileAtom(value);
   return (
-    /(?:搬運|搬运|個人製作合集|个人制作合集|字幕组|字幕組|字幕社|fans制作组|压制|壓制|raws?|sub|subs|loli|ani|dmhy|mikan|桜都|櫻都|黒ネズミ|黑白|绿茶|綠茶|喵萌|奶茶屋|爱恋|愛戀|北宇治|千夏|拨雪寻春|撥雪尋春|sweet|lilith|skymoon|prejudice|風之聖殿|风之圣殿|猎户|獵戶|mce|sfsub)/i.test(
+    /(?:搬運|搬运|個人製作合集|个人制作合集|字幕组|字幕組|字幕社|fans制作组|压制|壓制|raws?|sub|subs|loli|dmhy|mikan|桜都|櫻都|黒ネズミ|黑白|绿茶|綠茶|喵萌|奶茶屋|爱恋|愛戀|北宇治|千夏|拨雪寻春|撥雪尋春|sweet|lilith|skymoon|prejudice|風之聖殿|风之圣殿|猎户|獵戶|mce|sfsub)/i.test(
       value,
     ) ||
     /^(?:ani|lolihouse|lilith-?raws?|sweetsub|skymoon-?raws?|sfsub|mce|dmhy)$/i.test(normalized) ||
@@ -509,6 +554,9 @@ function normalizeSourceKind(value: string | undefined) {
   if (normalized === "webrip") {
     return "WEBRip";
   }
+  if (normalized === "web") {
+    return "WEB";
+  }
   if (normalized === "baha") {
     return "Baha";
   }
@@ -539,6 +587,16 @@ function normalizeSourceKind(value: string | undefined) {
   return value;
 }
 
+function normalizeSourceKindFromTags(tags: string[]) {
+  for (const tag of tags) {
+    const sourceKind = normalizeSourceKind(tag.match(sourcePattern)?.[1]);
+    if (sourceKind) {
+      return sourceKind;
+    }
+  }
+  return undefined;
+}
+
 function deriveReleaseProfile(input: {
   rawTitle: string;
   releaseTags: string[];
@@ -564,15 +622,47 @@ function deriveReleaseProfile(input: {
       .map((value) => normalizeProfileAtom(value as string)),
   );
 
+  let hasCantoneseAudio = false;
+  let hasTvbCantonese = false;
+
   for (const tag of input.releaseTags) {
     const atom = normalizeProfileAtom(tag);
     const titleTag = input.titleTags?.some(
       (title) => normalizeProfileAtom(title) === atom || normalizeProfileAtom(normalizeBracketTitleTag(tag)) === normalizeProfileAtom(title),
     );
+    if (isAudioLanguageTag(tag)) {
+      hasCantoneseAudio = true;
+      if (/\btvb\b/i.test(tag)) {
+        hasTvbCantonese = true;
+      }
+    }
+    const sourceFromTag = normalizeSourceKind(tag.match(sourcePattern)?.[1]);
+    if (sourceFromTag) {
+      normalizedAtoms.add(sourceFromTag);
+      const remainder = tag
+        .replace(sourcePattern, " ")
+        .replace(cantoneseAudioPattern, " ")
+        .replace(/\+/g, " ")
+        .replace(/\s+/g, " ")
+        .trim();
+      if (!remainder) {
+        continue;
+      }
+    }
+    if (isAudioLanguageTag(tag)) {
+      continue;
+    }
     if (!atom || skip.has(atom) || titleTag || isEpisodeTag(tag) || isPureTechnicalTag(atom) || isReleaseSeasonBanner(tag)) {
       continue;
     }
     normalizedAtoms.add(tag.trim());
+  }
+
+  if (hasTvbCantonese) {
+    normalizedAtoms.add("TVB 粤语");
+  }
+  if (hasCantoneseAudio) {
+    normalizedAtoms.add("粤语音轨");
   }
 
   const subtitleMatch = input.rawTitle.match(subtitlePattern)?.[1];
@@ -593,7 +683,7 @@ function isPureTechnicalTag(atom: string) {
   }
   const technicalTokens = atom.split(/\s+/).filter(Boolean);
   return technicalTokens.length > 0 && technicalTokens.every((token) =>
-    /^(2160p|4k|1080p|720p|480p|\d{3,4}x(?:2160|1080|720|480)|x265|x264|h265|h264|hevc|avc|av1|aac|flac|opus|mp3|truehd|dts|mp4|mkv|10bit|8bit|web|dl|webrip|bdrip|bd|bdremux|blu|ray|baha|cr|crunchyroll|abema|b|global|bilibili|gb|big5|简中|繁中)$/.test(
+    /^(2160p|4k|1080p|720p|480p|\d{3,4}x(?:2160|1080|720|480)|x265|x264|h265|h264|hevc|avc|av1|aac|flac|opus|mp3|truehd|dts|mp4|mkv|10bit|8bit|web|dl|webrip|bdrip|bd|bdremux|blu|ray|baha|cr|crunchyroll|abema|b|global|bilibili|gb|big5|简中|繁中|yue|cantonese|粵語|粤语)$/.test(
       token,
     ),
   );

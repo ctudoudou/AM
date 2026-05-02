@@ -293,7 +293,7 @@ export function SubscriptionsClient({ locale }: { locale: Locale }) {
       body: JSON.stringify({
         candidateId: candidate?.id,
         candidateGroupId: group.id,
-        preferredGroup: candidate?.subtitleGroup ?? undefined,
+        preferredGroup: candidatePreferredGroup(candidate) ?? undefined,
         preferredResolution: candidate?.resolution ?? undefined,
         preferredCodec: candidate?.codec ?? undefined,
         preferredAudio: candidate?.audio ?? undefined,
@@ -644,7 +644,7 @@ export function SubscriptionsClient({ locale }: { locale: Locale }) {
                               <div>
                                 <strong>{candidate.rawTitle}</strong>
                                 <span className="candidate-row-meta">
-                                  {formatCandidateMeta(candidate)}
+                                  {formatCandidateMeta(candidate, locale)}
                                 </span>
                               </div>
                               <div className="candidate-actions">
@@ -701,12 +701,31 @@ function groupCandidatesByEpisode(candidates: Candidate[]) {
   return [...grouped.values()];
 }
 
-function formatCandidateMeta(candidate: Candidate) {
+function formatCandidateMeta(candidate: Candidate, locale: Locale) {
+  const profileParts = splitReleaseProfile(candidate.releaseProfile);
+  const hasCantoneseAudio = [candidate.subtitleGroup, candidate.releaseProfile, candidate.sourceKind]
+    .filter(Boolean)
+    .some((value) => isCantoneseAudioTag(value as string));
+  const hasTvbCantonese = [candidate.subtitleGroup, candidate.releaseProfile]
+    .filter(Boolean)
+    .some((value) => /\btvb\b/i.test(value as string) && isCantoneseAudioTag(value as string));
+  const sourceKind =
+    candidate.sourceKind ??
+    (profileParts.some((part) => /\bweb\b/i.test(part)) ? "WEB" : undefined);
+  const labels = candidateMetaLabels(locale);
+  const cleanedProfileParts = profileParts
+    .filter((part) => !isCantoneseAudioTag(part))
+    .filter((part) => !isSourceOnlyMeta(part))
+    .filter((part) => normalizeMetaAtom(part) !== normalizeMetaAtom(sourceKind ?? ""))
+    .map(normalizeReleaseProfileLabel);
+
   return [
-    candidate.subtitleGroup,
-    candidate.releaseProfile,
-    candidate.subtitleLanguage,
-    candidate.sourceKind,
+    candidatePreferredGroup(candidate),
+    hasTvbCantonese ? `${labels.version}: TVB ${labels.cantonese}` : null,
+    hasCantoneseAudio ? `${labels.audioLanguage}: ${labels.cantonese}` : null,
+    ...cleanedProfileParts,
+    candidate.subtitleLanguage ? `${labels.subtitles}: ${candidate.subtitleLanguage}` : null,
+    sourceKind ? `${labels.source}: ${sourceKind}` : null,
     candidate.resolution,
     candidate.codec,
     candidate.audio,
@@ -714,6 +733,61 @@ function formatCandidateMeta(candidate: Candidate) {
   ]
     .filter(Boolean)
     .join(" · ");
+}
+
+function candidatePreferredGroup(candidate?: Candidate) {
+  if (!candidate?.subtitleGroup || isCantoneseAudioTag(candidate.subtitleGroup)) {
+    return null;
+  }
+  return candidate.subtitleGroup;
+}
+
+function splitReleaseProfile(value?: string | null) {
+  return (value ?? "")
+    .split(/\s+\/\s+|·/)
+    .map((part) => part.trim())
+    .filter(Boolean);
+}
+
+function isCantoneseAudioTag(value: string) {
+  return /(?:粵語|粤语|廣東話|广东话|\byue\b|cantonese)/i.test(value);
+}
+
+function isSourceOnlyMeta(value: string) {
+  return /^(?:web|web-dl|webrip|baha|cr|crunchyroll|abema|b-global|netflix|amazon|bilibili|tv|bd|blu-ray)$/i.test(
+    value.trim(),
+  );
+}
+
+function normalizeReleaseProfileLabel(value: string) {
+  return value
+    .replace(/粵語/g, "粤语")
+    .replace(/\bWEB\s+YUE\b/gi, "WEB")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function normalizeMetaAtom(value: string) {
+  return value.toLowerCase().replace(/[._-]+/g, " ").replace(/\s+/g, " ").trim();
+}
+
+function candidateMetaLabels(locale: Locale) {
+  if (locale === "en") {
+    return {
+      audioLanguage: "Audio",
+      cantonese: "Cantonese",
+      source: "Source",
+      subtitles: "Subtitles",
+      version: "Version",
+    };
+  }
+  return {
+    audioLanguage: "音轨",
+    cantonese: "粤语",
+    source: "来源",
+    subtitles: "字幕",
+    version: "版本",
+  };
 }
 
 function formatSubscriptionPolicy(subscription: Subscription) {
