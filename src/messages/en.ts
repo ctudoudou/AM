@@ -203,6 +203,7 @@ export const en = {
   missing: "Missing",
   ignored: "Ignored",
   ignoreEpisode: "Ignore episode",
+  restoreEpisode: "Restore episode",
   missingEpisodeActionError: "Wanted episode action failed.",
   searchWantedSources: "Search sources",
   searchingWantedSources: "Searching",

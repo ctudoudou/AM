@@ -1,7 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { Download, Loader2, RefreshCw, Search, X } from "lucide-react";
+import { Download, Loader2, RotateCcw, RefreshCw, Search, X } from "lucide-react";
 import { getMessages } from "@/messages";
 import type { Locale } from "@/lib/i18n";
 import type { EpisodeCoverageItem } from "@/lib/wanted-episodes";
@@ -57,7 +57,7 @@ export function MissingEpisodesPanel({
     }
   }
 
-  async function runWantedAction(wantedId: string, action: "download" | "ignore") {
+  async function runWantedAction(wantedId: string, action: "download" | "ignore" | "restore") {
     setBusyId(wantedId);
     setError("");
     try {
@@ -157,7 +157,16 @@ export function MissingEpisodesPanel({
                     <small>{episode.candidateTitle || episode.reason || t.noCandidateFound}</small>
                   </div>
                   <div className="missing-episode-actions">
-                    {wantedId && episode.candidateId ? (
+                    {wantedId && episode.status === "IGNORED" ? (
+                      <button
+                        disabled={busyId === wantedId}
+                        onClick={() => void runWantedAction(wantedId, "restore")}
+                        type="button"
+                      >
+                        {busyId === wantedId ? <Loader2 size={14} /> : <RotateCcw size={14} />}
+                        {t.restoreEpisode}
+                      </button>
+                    ) : wantedId && episode.candidateId ? (
                       <button
                         disabled={busyId === wantedId}
                         onClick={() => void runWantedAction(wantedId, "download")}
@@ -181,7 +190,7 @@ export function MissingEpisodesPanel({
                         {t.scanMissingEpisodes}
                       </button>
                     )}
-                    {wantedId ? (
+                    {wantedId && episode.status !== "IGNORED" ? (
                       <button
                         disabled={busyId === wantedId}
                         onClick={() => void runWantedAction(wantedId, "ignore")}

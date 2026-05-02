@@ -203,6 +203,7 @@ export const zhHans = {
   missing: "缺失",
   ignored: "已忽略",
   ignoreEpisode: "忽略此集",
+  restoreEpisode: "恢复此集",
   missingEpisodeActionError: "补集操作失败。",
   searchWantedSources: "搜索资源",
   searchingWantedSources: "搜索中",

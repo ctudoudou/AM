@@ -112,6 +112,17 @@ export async function ignoreWantedEpisode(wantedEpisodeId: string) {
   });
 }
 
+export async function restoreWantedEpisode(wantedEpisodeId: string) {
+  return prisma.wantedEpisode.update({
+    where: { id: wantedEpisodeId },
+    data: {
+      ignored: false,
+      status: "MISSING",
+      reason: "Restored by user",
+    },
+  });
+}
+
 export async function downloadWantedEpisode(wantedEpisodeId: string) {
   const wanted = await prisma.wantedEpisode.findUniqueOrThrow({
     where: { id: wantedEpisodeId },
@@ -124,6 +135,7 @@ export async function downloadWantedEpisode(wantedEpisodeId: string) {
   await prisma.wantedEpisode.update({
     where: { id: wanted.id },
     data: {
+      ignored: false,
       status: "DOWNLOADING",
       reason: "Download queued",
     },

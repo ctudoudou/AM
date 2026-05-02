@@ -103,6 +103,74 @@ describe("buildWantedEpisodeCoverage", () => {
     );
   });
 
+  it("keeps ignored episodes out of the actionable missing count", () => {
+    const coverage = buildWantedEpisodeCoverage(
+      {
+        ...baseMedia,
+        seasons: [
+          {
+            number: 1,
+            episodes: [{ id: "ep1", number: 1, title: "EP01", files: [{ id: "file1" }] }],
+          },
+        ],
+      },
+      [
+        {
+          id: "candidate-2",
+          groupId: "group-1",
+          rssItemId: "rss-1",
+          mediaType: "ANIME",
+          rawTitle: "淡島百景 - 02",
+          parsedTitle: "淡島百景",
+          normalizedTitle: "淡島百景",
+          subtitleGroup: null,
+          episodeNumber: 2,
+          season: 1,
+          resolution: null,
+          codec: null,
+          audio: null,
+          subtitleLanguage: null,
+          releaseProfile: null,
+          sourceKind: null,
+          variantKey: null,
+          releaseTags: null,
+          magnetUrl: "magnet:?xt=urn:btih:test",
+          torrentUrl: null,
+          torrentFilePath: null,
+          sourceUrl: null,
+          confidence: 0.9,
+          status: "READY",
+          createdAt: new Date(),
+          updatedAt: new Date(),
+          downloads: [],
+          organizerPlans: [],
+          group: { displayTitle: "淡島百景", normalizedTitle: "淡島百景", aliases: [] },
+        },
+      ],
+      [
+        {
+          id: "wanted-2",
+          seasonNumber: 1,
+          episodeNumber: 2,
+          status: "IGNORED",
+          ignored: true,
+          matchedCandidateId: "candidate-2",
+          reason: "Ignored by user",
+        },
+      ],
+    );
+
+    expect(coverage.episodes).toContainEqual(
+      expect.objectContaining({
+        episodeNumber: 2,
+        status: "IGNORED",
+        wantedId: "wanted-2",
+        candidateId: "candidate-2",
+      }),
+    );
+    expect(coverage.missingCount).toBe(0);
+  });
+
   it("does not treat empty organizer plans as actionable waiting work", () => {
     const coverage = buildWantedEpisodeCoverage(
       {
