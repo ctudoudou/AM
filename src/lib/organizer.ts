@@ -5,8 +5,10 @@ import { prisma } from "@/lib/db";
 import { cacheRemoteMediaAsset, isLocalMediaAssetUrl } from "@/lib/media-assets";
 import { getAppSettings } from "@/lib/settings";
 import { matchMetadataForGroup, type MetadataMatch } from "@/lib/metadata";
+import { addMediaTitleAliases, findExistingMediaTitle } from "@/lib/media-title-repair";
 import { normalizeTitleAliases } from "@/lib/anime-parser";
 import { parseMediaReleaseTitle } from "@/lib/media-parser";
+import { aliasesFromMetadataRaw } from "@/lib/title-display";
 import {
   reviewOrganizerPlanWithOpenRouter,
   type OrganizerAiReview,
@@ -352,6 +354,61 @@ export async function cleanupPollutedOrganizerPlans() {
   return { inspected: plans.length, deleted: polluted.length, plans: polluted.map((plan) => plan.id) };
 }
 
+export async function cleanupStaleOrganizerPlans() {
+  const plans = await prisma.organizerPlan.findMany({
+    where: {
+      status: { in: ["PENDING", "NEEDS_REVIEW", "CONFLICT", "FAILED"] },
+    },
+    include: {
+      items: true,
+      download: true,
+    },
+  });
+  let rejected = 0;
+  let empty = 0;
+  let missingSource = 0;
+  let failedDownload = 0;
+
+  for (const plan of plans) {
+    const reasons: string[] = [];
+    if (plan.items.length === 0) {
+      empty += 1;
+      if (
+        /No video file found|no files?|AI review/i.test(plan.reason ?? "") ||
+        plan.download?.status === "FAILED" ||
+        plan.download?.archiveStatus === "organizer_failed"
+      ) {
+        reasons.push("Organizer plan has no files left to process.");
+      }
+    }
+    if (plan.download?.status === "FAILED" || plan.download?.archiveStatus === "organizer_failed") {
+      failedDownload += 1;
+      reasons.push("Linked download has failed.");
+    }
+    if (plan.items.length > 0) {
+      const existing = await Promise.all(plan.items.map((item) => exists(item.sourcePath)));
+      const missing = existing.filter((item) => !item).length;
+      if (missing === plan.items.length) {
+        missingSource += missing;
+        reasons.push("All source files are missing.");
+      }
+    }
+    if (reasons.length === 0) {
+      continue;
+    }
+    await prisma.organizerPlan.update({
+      where: { id: plan.id },
+      data: {
+        status: "REJECTED",
+        reason: `Stale organizer plan rejected: ${[...new Set(reasons)].join(" ")}`,
+      },
+    });
+    rejected += 1;
+  }
+
+  return { inspected: plans.length, rejected, empty, missingSource, failedDownload };
+}
+
 export async function reviewOrganizerPlansWithAi(limit = 30) {
   const plans = await prisma.organizerPlan.findMany({
     where: {
@@ -622,7 +679,7 @@ async function upsertMediaRecords(plan: {
     resolution: string | null;
     codec: string | null;
     subtitleGroup: string | null;
-    group: { displayTitle: string } | null;
+    group: { displayTitle: string; normalizedTitle: string; aliases: unknown } | null;
   } | null;
 }) {
   const metadata = plan.metadata as {
@@ -638,10 +695,31 @@ async function upsertMediaRecords(plan: {
   const title = cleanMediaTitle(
     metadata?.title || candidate?.group?.displayTitle || candidate?.parsedTitle || "Unknown",
   );
+  const aliasValues = [
+    title,
+    metadata?.originalTitle,
+    candidate?.group?.displayTitle,
+    candidate?.group?.normalizedTitle,
+    ...groupAliases(candidate?.group?.aliases),
+    candidate?.parsedTitle,
+    ...plan.items.flatMap((item) => [
+      item.originalName,
+      parseMediaReleaseTitle(item.originalName, mediaType).parsedTitle,
+      path.basename(item.targetPath, path.extname(item.targetPath)),
+    ]),
+    ...aliasesFromMetadataRaw((metadata as { raw?: unknown } | null)?.raw).map((alias) => alias.title),
+  ];
   const media =
     (plan.mediaTitleId
       ? await prisma.mediaTitle.findUnique({ where: { id: plan.mediaTitleId } })
       : null) ??
+    (await findExistingMediaTitle({
+      type: mediaType,
+      title,
+      year: metadata?.year,
+      originalTitle: metadata?.originalTitle,
+      aliases: aliasValues,
+    })) ??
     (await prisma.mediaTitle.findFirst({
       where: {
         type: mediaType,
@@ -660,6 +738,7 @@ async function upsertMediaRecords(plan: {
         backdropUrl: metadata?.backdropUrl,
       },
     }));
+  await addMediaTitleAliases(media.id, aliasValues);
   const posterUrl =
     (await cacheRemoteMediaAsset(metadata?.posterUrl, {
       mediaId: media.id,

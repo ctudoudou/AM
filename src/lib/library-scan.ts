@@ -2,6 +2,8 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import type { MediaType } from "@prisma/client";
 import { prisma } from "@/lib/db";
+import { addMediaTitleAliases, findExistingMediaTitle } from "@/lib/media-title-repair";
+import { parseMediaReleaseTitle } from "@/lib/media-parser";
 import { getAppSettings } from "@/lib/settings";
 
 const videoExtensions = new Set([".mkv", ".mp4", ".avi", ".mov", ".webm", ".m4v", ".ts"]);
@@ -42,7 +44,11 @@ async function upsertScannedVideo(
 ) {
   const stat = await fs.stat(filePath);
   const parsed = parseLibraryIdentity(filePath, target);
-  const media = await findOrCreateMediaTitle(target.type, parsed.title, parsed.year);
+  const media = await findOrCreateMediaTitle(target.type, parsed.title, parsed.year, [
+    parsed.episodeTitle,
+    path.basename(filePath),
+    parseMediaReleaseTitle(path.basename(filePath), target.type).parsedTitle,
+  ]);
   const season = await prisma.season.upsert({
     where: { mediaId_number: { mediaId: media.id, number: parsed.season } },
     create: { mediaId: media.id, number: parsed.season },
@@ -77,20 +83,26 @@ async function upsertScannedVideo(
   return { created: true };
 }
 
-async function findOrCreateMediaTitle(type: MediaType, title: string, year?: number) {
-  const existing = await prisma.mediaTitle.findFirst({
-    where: { type, primaryTitle: title, year: year ?? null },
-  });
+async function findOrCreateMediaTitle(
+  type: MediaType,
+  title: string,
+  year?: number,
+  aliases: Array<string | null | undefined> = [],
+) {
+  const existing = await findExistingMediaTitle({ type, title, year, aliases });
   if (existing) {
+    await addMediaTitleAliases(existing.id, [title, ...aliases]);
     return existing;
   }
-  return prisma.mediaTitle.create({
+  const created = await prisma.mediaTitle.create({
     data: {
       type,
       primaryTitle: title,
       year,
     },
   });
+  await addMediaTitleAliases(created.id, [title, ...aliases]);
+  return created;
 }
 
 async function findVideoFiles(root: string): Promise<string[]> {

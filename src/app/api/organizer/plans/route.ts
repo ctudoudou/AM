@@ -28,8 +28,12 @@ export async function GET(request: Request) {
           : view === "all"
             ? [...statusValues]
             : [...activeStatuses];
+    const activeView = view !== "history" && view !== "all" && !status;
     const plans = await prisma.organizerPlan.findMany({
-      where: { status: { in: statusFilter } },
+      where: {
+        status: { in: statusFilter },
+        ...(activeView ? { items: { some: {} } } : {}),
+      },
       orderBy: { updatedAt: "desc" },
       take: limit,
       include: {

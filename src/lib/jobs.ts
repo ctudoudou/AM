@@ -4,10 +4,12 @@ import { syncAria2Downloads } from "@/lib/downloads";
 import { matchSubscriptionsToCandidates } from "@/lib/subscription-matcher";
 import {
   cleanupPollutedOrganizerPlans,
+  cleanupStaleOrganizerPlans,
   inspectCompletedDownloads,
   reviewOrganizerPlansWithAi,
 } from "@/lib/organizer";
 import { scanLibraryRoots } from "@/lib/library-scan";
+import { mergeDuplicateAnimeTitles } from "@/lib/media-title-repair";
 
 export const jobNames = [
   "rss.fetchAll",
@@ -18,8 +20,10 @@ export const jobNames = [
   "downloads.syncAria2",
   "organizer.inspectCompletedDownloads",
   "organizer.cleanupPollutedPlans",
+  "organizer.cleanupStalePlans",
   "organizer.aiReviewPlans",
   "library.scan",
+  "library.mergeDuplicateAnimeTitles",
 ] as const;
 
 export type JobName = (typeof jobNames)[number];
@@ -47,9 +51,13 @@ export async function runJob(name: JobName) {
       return inspectCompletedDownloads();
     case "organizer.cleanupPollutedPlans":
       return cleanupPollutedOrganizerPlans();
+    case "organizer.cleanupStalePlans":
+      return cleanupStaleOrganizerPlans();
     case "organizer.aiReviewPlans":
       return reviewOrganizerPlansWithAi();
     case "library.scan":
       return scanLibraryRoots();
+    case "library.mergeDuplicateAnimeTitles":
+      return mergeDuplicateAnimeTitles();
   }
 }

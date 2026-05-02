@@ -150,9 +150,11 @@ export function OrganizerClient({ locale }: { locale: Locale }) {
     setError("");
     const jobs = [
       "organizer.cleanupPollutedPlans",
+      "organizer.cleanupStalePlans",
       "downloads.syncAria2",
       "organizer.inspectCompletedDownloads",
       "organizer.aiReviewPlans",
+      "library.mergeDuplicateAnimeTitles",
     ];
     const results: Array<{ job: string; result: Record<string, unknown> }> = [];
 
@@ -428,16 +430,20 @@ function formatRepairSummary(
 ) {
   const byJob = new Map(results.map((item) => [item.job, item.result]));
   const cleanup = byJob.get("organizer.cleanupPollutedPlans");
+  const stale = byJob.get("organizer.cleanupStalePlans");
   const sync = byJob.get("downloads.syncAria2");
   const inspect = byJob.get("organizer.inspectCompletedDownloads");
   const review = byJob.get("organizer.aiReviewPlans");
+  const merge = byJob.get("library.mergeDuplicateAnimeTitles");
   return [
     t.repairOrganizerPipelineDone,
     `deleted: ${numberValue(cleanup?.deleted)}`,
+    `stale rejected: ${numberValue(stale?.rejected)}`,
     `synced: ${numberValue(sync?.synced)}`,
     `plans: ${numberValue(inspect?.inspected)}`,
     `ai reviewed: ${numberValue(review?.reviewed)}`,
     `filtered: ${numberValue(review?.filteredItems)}`,
+    `merged titles: ${numberValue(merge?.merged)}`,
   ].join(" ");
 }
 
