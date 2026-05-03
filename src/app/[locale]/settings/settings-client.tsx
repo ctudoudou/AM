@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Check, Loader2, Plus, Save, Trash2, Wifi } from "lucide-react";
+import { Check, Loader2, Plus, RefreshCw, Save, Trash2, Wifi } from "lucide-react";
 import { getMessages } from "@/messages";
 import type { Locale } from "@/lib/i18n";
 
@@ -60,6 +60,17 @@ type Aria2DebugResult = {
   hint?: string;
 };
 
+type JobRun = {
+  id: string;
+  job: string;
+  status: "SUCCESS" | "FAILED";
+  startedAt: string;
+  finishedAt: string;
+  durationMs: number;
+  result?: unknown;
+  error?: string;
+};
+
 const directoryFields = [
   ["dataRoot", "DATA_ROOT"],
   ["importRoot", "IMPORT_ROOT"],
@@ -76,6 +87,7 @@ export function SettingsClient({ locale }: { locale: Locale }) {
   const t = getMessages(locale);
   const [settings, setSettings] = useState<PublicSettings | null>(null);
   const [rssSources, setRssSources] = useState<RssSource[]>([]);
+  const [jobRuns, setJobRuns] = useState<JobRun[]>([]);
   const [rssDraft, setRssDraft] = useState({ name: "", url: "" });
   const [aria2Secret, setAria2Secret] = useState("");
   const [openRouterApiKey, setOpenRouterApiKey] = useState("");
@@ -99,18 +111,21 @@ export function SettingsClient({ locale }: { locale: Locale }) {
 
   const load = useCallback(async () => {
     try {
-      const [settingsResponse, rssResponse] = await Promise.all([
+      const [settingsResponse, rssResponse, jobRunsResponse] = await Promise.all([
         fetch("/api/settings"),
         fetch("/api/rss-sources"),
+        fetch("/api/jobs/runs?limit=12"),
       ]);
 
-      if (!settingsResponse.ok || !rssResponse.ok) {
+      if (!settingsResponse.ok || !rssResponse.ok || !jobRunsResponse.ok) {
         throw new Error(t.settingsLoadError);
       }
 
       setSettings(await settingsResponse.json());
       const rssPayload = (await rssResponse.json()) as { sources: RssSource[] };
       setRssSources(rssPayload.sources);
+      const jobRunsPayload = (await jobRunsResponse.json()) as { runs: JobRun[] };
+      setJobRuns(jobRunsPayload.runs);
     } catch (loadError) {
       setError(loadError instanceof Error ? loadError.message : t.settingsLoadError);
     } finally {
@@ -317,6 +332,20 @@ export function SettingsClient({ locale }: { locale: Locale }) {
     }
   }
 
+  async function refreshJobRuns() {
+    setError("");
+    try {
+      const response = await fetch("/api/jobs/runs?limit=12");
+      if (!response.ok) {
+        throw new Error(t.settingsLoadError);
+      }
+      const payload = (await response.json()) as { runs: JobRun[] };
+      setJobRuns(payload.runs);
+    } catch (refreshError) {
+      setError(refreshError instanceof Error ? refreshError.message : t.settingsLoadError);
+    }
+  }
+
   if (loading) {
     return (
       <div className="settings-loading">
@@ -342,6 +371,37 @@ export function SettingsClient({ locale }: { locale: Locale }) {
         ) : null}
       </div>
       {error ? <div className="settings-alert">{error}</div> : null}
+
+      <section className="settings-panel wide">
+        <div className="settings-panel-heading">
+          <div>
+            <h2>{t.jobRuns}</h2>
+            <p>{t.jobRunsDescription}</p>
+          </div>
+          <button onClick={() => void refreshJobRuns()} type="button">
+            <RefreshCw size={14} />
+            {t.refresh}
+          </button>
+        </div>
+        <div className="job-run-list">
+          {jobRuns.length === 0 ? (
+            <p>{t.noJobRuns}</p>
+          ) : (
+            jobRuns.map((run) => (
+              <article className={run.status === "SUCCESS" ? "success" : "failed"} key={run.id}>
+                <div>
+                  <strong>{run.job}</strong>
+                  <small>
+                    {new Date(run.finishedAt).toLocaleString()} · {run.durationMs}ms
+                  </small>
+                </div>
+                <span>{run.status === "SUCCESS" ? t.jobStatusSuccess : t.jobStatusFailed}</span>
+                {run.error ? <em>{run.error}</em> : null}
+              </article>
+            ))
+          )}
+        </div>
+      </section>
 
       <section className="settings-panel wide">
         <div className="settings-panel-heading">

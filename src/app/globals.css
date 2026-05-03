@@ -753,6 +753,59 @@ a {
   line-height: 18px;
 }
 
+.job-run-list {
+  display: grid;
+  gap: 8px;
+}
+
+.job-run-list article {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px 14px;
+  align-items: center;
+  border: 1px solid var(--border-subtle);
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.035);
+  padding: 10px 12px;
+}
+
+.job-run-list article.success span {
+  color: var(--accent-success);
+}
+
+.job-run-list article.failed span,
+.job-run-list article.failed em {
+  color: rgba(254, 202, 202, 0.95);
+}
+
+.job-run-list strong,
+.job-run-list small,
+.job-run-list em {
+  display: block;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.job-run-list strong {
+  color: var(--text-primary);
+  font-size: 13px;
+  line-height: 18px;
+}
+
+.job-run-list small,
+.job-run-list em {
+  color: var(--text-muted);
+  font-size: 12px;
+  font-style: normal;
+  line-height: 16px;
+}
+
+.job-run-list em {
+  grid-column: 1 / -1;
+}
+
 .settings-panel button,
 .rss-draft button,
 .icon-button,
