@@ -13,6 +13,7 @@ export async function GET() {
       recentMedia,
       recentlyFetched,
       downloads,
+      mediaCounts,
       subscriptions,
       storage,
       settings,
@@ -62,6 +63,10 @@ export async function GET() {
       }),
       prisma.download.groupBy({
         by: ["status"],
+        _count: { _all: true },
+      }),
+      prisma.mediaTitle.groupBy({
+        by: ["type"],
         _count: { _all: true },
       }),
       prisma.subscription.findMany({
@@ -114,6 +119,12 @@ export async function GET() {
         ["WAITING", "ACTIVE", "PAUSED", "COMPLETED", "FAILED"].map((status) => [
           status,
           downloads.find((entry) => entry.status === status)?._count._all ?? 0,
+        ]),
+      ),
+      mediaCounts: Object.fromEntries(
+        ["ANIME", "MOVIE", "TV"].map((type) => [
+          type,
+          mediaCounts.find((entry) => entry.type === type)?._count._all ?? 0,
         ]),
       ),
       subscriptions: subscriptions.map((subscription) => ({

@@ -36,6 +36,7 @@ type Dashboard = {
     _count: { candidates: number; subscriptions: number };
   }>;
   downloads: Record<string, number>;
+  mediaCounts: Record<string, number>;
   subscriptions: Array<{
     id: string;
     title: string;
@@ -138,9 +139,9 @@ export function HomeDashboardClient({ locale }: { locale: Locale }) {
       </section>
 
       <section className="stat-strip">
-        <DashboardStat icon={<Sparkles size={16} />} label={t.anime} value={countType(dashboard, "ANIME")} />
-        <DashboardStat icon={<Library size={16} />} label={t.movies} value={countType(dashboard, "MOVIE")} />
-        <DashboardStat icon={<Library size={16} />} label={t.tv} value={countType(dashboard, "TV")} />
+        <DashboardStat icon={<Sparkles size={16} />} label={t.anime} value={dashboard.mediaCounts.ANIME ?? 0} />
+        <DashboardStat icon={<Library size={16} />} label={t.movies} value={dashboard.mediaCounts.MOVIE ?? 0} />
+        <DashboardStat icon={<Library size={16} />} label={t.tv} value={dashboard.mediaCounts.TV ?? 0} />
         <DashboardStat icon={<Download size={16} />} label={t.downloads} value={dashboard.downloads.ACTIVE + dashboard.downloads.WAITING} />
         <DashboardStat icon={<Rss size={16} />} label={t.recentlyFetched} value={dashboard.recentlyFetched.length} />
       </section>
@@ -262,10 +263,6 @@ function SectionTitle({ icon, title }: { icon: React.ReactNode; title: string })
       <h2>{title}</h2>
     </div>
   );
-}
-
-function countType(dashboard: Dashboard, type: string) {
-  return dashboard.recentMedia.filter((item) => item.type === type).length;
 }
 
 function progressPercent(position: number, duration?: number | null) {
