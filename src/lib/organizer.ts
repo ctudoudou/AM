@@ -25,6 +25,15 @@ const videoExtensions = new Set([
   ".ts",
 ]);
 
+type OrganizerCandidateIdentity = {
+  mediaType: MediaType;
+  parsedTitle: string;
+  normalizedTitle: string;
+  episodeNumber: number | null;
+  season: number | null;
+  group: { displayTitle: string; normalizedTitle: string; aliases: unknown } | null;
+};
+
 export async function inspectCompletedDownloads() {
   const downloads = await prisma.download.findMany({
     where: {
@@ -154,17 +163,21 @@ export async function createOrganizerPlanForCandidateSource(input: {
   }
 
   const confidence = Math.min(candidate.confidence, planMetadata.score);
-  const itemInputs = await Promise.all(
+  const plannedItems = await Promise.all(
     files.map(async (sourcePath) => {
       const stat = await fs.stat(sourcePath);
+      const identity = resolveOrganizerItemIdentity({
+        candidate,
+        sourcePath,
+      });
       const targetPath = buildTargetPath({
         mediaType: candidate.mediaType,
         roots: settings.directories,
         title: planMetadata.title || candidate.group?.displayTitle || candidate.parsedTitle,
         year: planMetadata.year,
-        season: candidate.season ?? 1,
-        episode: candidate.episodeNumber,
-        episodeTitle: candidate.parsedTitle,
+        season: identity.season,
+        episode: identity.episodeNumber,
+        episodeTitle: identity.episodeTitle,
         group: candidate.subtitleGroup,
         resolution: candidate.resolution,
         codec: candidate.codec,
@@ -172,21 +185,25 @@ export async function createOrganizerPlanForCandidateSource(input: {
       });
       const conflict = await exists(targetPath);
       return {
-        sourcePath,
-        targetPath,
-        originalName: path.basename(sourcePath),
-        fileType: "video",
-        sizeBytes: BigInt(stat.size),
-        conflict,
-        conflictReason: conflict ? "Target path already exists" : undefined,
+        hasPlayableIdentity: identity.episodeNumber !== null,
+        item: {
+          sourcePath,
+          targetPath,
+          originalName: path.basename(sourcePath),
+          fileType: "video",
+          sizeBytes: BigInt(stat.size),
+          conflict,
+          conflictReason: conflict ? "Target path already exists" : undefined,
+        },
       };
     }),
   );
+  const itemInputs = plannedItems.map((plannedItem) => plannedItem.item);
 
   const hasConflict = itemInputs.some((item) => item.conflict);
   const hasPlayableIdentity =
     candidate.mediaType === "MOVIE" ||
-    (candidate.episodeNumber !== null && candidate.episodeNumber !== undefined);
+    plannedItems.every((item) => item.hasPlayableIdentity);
   const readyForConfirmation =
     metadataReliable && confidence >= 0.82 && hasPlayableIdentity && !hasConflict;
   const status = hasConflict ? "CONFLICT" : readyForConfirmation ? "PENDING" : "NEEDS_REVIEW";
@@ -624,6 +641,49 @@ function groupAliases(value: unknown) {
   return value.filter((item): item is string => typeof item === "string");
 }
 
+export function resolveOrganizerItemIdentity(input: {
+  sourcePath: string;
+  candidate: OrganizerCandidateIdentity;
+}) {
+  const candidateSeason = input.candidate.season ?? 1;
+  const candidateEpisode =
+    input.candidate.episodeNumber !== null && input.candidate.episodeNumber !== undefined
+      ? Math.floor(input.candidate.episodeNumber)
+      : null;
+  if (input.candidate.mediaType === "MOVIE") {
+    return {
+      season: 1,
+      episodeNumber: 1,
+      episodeTitle: input.candidate.parsedTitle,
+      sourceParsedEpisode: null,
+    };
+  }
+
+  const parsedSource = parseMediaReleaseTitle(
+    path.basename(input.sourcePath, path.extname(input.sourcePath)),
+    input.candidate.mediaType,
+  );
+  const sourceEpisode =
+    parsedSource.episodeNumber !== undefined && parsedSource.episodeNumber > 0
+      ? Math.floor(parsedSource.episodeNumber)
+      : null;
+  const sourceSeason =
+    parsedSource.season !== undefined && parsedSource.season > 0
+      ? parsedSource.season
+      : candidateSeason;
+  const canUseSourceEpisode =
+    candidateEpisode === null &&
+    sourceEpisode !== null &&
+    sourcePathMatchesCandidate(input.sourcePath, input.candidate);
+
+  return {
+    season: canUseSourceEpisode ? sourceSeason : candidateSeason,
+    episodeNumber: canUseSourceEpisode ? sourceEpisode : candidateEpisode,
+    episodeTitle: parsedSource.parsedTitle || input.candidate.parsedTitle,
+    sourceParsedEpisode: sourceEpisode,
+  };
+}
+
 function buildTargetPath(input: {
   mediaType: MediaType;
   roots: {
@@ -761,24 +821,36 @@ async function upsertMediaRecords(plan: {
       backdropUrl,
     },
   });
-  const seasonNumber = candidate?.season ?? 1;
-  const season = await prisma.season.upsert({
-    where: { mediaId_number: { mediaId: media.id, number: seasonNumber } },
-    create: { mediaId: media.id, number: seasonNumber },
-    update: {},
-  });
-  const episodeNumber =
-    mediaType === "MOVIE" ? 1 : candidate?.episodeNumber ? Math.floor(candidate.episodeNumber) : 0;
-  const episode = await prisma.episode.upsert({
-    where: { seasonId_number: { seasonId: season.id, number: episodeNumber } },
-    create: {
-      seasonId: season.id,
-      number: episodeNumber,
-      title: candidate?.parsedTitle,
-    },
-    update: { title: candidate?.parsedTitle },
-  });
   for (const item of plan.items) {
+    const identity = candidate
+      ? resolveOrganizerItemIdentity({
+          candidate,
+          sourcePath: item.originalName,
+        })
+      : {
+          season: 1,
+          episodeNumber: mediaType === "MOVIE" ? 1 : 0,
+          episodeTitle: path.basename(item.originalName, path.extname(item.originalName)),
+        };
+    const season = await prisma.season.upsert({
+      where: { mediaId_number: { mediaId: media.id, number: identity.season } },
+      create: { mediaId: media.id, number: identity.season },
+      update: {},
+    });
+    const episode = await prisma.episode.upsert({
+      where: {
+        seasonId_number: {
+          seasonId: season.id,
+          number: identity.episodeNumber ?? 0,
+        },
+      },
+      create: {
+        seasonId: season.id,
+        number: identity.episodeNumber ?? 0,
+        title: identity.episodeTitle,
+      },
+      update: { title: identity.episodeTitle },
+    });
     const existing = await prisma.mediaFile.findFirst({
       where: { absolutePath: item.targetPath },
       select: { id: true },

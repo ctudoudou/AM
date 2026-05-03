@@ -74,6 +74,9 @@ type Subscription = {
 };
 
 type CandidateFilter = "ACTIVE" | "UNSUBSCRIBED" | "SUBSCRIBED" | "EMPTY" | "ALL";
+type MediaTypeFilter = MediaType | "ALL";
+type SubscriptionModeFilter = "ALL" | "AUTO" | "MANUAL";
+type CandidateStatusFilter = "ALL" | "READY" | "REVIEW" | "SUBSCRIBED" | "EMPTY";
 
 export function SubscriptionsClient({ locale }: { locale: Locale }) {
   const t = getMessages(locale);
@@ -81,6 +84,12 @@ export function SubscriptionsClient({ locale }: { locale: Locale }) {
   const [subscriptions, setSubscriptions] = useState<Subscription[]>([]);
   const [rssSources, setRssSources] = useState<RssSource[]>([]);
   const [candidateFilter, setCandidateFilter] = useState<CandidateFilter>("ACTIVE");
+  const [subscriptionQuery, setSubscriptionQuery] = useState("");
+  const [subscriptionMediaType, setSubscriptionMediaType] = useState<MediaTypeFilter>("ALL");
+  const [subscriptionMode, setSubscriptionMode] = useState<SubscriptionModeFilter>("ALL");
+  const [candidateQuery, setCandidateQuery] = useState("");
+  const [candidateMediaType, setCandidateMediaType] = useState<MediaTypeFilter>("ALL");
+  const [candidateStatus, setCandidateStatus] = useState<CandidateStatusFilter>("ALL");
   const [candidateStats, setCandidateStats] = useState<CandidateStats>({
     totalGroups: 0,
     emptyGroups: 0,
@@ -101,12 +110,30 @@ export function SubscriptionsClient({ locale }: { locale: Locale }) {
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(true);
   const groupsWithVersions = Math.max(0, candidateStats.totalGroups - candidateStats.emptyGroups);
+  const visibleSubscriptions = useMemo(() => {
+    const needle = subscriptionQuery.trim().toLowerCase();
+    return subscriptions
+      .filter((subscription) => {
+        if (subscriptionMediaType !== "ALL" && subscription.mediaType !== subscriptionMediaType) {
+          return false;
+        }
+        if (subscriptionMode === "AUTO" && !subscription.autoDownload) {
+          return false;
+        }
+        if (subscriptionMode === "MANUAL" && subscription.autoDownload) {
+          return false;
+        }
+        return !needle || matchesSubscriptionQuery(subscription, needle);
+      })
+      .sort((a, b) => a.title.localeCompare(b.title, locale));
+  }, [locale, subscriptionMediaType, subscriptionMode, subscriptionQuery, subscriptions]);
   const visibleGroups = useMemo(() => {
     const subscriptionGroupIds = new Set(
       subscriptions
         .map((subscription) => subscription.candidateGroupId)
-        .filter(Boolean),
+        .filter((id): id is string => Boolean(id)),
     );
+    const needle = candidateQuery.trim().toLowerCase();
     return groups
       .filter((group) => {
         if (candidateFilter === "ACTIVE" || candidateFilter === "UNSUBSCRIBED") {
@@ -120,6 +147,15 @@ export function SubscriptionsClient({ locale }: { locale: Locale }) {
         }
         return true;
       })
+      .filter((group) => {
+        if (candidateMediaType !== "ALL" && group.mediaType !== candidateMediaType) {
+          return false;
+        }
+        if (candidateStatus !== "ALL" && !matchesCandidateStatus(group, candidateStatus, subscriptionGroupIds)) {
+          return false;
+        }
+        return !needle || matchesCandidateQuery(group, needle);
+      })
       .sort((a, b) => {
         const aSubscribed = subscriptionGroupIds.has(a.id) ? 1 : 0;
         const bSubscribed = subscriptionGroupIds.has(b.id) ? 1 : 0;
@@ -129,7 +165,7 @@ export function SubscriptionsClient({ locale }: { locale: Locale }) {
           b.confidence - a.confidence
         );
       });
-  }, [candidateFilter, groups, subscriptions]);
+  }, [candidateFilter, candidateMediaType, candidateQuery, candidateStatus, groups, subscriptions]);
 
   const load = useCallback(async () => {
     try {
@@ -524,19 +560,61 @@ export function SubscriptionsClient({ locale }: { locale: Locale }) {
             <h2>{t.activeSubscriptions}</h2>
             <p>{t.activeSubscriptionsDescription}</p>
           </div>
+          <span className="panel-count">
+            {visibleSubscriptions.length} / {subscriptions.length}
+          </span>
         </div>
-        <div className="subscription-list">
+        <div className="subscription-controls">
+          <label className="settings-search-field">
+            <input
+              onChange={(event) => setSubscriptionQuery(event.target.value)}
+              placeholder={t.filterSubscriptions}
+              value={subscriptionQuery}
+            />
+          </label>
+          <select
+            aria-label={t.mediaType}
+            onChange={(event) => setSubscriptionMediaType(event.target.value as MediaTypeFilter)}
+            value={subscriptionMediaType}
+          >
+            <option value="ALL">{t.allMediaTypes}</option>
+            {mediaTypeOptions.map((option) => (
+              <option key={option} value={option}>
+                {formatMediaType(option, t)}
+              </option>
+            ))}
+          </select>
+          <select
+            aria-label={t.subscriptionMode}
+            onChange={(event) => setSubscriptionMode(event.target.value as SubscriptionModeFilter)}
+            value={subscriptionMode}
+          >
+            <option value="ALL">{t.subscriptionModeAll}</option>
+            <option value="AUTO">{t.subscriptionModeAuto}</option>
+            <option value="MANUAL">{t.subscriptionModeManual}</option>
+          </select>
+        </div>
+        <div className="subscription-list compact">
           {subscriptions.length === 0 ? (
             <p>{t.noActiveSubscriptions}</p>
+          ) : visibleSubscriptions.length === 0 ? (
+            <p>{t.noMatchingResults}</p>
           ) : (
-            subscriptions.map((subscription) => (
+            visibleSubscriptions.map((subscription) => (
               <article key={subscription.id}>
                 <div>
                   <h3>{subscription.title}</h3>
-                  <p>
-                    {formatMediaType(subscription.mediaType, t)} ·{" "}
-                    {formatSubscriptionPolicy(subscription)}
-                  </p>
+                  <div className="subscription-row-tags">
+                    <span>{formatMediaType(subscription.mediaType, t)}</span>
+                    <span>
+                      {subscription.autoDownload ? t.subscriptionModeAuto : t.subscriptionModeManual}
+                    </span>
+                    {subscription.candidateGroup?.displayTitle &&
+                    subscription.candidateGroup.displayTitle !== subscription.title ? (
+                      <span>{subscription.candidateGroup.displayTitle}</span>
+                    ) : null}
+                  </div>
+                  <p>{formatSubscriptionPolicy(subscription) || t.futureOnlyPolicy}</p>
                 </div>
                 <button
                   className="danger-button"
@@ -557,36 +635,70 @@ export function SubscriptionsClient({ locale }: { locale: Locale }) {
           <div>
             <h2>{t.subscriptionQueue}</h2>
             <p>
-              {candidateStats.totalGroups} {t.titles} ·{" "}
+              {visibleGroups.length} / {candidateStats.totalGroups} {t.titles} ·{" "}
               {groupsWithVersions} {t.withVersions} ·{" "}
               {candidateStats.ungroupedCandidates} {t.ungroupedCandidates}
             </p>
           </div>
-          <div className="filter-tabs">
-            {[
-              ["ACTIVE", t.currentCandidates],
-              ["UNSUBSCRIBED", t.unsubscribed],
-              ["SUBSCRIBED", t.subscribed],
-              ["EMPTY", t.futureOnly],
-              ["ALL", t.subscriptionFilterAll],
-            ].map(([key, label]) => (
-              <button
-                className={candidateFilter === key ? "active" : ""}
-                key={key}
-                onClick={() =>
-                  setCandidateFilter(
-                    key as CandidateFilter,
-                  )
-                }
-                type="button"
+          <div className="candidate-board-tools">
+            <div className="filter-tabs">
+              {[
+                ["ACTIVE", t.currentCandidates],
+                ["UNSUBSCRIBED", t.unsubscribed],
+                ["SUBSCRIBED", t.subscribed],
+                ["EMPTY", t.futureOnly],
+                ["ALL", t.subscriptionFilterAll],
+              ].map(([key, label]) => (
+                <button
+                  className={candidateFilter === key ? "active" : ""}
+                  key={key}
+                  onClick={() =>
+                    setCandidateFilter(
+                      key as CandidateFilter,
+                    )
+                  }
+                  type="button"
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+            <div className="candidate-filter-bar">
+              <input
+                onChange={(event) => setCandidateQuery(event.target.value)}
+                placeholder={t.queueSearch}
+                value={candidateQuery}
+              />
+              <select
+                aria-label={t.mediaType}
+                onChange={(event) => setCandidateMediaType(event.target.value as MediaTypeFilter)}
+                value={candidateMediaType}
               >
-                {label}
-              </button>
-            ))}
+                <option value="ALL">{t.allMediaTypes}</option>
+                {mediaTypeOptions.map((option) => (
+                  <option key={option} value={option}>
+                    {formatMediaType(option, t)}
+                  </option>
+                ))}
+              </select>
+              <select
+                aria-label={t.queueStatus}
+                onChange={(event) => setCandidateStatus(event.target.value as CandidateStatusFilter)}
+                value={candidateStatus}
+              >
+                <option value="ALL">{t.subscriptionFilterAll}</option>
+                <option value="READY">{t.queueStatusReady}</option>
+                <option value="REVIEW">{t.queueStatusReview}</option>
+                <option value="SUBSCRIBED">{t.queueStatusSubscribed}</option>
+                <option value="EMPTY">{t.queueStatusEmpty}</option>
+              </select>
+            </div>
           </div>
         </div>
         {visibleGroups.length === 0 ? (
-          <div className="empty-panel">{t.noCandidates}</div>
+          <div className="empty-panel">
+            {groups.length === 0 ? t.noCandidates : t.noMatchingResults}
+          </div>
         ) : (
           visibleGroups.map((group) => {
             const groupSubscriptions = subscriptions.filter(
@@ -825,6 +937,58 @@ function candidateMatchesSubscription(candidate: Candidate, subscription: Subscr
   }
 
   return checks.every(([preferred, actual]) => !preferred || preferred === actual);
+}
+
+function matchesSubscriptionQuery(subscription: Subscription, needle: string) {
+  return [
+    subscription.title,
+    subscription.candidateGroup?.displayTitle ?? "",
+    subscription.preferredGroup ?? "",
+    subscription.preferredResolution ?? "",
+    subscription.preferredCodec ?? "",
+    subscription.preferredAudio ?? "",
+    subscription.preferredSubtitleLanguage ?? "",
+    subscription.preferredReleaseProfile ?? "",
+    subscription.preferredSourceKind ?? "",
+  ].some((value) => value.toLowerCase().includes(needle));
+}
+
+function matchesCandidateQuery(group: CandidateGroup, needle: string) {
+  return [
+    group.displayTitle,
+    group.normalizedTitle,
+    group.aiSummary ?? "",
+    ...group.candidates.flatMap((candidate) => [
+      candidate.rawTitle,
+      candidate.subtitleGroup ?? "",
+      candidate.resolution ?? "",
+      candidate.codec ?? "",
+      candidate.audio ?? "",
+      candidate.subtitleLanguage ?? "",
+      candidate.releaseProfile ?? "",
+      candidate.sourceKind ?? "",
+    ]),
+  ].some((value) => value.toLowerCase().includes(needle));
+}
+
+function matchesCandidateStatus(
+  group: CandidateGroup,
+  status: CandidateStatusFilter,
+  subscriptionGroupIds: Set<string>,
+) {
+  if (status === "READY") {
+    return group.candidates.length > 0 && !group.reviewRequired;
+  }
+  if (status === "REVIEW") {
+    return group.reviewRequired;
+  }
+  if (status === "SUBSCRIBED") {
+    return subscriptionGroupIds.has(group.id);
+  }
+  if (status === "EMPTY") {
+    return group.candidates.length === 0;
+  }
+  return true;
 }
 
 const mediaTypeOptions: MediaType[] = ["ANIME", "MOVIE", "TV"];

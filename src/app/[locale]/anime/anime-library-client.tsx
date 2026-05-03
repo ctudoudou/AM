@@ -40,11 +40,24 @@ type AnimeAuditIssue = {
   evidence: string[];
 };
 
+type AnimeLibraryTag =
+  | "ALL"
+  | "METADATA_ISSUE"
+  | "MISSING_POSTER"
+  | "IN_PROGRESS"
+  | "NOT_STARTED"
+  | "MULTI_SEASON"
+  | "WITH_SYNOPSIS";
+type AnimeLibrarySort = "TITLE" | "YEAR_DESC" | "EPISODES_DESC" | "PROGRESS";
+
 export function AnimeLibraryClient({ locale }: { locale: Locale }) {
   const t = getMessages(locale);
   const [titles, setTitles] = useState<AnimeTitle[]>([]);
   const [auditIssues, setAuditIssues] = useState<AnimeAuditIssue[]>([]);
   const [query, setQuery] = useState("");
+  const [yearFilter, setYearFilter] = useState("ALL");
+  const [tagFilter, setTagFilter] = useState<AnimeLibraryTag>("ALL");
+  const [sortMode, setSortMode] = useState<AnimeLibrarySort>("TITLE");
   const [loading, setLoading] = useState(true);
   const [refreshingMetadata, setRefreshingMetadata] = useState(false);
   const [repairingLibrary, setRepairingLibrary] = useState(false);
@@ -61,17 +74,26 @@ export function AnimeLibraryClient({ locale }: { locale: Locale }) {
     }
     return map;
   }, [auditIssues]);
+  const yearOptions = useMemo(
+    () =>
+      [...new Set(titles.map((title) => title.year).filter((year): year is number => Boolean(year)))]
+        .sort((a, b) => b - a),
+    [titles],
+  );
   const visibleTitles = useMemo(() => {
     const needle = query.trim().toLowerCase();
-    if (!needle) {
-      return titles;
-    }
-    return titles.filter((title) =>
-      [title.displayTitle, title.primaryTitle, title.originalTitle ?? "", ...title.secondaryTitles].some((value) =>
-        value.toLowerCase().includes(needle),
-      ),
-    );
-  }, [query, titles]);
+    return titles
+      .filter((title) => {
+        if (needle && !matchesAnimeQuery(title, needle)) {
+          return false;
+        }
+        if (yearFilter !== "ALL" && String(title.year ?? "") !== yearFilter) {
+          return false;
+        }
+        return matchesAnimeTag(title, tagFilter, issueByMediaId);
+      })
+      .sort((a, b) => compareAnimeTitles(a, b, sortMode, locale));
+  }, [issueByMediaId, locale, query, sortMode, tagFilter, titles, yearFilter]);
 
   const load = useCallback(async () => {
     try {
@@ -177,7 +199,7 @@ export function AnimeLibraryClient({ locale }: { locale: Locale }) {
   return (
     <div className="library-workspace">
       <div className="library-toolbar">
-        <label>
+        <label className="library-search-field">
           <Search size={14} />
           <input
             onChange={(event) => setQuery(event.target.value)}
@@ -185,31 +207,71 @@ export function AnimeLibraryClient({ locale }: { locale: Locale }) {
             value={query}
           />
         </label>
-        <span>
+        <div className="library-filter-controls">
+          <label>
+            <span>{t.year}</span>
+            <select onChange={(event) => setYearFilter(event.target.value)} value={yearFilter}>
+              <option value="ALL">{t.allYears}</option>
+              {yearOptions.map((year) => (
+                <option key={year} value={year}>
+                  {year}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label>
+            <span>{t.tag}</span>
+            <select
+              onChange={(event) => setTagFilter(event.target.value as AnimeLibraryTag)}
+              value={tagFilter}
+            >
+              {animeLibraryTagOptions(t).map((option) => (
+                <option key={option.value} value={option.value}>
+                  {option.label}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label>
+            <span>{t.sortBy}</span>
+            <select
+              onChange={(event) => setSortMode(event.target.value as AnimeLibrarySort)}
+              value={sortMode}
+            >
+              <option value="TITLE">{t.sortTitle}</option>
+              <option value="YEAR_DESC">{t.sortYearDesc}</option>
+              <option value="EPISODES_DESC">{t.sortEpisodesDesc}</option>
+              <option value="PROGRESS">{t.sortProgress}</option>
+            </select>
+          </label>
+        </div>
+        <span className="library-result-count">
           {visibleTitles.length} {t.titles}
         </span>
-        <button
-          disabled={auditing || repairingLibrary}
-          onClick={() => void auditLibrary()}
-          type="button"
-        >
-          {auditing ? <Loader2 size={14} /> : <ShieldAlert size={14} />}
-          {auditIssues.length > 0
-            ? `${t.libraryAuditIssues} ${auditIssues.length}`
-            : t.auditLibrary}
-        </button>
-        <button
-          disabled={refreshingMetadata || repairingLibrary}
-          onClick={() => void refreshMetadata()}
-          type="button"
-        >
-          {refreshingMetadata ? <Loader2 size={14} /> : <ImageIcon size={14} />}
-          {t.refreshMetadata}
-        </button>
-        <button disabled={repairingLibrary} onClick={() => void repairLibrary()} type="button">
-          {repairingLibrary ? <Loader2 size={14} /> : <WandSparkles size={14} />}
-          {t.repairAnimeLibrary}
-        </button>
+        <div className="toolbar-actions library-actions">
+          <button
+            disabled={auditing || repairingLibrary}
+            onClick={() => void auditLibrary()}
+            type="button"
+          >
+            {auditing ? <Loader2 size={14} /> : <ShieldAlert size={14} />}
+            {auditIssues.length > 0
+              ? `${t.libraryAuditIssues} ${auditIssues.length}`
+              : t.auditLibrary}
+          </button>
+          <button
+            disabled={refreshingMetadata || repairingLibrary}
+            onClick={() => void refreshMetadata()}
+            type="button"
+          >
+            {refreshingMetadata ? <Loader2 size={14} /> : <ImageIcon size={14} />}
+            {t.refreshMetadata}
+          </button>
+          <button disabled={repairingLibrary} onClick={() => void repairLibrary()} type="button">
+            {repairingLibrary ? <Loader2 size={14} /> : <WandSparkles size={14} />}
+            {t.repairAnimeLibrary}
+          </button>
+        </div>
       </div>
       {error ? <div className="settings-alert">{error}</div> : null}
       {repairMessage ? <div className="settings-success">{repairMessage}</div> : null}
@@ -293,6 +355,84 @@ function splitTitle(title: string) {
 function subtitleForTitle(title: AnimeTitle) {
   const split = splitTitle(title.displayTitle);
   return split.secondary || title.secondaryTitles[0] || title.originalTitle || null;
+}
+
+function matchesAnimeQuery(title: AnimeTitle, needle: string) {
+  return [title.displayTitle, title.primaryTitle, title.originalTitle ?? "", ...title.secondaryTitles].some((value) =>
+    value.toLowerCase().includes(needle),
+  );
+}
+
+function matchesAnimeTag(
+  title: AnimeTitle,
+  tag: AnimeLibraryTag,
+  issueByMediaId: Map<string, AnimeAuditIssue>,
+) {
+  if (tag === "ALL") {
+    return true;
+  }
+  if (tag === "METADATA_ISSUE") {
+    return issueByMediaId.has(title.id);
+  }
+  if (tag === "MISSING_POSTER") {
+    return !title.posterUrl;
+  }
+  if (tag === "IN_PROGRESS") {
+    return hasWatchProgress(title);
+  }
+  if (tag === "NOT_STARTED") {
+    return !hasWatchProgress(title);
+  }
+  if (tag === "MULTI_SEASON") {
+    return title.seasonCount > 1;
+  }
+  return Boolean(title.synopsis);
+}
+
+function compareAnimeTitles(
+  a: AnimeTitle,
+  b: AnimeTitle,
+  sortMode: AnimeLibrarySort,
+  locale: Locale,
+): number {
+  if (sortMode === "YEAR_DESC") {
+    return (b.year ?? 0) - (a.year ?? 0) || compareAnimeTitles(a, b, "TITLE", locale);
+  }
+  if (sortMode === "EPISODES_DESC") {
+    return b.episodeCount - a.episodeCount || compareAnimeTitles(a, b, "TITLE", locale);
+  }
+  if (sortMode === "PROGRESS") {
+    return progressRank(b) - progressRank(a) || compareAnimeTitles(a, b, "TITLE", locale);
+  }
+  return a.displayTitle.localeCompare(b.displayTitle, locale);
+}
+
+function hasWatchProgress(title: AnimeTitle) {
+  const progress = title.nextEpisode?.progress;
+  return Boolean(progress && progress.positionSec > 0 && !progress.completed);
+}
+
+function progressRank(title: AnimeTitle) {
+  const progress = title.nextEpisode?.progress;
+  if (!progress) {
+    return 0;
+  }
+  if (progress.completed) {
+    return 1;
+  }
+  return 2;
+}
+
+function animeLibraryTagOptions(t: ReturnType<typeof getMessages>) {
+  return [
+    { value: "ALL", label: t.allTags },
+    { value: "METADATA_ISSUE", label: t.libraryTagMetadataIssue },
+    { value: "MISSING_POSTER", label: t.libraryTagMissingPoster },
+    { value: "IN_PROGRESS", label: t.libraryTagInProgress },
+    { value: "NOT_STARTED", label: t.libraryTagNotStarted },
+    { value: "MULTI_SEASON", label: t.libraryTagMultiSeason },
+    { value: "WITH_SYNOPSIS", label: t.libraryTagWithSynopsis },
+  ] satisfies Array<{ value: AnimeLibraryTag; label: string }>;
 }
 
 function FallbackCover({ title }: { title: string }) {

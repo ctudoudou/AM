@@ -168,7 +168,6 @@ async function findCandidatesForMedia(media: MediaWithEpisodes) {
   const candidates = await prisma.releaseCandidate.findMany({
     where: {
       mediaType: media.type,
-      episodeNumber: { not: null },
       groupId: { not: null },
     },
     include: {
@@ -211,7 +210,7 @@ export function buildWantedEpisodeCoverage(
     const maxEpisode = Math.max(
       0,
       ...((season?.episodes ?? []).map((episode) => episode.number)),
-      ...seasonCandidates.map((candidate) => Math.floor(candidate.episodeNumber ?? 0)),
+      ...seasonCandidates.map(candidateKnownMaxEpisode),
       ...wantedRows
         .filter((row) => row.seasonNumber === seasonNumber)
         .map((row) => row.episodeNumber),
@@ -280,6 +279,27 @@ export function buildWantedEpisodeCoverage(
     episodes,
     missingCount: episodes.filter((episode) => episode.status !== "AVAILABLE" && episode.status !== "IGNORED").length,
   };
+}
+
+function candidateKnownMaxEpisode(candidate: CandidateWithState) {
+  if (candidate.episodeNumber !== null && candidate.episodeNumber !== undefined) {
+    return Math.floor(candidate.episodeNumber);
+  }
+  return extractBatchEpisodeEnd(candidate.rawTitle) ?? 0;
+}
+
+function extractBatchEpisodeEnd(value: string) {
+  const matches = value.matchAll(
+    /(?:^|[\s[\]()【】_-])(?<start>\d{1,3})\s*-\s*(?<end>\d{1,3})(?:\s*(?:fin|end|complete|全集|全))?(?=$|[\s[\]()【】_-])/gi,
+  );
+  for (const match of matches) {
+    const start = Number(match.groups?.start);
+    const end = Number(match.groups?.end);
+    if (Number.isInteger(start) && Number.isInteger(end) && start >= 1 && end > start && end <= 200) {
+      return end;
+    }
+  }
+  return null;
 }
 
 function selectBestCandidate(candidates: CandidateWithState[]) {

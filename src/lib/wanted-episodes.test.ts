@@ -45,6 +45,60 @@ describe("buildWantedEpisodeCoverage", () => {
     expect(coverage.missingCount).toBe(1);
   });
 
+  it("uses complete batch ranges to infer missing tail episodes", () => {
+    const coverage = buildWantedEpisodeCoverage(
+      {
+        ...baseMedia,
+        seasons: [
+          {
+            number: 1,
+            episodes: [{ id: "ep5", number: 5, title: "EP05", files: [{ id: "file5" }] }],
+          },
+        ],
+      },
+      [
+        {
+          id: "candidate-batch",
+          groupId: "group-1",
+          rssItemId: "rss-batch",
+          mediaType: "ANIME",
+          rawTitle: "[Group] 淡島百景 / Awajima Hyakkei [01-08 Fin][1080P]",
+          parsedTitle: "淡島百景 / Awajima Hyakkei",
+          normalizedTitle: "淡島百景",
+          subtitleGroup: null,
+          episodeNumber: null,
+          season: 1,
+          resolution: "1080P",
+          codec: null,
+          audio: null,
+          subtitleLanguage: null,
+          releaseProfile: null,
+          sourceKind: null,
+          variantKey: null,
+          releaseTags: null,
+          magnetUrl: "magnet:?xt=urn:btih:test",
+          torrentUrl: null,
+          torrentFilePath: null,
+          sourceUrl: null,
+          confidence: 0.9,
+          status: "READY",
+          createdAt: new Date(),
+          updatedAt: new Date(),
+          downloads: [],
+          organizerPlans: [],
+          group: { displayTitle: "淡島百景", normalizedTitle: "淡島百景", aliases: ["Awajima Hyakkei"] },
+        },
+      ],
+      [],
+    );
+
+    expect(coverage.episodes.map((episode) => episode.episodeNumber)).toEqual([
+      1, 2, 3, 4, 5, 6, 7, 8,
+    ]);
+    expect(coverage.episodes.find((episode) => episode.episodeNumber === 5)?.status).toBe("AVAILABLE");
+    expect(coverage.missingCount).toBe(7);
+  });
+
   it("marks a missing episode as candidate found", () => {
     const coverage = buildWantedEpisodeCoverage(
       {
