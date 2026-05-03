@@ -2,6 +2,7 @@ import path from "node:path";
 import { Prisma, type MediaType } from "@prisma/client";
 import { prisma } from "@/lib/db";
 import { normalizeTitleAliases } from "@/lib/anime-parser";
+import { parseMediaReleaseTitle } from "@/lib/media-parser";
 import { cacheRemoteMediaAsset, isLocalMediaAssetUrl } from "@/lib/media-assets";
 import {
   aliasesFromMetadataRaw,
@@ -399,7 +400,7 @@ export function collectAnimeMetadataQueryTexts(media: {
 export function buildAnimeMetadataQueries(values: Array<string | null | undefined>) {
   const queries: string[] = [];
 
-  for (const value of values) {
+  for (const value of prioritizeAnimeMetadataQueryValues(values)) {
     const title = cleanSearchTitle(value ?? "");
     if (!title) {
       continue;
@@ -422,6 +423,46 @@ export function buildAnimeMetadataQueries(values: Array<string | null | undefine
   }
 
   return queries.slice(0, 10);
+}
+
+function prioritizeAnimeMetadataQueryValues(values: Array<string | null | undefined>) {
+  const seeds: Array<{ value: string; score: number; index: number }> = [];
+
+  values.forEach((value, index) => {
+    const text = value?.replace(/\s+/g, " ").trim();
+    if (!text) {
+      return;
+    }
+    const releaseLike = isReleaseLikeMetadataQuery(text);
+    if (releaseLike) {
+      const parsedTitle = parseMediaReleaseTitle(text, "ANIME").parsedTitle;
+      if (parsedTitle && parsedTitle !== text) {
+        seeds.push({
+          value: parsedTitle,
+          score: scoreMetadataQueryValue(parsedTitle, false) + 12,
+          index,
+        });
+      }
+    }
+    seeds.push({
+      value: text,
+      score: scoreMetadataQueryValue(text, releaseLike),
+      index,
+    });
+  });
+
+  const seen = new Set<string>();
+  return seeds
+    .sort((a, b) => b.score - a.score || a.index - b.index)
+    .map((seed) => seed.value)
+    .filter((value) => {
+      const key = cleanSearchTitle(value).toLowerCase();
+      if (!key || seen.has(key)) {
+        return false;
+      }
+      seen.add(key);
+      return true;
+    });
 }
 
 export async function searchAnimeMetadata(query: string): Promise<MetadataMatch[]> {
@@ -860,9 +901,59 @@ function cleanSearchTitle(value: string) {
   return value
     .replace(/\[[^\]]*]/g, " ")
     .replace(/\([^)]*(?:1080p|2160p|720p|x26[45]|hevc|avc|web-dl|baha|b-global)[^)]*\)/gi, " ")
+    .replace(/\bS\d{1,2}E\d{1,4}\b/gi, " ")
+    .replace(/\s+-\s*(?:EP?)?\d{1,4}\s*(?:v\d+)?\s*$/i, " ")
+    .replace(/\.(?:mkv|mp4|avi|mov|webm|m4v|ts)$/i, " ")
     .replace(releaseEditionPattern, " ")
     .replace(/\s+/g, " ")
     .trim();
+}
+
+function isReleaseLikeMetadataQuery(value: string) {
+  return (
+    /\[[^\]]+]/.test(value) ||
+    /\bS\d{1,2}E\d{1,4}\b/i.test(value) ||
+    /\.(?:mkv|mp4|avi|mov|webm|m4v|ts)$/i.test(value) ||
+    /\b(?:1080p|2160p|720p|x26[45]|hevc|avc|web-?dl|webrip|baha|cr)\b/i.test(value)
+  );
+}
+
+function scoreMetadataQueryValue(value: string, releaseLike: boolean) {
+  const clean = cleanSearchTitle(value);
+  if (!clean) {
+    return -100;
+  }
+  let score = 0;
+  if (/[\u3040-\u30ff]/.test(clean)) {
+    score += 80;
+  }
+  if (/[\u3400-\u9fff]/.test(clean)) {
+    score += 62;
+  }
+  if (/[a-z]/i.test(clean)) {
+    score += 42;
+  }
+  if (/\s+\/\s+|｜|\|/.test(clean)) {
+    score += 12;
+  }
+  if (clean.length >= 6 && clean.length <= 90) {
+    score += 24;
+  }
+  if (clean.length > 140) {
+    score -= 70;
+  } else if (clean.length > 90) {
+    score -= 35;
+  }
+  if (releaseLike) {
+    score -= 45;
+  }
+  if (/\bS\d{1,2}E\d{1,4}\b/i.test(value)) {
+    score -= 20;
+  }
+  if (!/\s/.test(clean) && clean.length <= 12) {
+    score -= 8;
+  }
+  return score;
 }
 
 function shouldReplaceReleaseEditionTitle(currentTitle: string, providerTitle: string | undefined) {

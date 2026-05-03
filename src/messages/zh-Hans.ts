@@ -209,6 +209,7 @@ export const zhHans = {
   searchingWantedSources: "搜索中",
   wantedSearchResults: "搜索结果",
   noWantedSearchResults: "没有找到匹配资源。",
+  wantedSearchSourceError: "搜索源访问失败",
   selectWantedResult: "选择并下载",
   strongWantedMatch: "强匹配",
   relatedWantedMatch: "可能相关",

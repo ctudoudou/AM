@@ -5,7 +5,7 @@ import { Download, Loader2, RotateCcw, RefreshCw, Search, X } from "lucide-react
 import { getMessages } from "@/messages";
 import type { Locale } from "@/lib/i18n";
 import type { EpisodeCoverageItem } from "@/lib/wanted-episodes";
-import type { WantedSearchResult } from "@/lib/wanted-rss-search";
+import type { WantedSearchResult, WantedSearchSourceError } from "@/lib/wanted-rss-search";
 
 type MissingEpisodesPayload = {
   mediaTitleId: string;
@@ -16,6 +16,7 @@ type MissingEpisodesPayload = {
 type WantedSearchState = {
   loading: boolean;
   results: WantedSearchResult[];
+  sourceErrors: WantedSearchSourceError[];
   error: string;
 };
 
@@ -78,7 +79,12 @@ export function MissingEpisodesPanel({
   async function searchWantedSources(wantedId: string) {
     setSearches((current) => ({
       ...current,
-      [wantedId]: { loading: true, results: current[wantedId]?.results ?? [], error: "" },
+      [wantedId]: {
+        loading: true,
+        results: current[wantedId]?.results ?? [],
+        sourceErrors: current[wantedId]?.sourceErrors ?? [],
+        error: "",
+      },
     }));
     setError("");
     try {
@@ -88,10 +94,18 @@ export function MissingEpisodesPanel({
       if (!response.ok) {
         throw new Error(t.missingEpisodeActionError);
       }
-      const body = (await response.json()) as { results: WantedSearchResult[] };
+      const body = (await response.json()) as {
+        results: WantedSearchResult[];
+        sourceErrors?: WantedSearchSourceError[];
+      };
       setSearches((current) => ({
         ...current,
-        [wantedId]: { loading: false, results: body.results, error: "" },
+        [wantedId]: {
+          loading: false,
+          results: body.results,
+          sourceErrors: body.sourceErrors ?? [],
+          error: "",
+        },
       }));
     } catch (searchError) {
       setSearches((current) => ({
@@ -99,6 +113,7 @@ export function MissingEpisodesPanel({
         [wantedId]: {
           loading: false,
           results: current[wantedId]?.results ?? [],
+          sourceErrors: current[wantedId]?.sourceErrors ?? [],
           error: searchError instanceof Error ? searchError.message : t.missingEpisodeActionError,
         },
       }));
@@ -211,6 +226,17 @@ export function MissingEpisodesPanel({
                     {searchState.error ? <div className="settings-alert">{searchState.error}</div> : null}
                     {!searchState.loading && searchState.results.length === 0 ? (
                       <p>{t.noWantedSearchResults}</p>
+                    ) : null}
+                    {!searchState.loading &&
+                    searchState.results.length === 0 &&
+                    searchState.sourceErrors.length > 0 ? (
+                      <div className="settings-alert">
+                        {t.wantedSearchSourceError}:{" "}
+                        {searchState.sourceErrors
+                          .slice(0, 3)
+                          .map((item) => `${item.sourceName} ${item.message}`)
+                          .join(" · ")}
+                      </div>
                     ) : null}
                     {searchState.results.map((result) => (
                       <article className="wanted-search-result" key={result.key}>

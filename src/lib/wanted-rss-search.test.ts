@@ -87,6 +87,38 @@ describe("wanted RSS search", () => {
     ]);
   });
 
+  it("keeps enough title aliases for older episode backfill searches", () => {
+    const queries = buildWantedEpisodeSearchQueries({
+      ...wanted,
+      episodeNumber: 1,
+      mediaTitle: {
+        ...wanted.mediaTitle,
+        primaryTitle: "女骑士成为蛮族新娘",
+        originalTitle: "姫騎士は蛮族の嫁",
+        aliases: [
+          {
+            id: "alias-hime-1",
+            mediaId: "media-1",
+            title: "Hime Kishi wa Barbaroi no Yome",
+            locale: "romaji",
+            createdAt: new Date(),
+          },
+          {
+            id: "alias-hime-2",
+            mediaId: "media-1",
+            title: "Himekishi wa Barbaroi no Yome",
+            locale: "romaji",
+            createdAt: new Date(),
+          },
+        ],
+      },
+    });
+
+    expect(queries).toContain("女骑士成为蛮族新娘 01");
+    expect(queries).toContain("姫騎士は蛮族の嫁 01");
+    expect(queries).toContain("Himekishi wa Barbaroi no Yome 01");
+  });
+
   it("parses RSS results with magnet and torrent links", () => {
     const results = parseWantedSearchFeed(
       `<?xml version="1.0" encoding="UTF-8" ?>

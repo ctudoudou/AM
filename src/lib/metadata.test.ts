@@ -23,6 +23,22 @@ describe("buildAnimeMetadataQueries", () => {
     expect(queries).toContain("Mairimashita! Iruma-kun 4th Season");
     expect(queries).toContain("Mairimashita! Iruma-kun Season 4");
   });
+
+  it("prioritizes clean aliases before long release-derived episode titles", () => {
+    const queries = buildAnimeMetadataQueries([
+      "我和班上第二可爱的女生成为朋友",
+      "我和班上第二可愛的女生成為朋友",
+      "Kuranika",
+      "[Dynamis One] Kuranika - 04 (CR 1920x1080 AVC AAC MKV) [E1E81F68].mkv",
+      "我和班上第二可爱的女生成为朋友 - S01E04 - 我和班上第二可爱的女生成为朋友 Kuranika [黒ネズミたち][1080p][AVC]",
+      "和班上第二可爱的女孩子成了朋友",
+      "クラスで２番目に可愛い女の子と友だちになった",
+      "[LoliHouse] Class de 2-banme ni Kawaii Onnanoko to Tomodachi ni Natta - 01 [WebRip 1080p HEVC-10bit AAC SRTx2].mkv",
+    ]);
+
+    expect(queries.slice(0, 10)).toContain("クラスで２番目に可愛い女の子と友だちになった");
+    expect(queries.slice(0, 10)).toContain("Class de 2-banme ni Kawaii Onnanoko to Tomodachi ni Natta");
+  });
 });
 
 describe("collectAnimeMetadataQueryTexts", () => {

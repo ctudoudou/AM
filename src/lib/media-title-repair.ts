@@ -37,11 +37,11 @@ export async function findExistingMediaTitle(input: IdentityInput) {
   const candidates = await prisma.mediaTitle.findMany({
     where: {
       type: input.type,
-      OR: [
-        { year: input.year ?? null },
-        { year: null },
-        ...(input.year ? [{ year: input.year }] : []),
-      ],
+      ...(input.year
+        ? {
+            OR: [{ year: input.year }, { year: null }],
+          }
+        : {}),
     },
     include: {
       aliases: true,

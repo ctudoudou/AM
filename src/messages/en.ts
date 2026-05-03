@@ -209,6 +209,7 @@ export const en = {
   searchingWantedSources: "Searching",
   wantedSearchResults: "Search results",
   noWantedSearchResults: "No matching releases found.",
+  wantedSearchSourceError: "Search source failed",
   selectWantedResult: "Select and download",
   strongWantedMatch: "Strong match",
   relatedWantedMatch: "Related",

@@ -47,6 +47,12 @@ export type WantedSearchResult = {
   };
 };
 
+export type WantedSearchSourceError = {
+  sourceName: string;
+  query: string;
+  message: string;
+};
+
 const parser = new XMLParser({
   ignoreAttributes: false,
   attributeNamePrefix: "@_",
@@ -69,6 +75,7 @@ export async function searchWantedEpisodeSources(wantedEpisodeId: string) {
   const mediaAliasSet = mediaAliases(wanted.mediaTitle);
   const results: WantedSearchResult[] = [];
   const seen = new Set<string>();
+  const sourceErrors: WantedSearchSourceError[] = [];
 
   results.push(...(await searchCachedConfiguredSources(wanted, mediaAliasSet, seen)));
 
@@ -91,13 +98,18 @@ export async function searchWantedEpisodeSources(wantedEpisodeId: string) {
   ];
 
   for (const source of sources) {
-    for (const query of queries.slice(0, 4)) {
+    for (const query of queries.slice(0, 8)) {
       const url = renderSearchUrl(source.url, query);
       try {
         const response = await fetch(url, {
           headers: { "User-Agent": "Kura/0.1 Wanted RSS Search" },
         });
         if (!response.ok) {
+          sourceErrors.push({
+            sourceName: source.sourceName,
+            query,
+            message: `HTTP ${response.status}`,
+          });
           continue;
         }
         const xml = await response.text();
@@ -110,6 +122,11 @@ export async function searchWantedEpisodeSources(wantedEpisodeId: string) {
           addScoredResult(results, seen, result, wanted, mediaAliasSet);
         }
       } catch {
+        sourceErrors.push({
+          sourceName: source.sourceName,
+          query,
+          message: "Network request failed",
+        });
         continue;
       }
     }
@@ -119,6 +136,7 @@ export async function searchWantedEpisodeSources(wantedEpisodeId: string) {
     wantedEpisodeId,
     queries,
     results: sortSearchResults(results).slice(0, 30),
+    sourceErrors: sourceErrors.slice(0, 12),
   };
 }
 
@@ -302,12 +320,17 @@ async function searchCachedConfiguredSources(
     wanted.mediaTitle.primaryTitle,
     wanted.mediaTitle.originalTitle,
     ...wanted.mediaTitle.aliases.map((alias) => alias.title),
-  ].filter((title): title is string => Boolean(title?.trim()));
+  ]
+    .flatMap(wantedSearchTitleCandidates)
+    .filter(uniqueByNormalized);
+  if (aliases.length === 0) {
+    return [];
+  }
   const items = await prisma.rssItem.findMany({
     where: {
       mediaType: "ANIME",
       sourceId: { not: null },
-      OR: aliases.slice(0, 8).map((title) => ({
+      OR: aliases.slice(0, 16).map((title) => ({
         title: { contains: title, mode: "insensitive" },
       })),
     },
