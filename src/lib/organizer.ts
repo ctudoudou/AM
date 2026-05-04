@@ -734,6 +734,7 @@ async function upsertMediaRecords(plan: {
   candidate: {
     mediaType: MediaType;
     parsedTitle: string;
+    normalizedTitle: string;
     season: number | null;
     episodeNumber: number | null;
     resolution: string | null;
