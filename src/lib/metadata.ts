@@ -220,7 +220,7 @@ export async function matchMetadataForGroup(groupId: string) {
     });
   }
 
-  return results.sort((a, b) => b.score - a.score)[0];
+  return selectBestMetadataMatch(results, group.season ?? undefined);
 }
 
 export async function refreshAnimeLibraryMetadata(input?: { titleId?: string; onlyMissing?: boolean }) {
@@ -274,6 +274,7 @@ export async function refreshAnimeMetadata(titleId: string) {
   });
   const queryTexts = collectAnimeMetadataQueryTexts(media);
   const queries = buildAnimeMetadataQueries(queryTexts);
+  const targetSeason = queries.map(detectSeason).find((season): season is number => Boolean(season));
   await upsertTitleAliases(
     media.id,
     aliasesFromTitleTexts(queryTexts),
@@ -282,12 +283,14 @@ export async function refreshAnimeMetadata(titleId: string) {
 
   for (const query of queries) {
     matches.push(...(await searchAnimeMetadata(query)));
-    if (matches.some((match) => match.posterUrl)) {
+    const best = selectBestMetadataMatch(matches, targetSeason);
+    const seasonSatisfied = !targetSeason || Boolean(best && metadataResultHasSeason(best, targetSeason));
+    if (seasonSatisfied && best?.posterUrl && best.score >= 0.92 && (best.relevance ?? 0) >= 0.9) {
       break;
     }
   }
 
-  const best = selectBestMetadataMatch(matches);
+  const best = selectBestMetadataMatch(matches, targetSeason);
   if (!best) {
     return {
       id: media.id,
@@ -324,8 +327,8 @@ export async function refreshAnimeMetadata(titleId: string) {
       primaryTitle: shouldReplaceReleaseEditionTitle(media.primaryTitle, best.title)
         ? best.title
         : undefined,
-      originalTitle: media.originalTitle ?? best.originalTitle,
-      year: media.year ?? best.year,
+      originalTitle: targetSeason ? best.originalTitle : media.originalTitle ?? best.originalTitle,
+      year: targetSeason ? best.year : media.year ?? best.year,
       synopsis: media.synopsis ?? best.synopsis,
       posterUrl,
       backdropUrl,
@@ -354,6 +357,17 @@ export async function refreshAnimeMetadata(titleId: string) {
       },
       update: {
         mediaId: media.id,
+      },
+    })
+    .catch(() => null);
+  await prisma.metadataLink
+    .deleteMany({
+      where: {
+        mediaId: media.id,
+        NOT: {
+          provider: best.provider,
+          externalId: best.externalId,
+        },
       },
     })
     .catch(() => null);
@@ -721,13 +735,20 @@ async function searchOmdb(query: string, mediaType: MediaType): Promise<Metadata
   }));
 }
 
-function selectBestMetadataMatch(results: MetadataMatch[]) {
+function selectBestMetadataMatch(results: MetadataMatch[], targetSeason?: number) {
   return [...results].sort(
     (a, b) =>
-      b.score - a.score ||
+      metadataSelectionScore(b, targetSeason) - metadataSelectionScore(a, targetSeason) ||
       Number(Boolean(b.posterUrl)) - Number(Boolean(a.posterUrl)) ||
       Number(Boolean(b.backdropUrl)) - Number(Boolean(a.backdropUrl)),
   )[0];
+}
+
+function metadataSelectionScore(result: MetadataMatch, targetSeason?: number) {
+  if (!targetSeason) {
+    return result.score;
+  }
+  return result.score + (metadataResultHasSeason(result, targetSeason) ? 0.22 : -0.22);
 }
 
 function stripRelevance<T extends MetadataMatch & { relevance: number }>(result: T): MetadataMatch {
@@ -750,6 +771,7 @@ function stripRelevance<T extends MetadataMatch & { relevance: number }>(result:
 export function scoreMetadataRelevance(query: string, result: MetadataMatch) {
   const queryAliases = metadataAliasesFromText(query);
   const resultAliases = metadataAliasesFromMatch(result);
+  const querySeason = detectSeason(query);
 
   let best = 0;
   for (const queryAlias of queryAliases) {
@@ -770,7 +792,73 @@ export function scoreMetadataRelevance(query: string, result: MetadataMatch) {
     }
   }
 
+  if (isSideStoryOrCollaborationResult(query, result)) {
+    best = Math.min(best, 0.42);
+  }
+  if (querySeason && !metadataResultHasSeason(result, querySeason)) {
+    best = Math.min(best, 0.5);
+  }
+
   return best;
+}
+
+function isSideStoryOrCollaborationResult(query: string, result: MetadataMatch) {
+  if (/\b(?:ova|oad|ona|special|cm|commercial|movie)\b|剧场|劇場|联动|聯動|合作|合味道/i.test(query)) {
+    return false;
+  }
+  const text = metadataPrimaryTexts(result).join(" ");
+  if (/\b(?:special|ova|oad|ona|cm|commercial)\b|剧场|劇場|联动|聯動|合作|合味道|cup\s*noodles?|nissin/i.test(text)) {
+    return true;
+  }
+  const raw = result.raw;
+  if (!raw || typeof raw !== "object") {
+    return false;
+  }
+  const record = raw as Record<string, unknown>;
+  const type = String(record.type ?? record.platform ?? "").toLowerCase();
+  if (/\b(?:special|ova|oad|ona|movie|music|cm|commercial)\b/.test(type)) {
+    return true;
+  }
+  const tags = [
+    ...rawArrayStrings(record.meta_tags),
+    ...rawArrayStrings(record.genres),
+    ...rawArrayStrings(record.demographics),
+  ].join(" ");
+  return /\b(?:special|ova|oad|ona|movie|music|cm|commercial)\b|剧场|劇場|联动|聯動|合作/.test(tags);
+}
+
+function metadataResultHasSeason(result: MetadataMatch, season: number) {
+  return metadataPrimaryTexts(result).some((text) => detectSeason(text) === season);
+}
+
+function metadataPrimaryTexts(result: MetadataMatch) {
+  const raw = result.raw && typeof result.raw === "object" ? (result.raw as Record<string, unknown>) : {};
+  return [
+    result.title,
+    result.originalTitle,
+    typeof raw.title === "string" ? raw.title : null,
+    typeof raw.title_english === "string" ? raw.title_english : null,
+    typeof raw.title_japanese === "string" ? raw.title_japanese : null,
+    typeof raw.name === "string" ? raw.name : null,
+    typeof raw.name_cn === "string" ? raw.name_cn : null,
+    typeof raw.canonicalTitle === "string" ? raw.canonicalTitle : null,
+  ].filter((value): value is string => Boolean(value));
+}
+
+function rawArrayStrings(value: unknown) {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  return value.flatMap((item) => {
+    if (typeof item === "string") {
+      return [item];
+    }
+    if (item && typeof item === "object") {
+      const record = item as Record<string, unknown>;
+      return [record.name, record.title].filter((text): text is string => typeof text === "string");
+    }
+    return [];
+  });
 }
 
 function metadataAliasesFromMatch(result: MetadataMatch) {

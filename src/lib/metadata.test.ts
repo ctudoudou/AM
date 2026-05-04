@@ -105,4 +105,54 @@ describe("scoreMetadataRelevance", () => {
 
     expect(score).toBe(1);
   });
+
+  it("penalizes collaboration entries that only match through generic franchise aliases", () => {
+    const score = scoreMetadataRelevance("Re：从零开始的异世界生活 第四季", {
+      provider: "jikan",
+      externalId: "38389",
+      title: "He Wei Dao x Re:ZERO",
+      originalTitle: "合味道 X《Re：从零开始的异世界生活》",
+      score: 0.9,
+      raw: {
+        title_english: "He Wei Dao x Re:ZERO",
+        title_japanese: "合味道 X《Re：ゼロから始める異世界生活》",
+        title_synonyms: ["Re:ZERO -Starting Life in Another World-"],
+        type: "Special",
+      },
+    });
+
+    expect(score).toBeLessThan(0.48);
+  });
+
+  it("penalizes base-season results when the query asks for a later season", () => {
+    const score = scoreMetadataRelevance("Re：从零开始的异世界生活 第四季", {
+      provider: "bangumi",
+      externalId: "140001",
+      title: "Re：从零开始的异世界生活",
+      originalTitle: "Re:ゼロから始める異世界生活",
+      score: 0.9,
+      raw: {
+        name_cn: "Re：从零开始的异世界生活",
+        name: "Re:ゼロから始める異世界生活",
+      },
+    });
+
+    expect(score).toBeLessThan(0.6);
+  });
+
+  it("keeps matching season results eligible", () => {
+    const score = scoreMetadataRelevance("Re：从零开始的异世界生活 第四季", {
+      provider: "bangumi",
+      externalId: "547888",
+      title: "Re：从零开始的异世界生活 第四季 丧失篇",
+      originalTitle: "Re:ゼロから始める異世界生活 4th season 喪失編",
+      score: 0.8,
+      raw: {
+        name_cn: "Re：从零开始的异世界生活 第四季 丧失篇",
+        name: "Re:ゼロから始める異世界生活 4th season 喪失編",
+      },
+    });
+
+    expect(score).toBeGreaterThanOrEqual(0.86);
+  });
 });
