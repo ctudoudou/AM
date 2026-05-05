@@ -3,6 +3,7 @@
 import {
   MediaPlayer,
   MediaProvider,
+  Track,
   type MediaPlayerInstance,
   type PlayerSrc,
 } from "@vidstack/react";
@@ -12,10 +13,12 @@ import {
 } from "@vidstack/react/player/layouts/default";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
+  Captions,
   ListVideo,
   Loader2,
   RefreshCw,
   RotateCcw,
+  Search,
   SkipBack,
   SkipForward,
 } from "lucide-react";
@@ -61,6 +64,18 @@ type PlaybackDescriptor = {
   mediaFile: WatchMediaFile;
 };
 
+type SubtitleTrackDescriptor = {
+  id: string;
+  label: string;
+  language: string | null;
+  format: string;
+  kind: string;
+  sourceName: string | null;
+  isDefault: boolean;
+  canPlay: boolean;
+  url: string;
+};
+
 export function WatchClient({
   currentEpisode,
   episodeId,
@@ -91,6 +106,9 @@ export function WatchClient({
   const [error, setError] = useState("");
   const [panelOpen, setPanelOpen] = useState(true);
   const [ended, setEnded] = useState(false);
+  const [subtitleTracks, setSubtitleTracks] = useState<SubtitleTrackDescriptor[]>([]);
+  const [subtitleLoading, setSubtitleLoading] = useState(false);
+  const [subtitleMessage, setSubtitleMessage] = useState("");
 
   const load = useCallback(async () => {
     try {
@@ -126,6 +144,38 @@ export function WatchClient({
     }
     await load();
   }, [load, mediaFileId, t.transcodeStartError]);
+
+  const loadSubtitles = useCallback(async () => {
+    const response = await fetch(`/api/media-files/${mediaFileId}/subtitles`);
+    if (!response.ok) {
+      return;
+    }
+    const body = (await response.json()) as { tracks: SubtitleTrackDescriptor[] };
+    setSubtitleTracks(body.tracks);
+  }, [mediaFileId]);
+
+  const scanSubtitles = useCallback(async () => {
+    setSubtitleLoading(true);
+    setSubtitleMessage("");
+    try {
+      const response = await fetch(`/api/media-files/${mediaFileId}/subtitles/scan`, {
+        method: "POST",
+      });
+      if (!response.ok) {
+        throw new Error(t.subtitleScanError);
+      }
+      const body = (await response.json()) as {
+        discovered: number;
+        tracks: SubtitleTrackDescriptor[];
+      };
+      setSubtitleTracks(body.tracks);
+      setSubtitleMessage(`${t.subtitleScanDone} ${body.discovered}`);
+    } catch (scanError) {
+      setSubtitleMessage(scanError instanceof Error ? scanError.message : t.subtitleScanError);
+    } finally {
+      setSubtitleLoading(false);
+    }
+  }, [mediaFileId, t.subtitleScanDone, t.subtitleScanError]);
 
   const stopHls = useCallback(() => {
     const current = descriptorRef.current;
@@ -169,9 +219,18 @@ export function WatchClient({
   useEffect(() => {
     const timeout = window.setTimeout(() => {
       void load();
+      void loadSubtitles();
     }, 0);
     return () => window.clearTimeout(timeout);
-  }, [load]);
+  }, [load, loadSubtitles]);
+
+  useEffect(() => {
+    const mediaQuery = window.matchMedia("(max-width: 900px)");
+    const syncPanelState = () => setPanelOpen(!mediaQuery.matches);
+    syncPanelState();
+    mediaQuery.addEventListener("change", syncPanelState);
+    return () => mediaQuery.removeEventListener("change", syncPanelState);
+  }, []);
 
   useEffect(() => {
     descriptorRef.current = descriptor;
@@ -303,6 +362,18 @@ export function WatchClient({
                 viewType="video"
               >
                 <MediaProvider />
+                {subtitleTracks.filter((track) => track.canPlay).map((track) => (
+                  <Track
+                    default={track.isDefault}
+                    id={track.id}
+                    key={track.id}
+                    kind="subtitles"
+                    label={track.label}
+                    lang={track.language ?? undefined}
+                    src={track.url}
+                    type={subtitleTrackType(track.format)}
+                  />
+                ))}
                 <DefaultVideoLayout
                   colorScheme="dark"
                   icons={defaultLayoutIcons}
@@ -331,14 +402,6 @@ export function WatchClient({
                   </div>
                 </div>
               ) : null}
-              <button
-                aria-label={t.episodePanel}
-                className="watch-panel-toggle"
-                onClick={() => setPanelOpen((value) => !value)}
-                type="button"
-              >
-                <ListVideo size={16} />
-              </button>
             </>
           ) : (
             <div className="watch-state">
@@ -348,6 +411,15 @@ export function WatchClient({
                 : t.transcodePreparing}
             </div>
           )}
+          <button
+            aria-label={t.episodePanel}
+            aria-expanded={panelOpen}
+            className="watch-panel-toggle"
+            onClick={() => setPanelOpen((value) => !value)}
+            type="button"
+          >
+            <ListVideo size={16} />
+          </button>
         </div>
         <div className="watch-underbar">
           {previousEpisode ? (
@@ -411,6 +483,37 @@ export function WatchClient({
 
         <section>
           <div className="watch-panel-heading">
+            <h2>{t.subtitles}</h2>
+            <span>{subtitleTracks.length} {t.subtitleTracks}</span>
+          </div>
+          <div className="watch-subtitle-actions">
+            <button disabled={subtitleLoading} onClick={() => void scanSubtitles()} type="button">
+              {subtitleLoading ? <Loader2 size={14} /> : <Search size={14} />}
+              {t.scanSubtitles}
+            </button>
+          </div>
+          {subtitleTracks.length === 0 ? (
+            <p className="watch-muted">{t.noSubtitleTracks}</p>
+          ) : (
+            <div className="watch-subtitle-list">
+              {subtitleTracks.map((track) => (
+                <div className={track.canPlay ? "" : "muted"} key={track.id}>
+                  <Captions size={14} />
+                  <span>
+                    <strong>{track.label}</strong>
+                    <small>
+                      {track.sourceName ?? track.kind} · {track.canPlay ? t.subtitlePlayable : t.subtitleUnsupported}
+                    </small>
+                  </span>
+                </div>
+              ))}
+            </div>
+          )}
+          {subtitleMessage ? <p className="watch-muted">{subtitleMessage}</p> : null}
+        </section>
+
+        <section>
+          <div className="watch-panel-heading">
             <h2>{t.playbackStatus}</h2>
           </div>
           {error ? <div className="settings-alert">{error}</div> : null}
@@ -469,4 +572,12 @@ function mimeTypeForFile(fileName?: string | null) {
     return "video/webm";
   }
   return "video/mp4";
+}
+
+function subtitleTrackType(format: string) {
+  const lower = format.toLowerCase();
+  if (lower === "srt" || lower === "ass" || lower === "ssa" || lower === "vtt") {
+    return lower;
+  }
+  return "vtt";
 }

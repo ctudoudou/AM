@@ -137,6 +137,7 @@ model Episode {
   overview    String?
   airDate     DateTime?
   files       MediaFile[]
+  subtitles   SubtitleTrack[]
   progress    WatchProgress[]
   createdAt   DateTime        @default(now())
   updatedAt   DateTime        @updatedAt
@@ -162,12 +163,35 @@ model MediaFile {
   transcodeError  String?
   transcodedAt    DateTime?
   subtitleGroup   String?
+  subtitles        SubtitleTrack[]
   checksum        String?
   createdAt       DateTime  @default(now())
   updatedAt       DateTime  @updatedAt
 
   @@index([relativePath])
   @@index([transcodeStatus])
+}
+
+model SubtitleTrack {
+  id          String    @id @default(cuid())
+  mediaFileId String?
+  mediaFile   MediaFile? @relation(fields: [mediaFileId], references: [id], onDelete: Cascade)
+  episodeId   String?
+  episode     Episode?  @relation(fields: [episodeId], references: [id], onDelete: Cascade)
+  label       String
+  language    String?
+  format      String
+  kind        String    @default("SIDECAR")
+  sourcePath  String?
+  sourceUrl   String?
+  sourceName  String?
+  isDefault   Boolean   @default(false)
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  @@unique([mediaFileId, sourcePath])
+  @@index([mediaFileId])
+  @@index([episodeId])
 }
 
 model WatchProgress {
