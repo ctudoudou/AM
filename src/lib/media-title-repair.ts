@@ -59,7 +59,7 @@ export async function findExistingMediaTitle(input: IdentityInput) {
   return candidates
     .map((media) => ({
       media,
-      score: overlapScore(keys, mediaIdentityKeys(media)),
+      score: overlapScore(keys, createMediaIdentityKeys(media)),
     }))
     .filter((item) => item.score > 0)
     .sort((a, b) => b.score - a.score || mediaQualityScore(b.media) - mediaQualityScore(a.media))[0]
@@ -231,7 +231,7 @@ function duplicateClusters<T extends { id: string } & MediaIdentity>(media: T[])
   const owners = new Map<string, string>();
   for (const item of media) {
     parent.set(item.id, item.id);
-    for (const key of mediaIdentityKeys(item)) {
+    for (const key of createMediaIdentityKeys(item)) {
       const owner = owners.get(key);
       if (owner) {
         union(owner, item.id);
@@ -248,7 +248,7 @@ function duplicateClusters<T extends { id: string } & MediaIdentity>(media: T[])
   return [...byRoot.values()].filter((cluster) => cluster.length > 1);
 }
 
-type MediaIdentity = {
+export type MediaIdentity = {
   primaryTitle: string;
   originalTitle: string | null;
   aliases: Array<{ title: string }>;
@@ -263,7 +263,7 @@ type MediaIdentity = {
   year?: number | null;
 };
 
-function mediaIdentityKeys(media: MediaIdentity) {
+export function createMediaIdentityKeys(media: MediaIdentity) {
   return identityKeys([
     media.primaryTitle,
     media.originalTitle,
@@ -312,14 +312,25 @@ function normalizeIdentityKey(value: string) {
   return value
     .toLowerCase()
     .replace(/\bgyaru\b/g, "gal")
+    .replace(/\bs\d{1,2}e\d{1,4}(?:\.\d+)?\b/g, " ")
+    .replace(/\s+\d{1,4}(?:\.\d+)?\s+(?:mkv|mp4|avi|mov|webm|m4v|ts)$/i, " ")
+    .replace(/\s+(?:mkv|mp4|avi|mov|webm|m4v|ts)$/i, " ")
     .replace(/\s+/g, " ")
     .trim();
 }
 
 function isUsefulIdentityKey(value: string) {
-  return value.length >= 6 &&
+  return hasEnoughTitleSignal(value) &&
     !/^(?:season|episode|special|ncop|nced|op|ed|ova|movie|anime|\d+)$/.test(value) &&
     /[a-z0-9\u3400-\u9fff\u3040-\u30ff]/i.test(value);
+}
+
+function hasEnoughTitleSignal(value: string) {
+  const cjkCount = [...value].filter((char) => /[\u3400-\u9fff]/.test(char)).length;
+  if (cjkCount >= 4) {
+    return true;
+  }
+  return value.length >= 6;
 }
 
 function mediaQualityScore(media: {
