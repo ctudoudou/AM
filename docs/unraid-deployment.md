@@ -64,6 +64,12 @@ OPENROUTER_MODEL=glm5.1
 NEXT_PUBLIC_DEFAULT_LOCALE=zh-Hans
 ```
 
+Optional web startup setting:
+
+```env
+KURA_AUTO_MIGRATE=true
+```
+
 Optional metadata sources:
 
 ```env
@@ -114,6 +120,15 @@ Volume mapping:
 
 Add all environment variables listed above.
 
+`kura-web` runs database migrations during container startup by default. Keep this enabled for normal single-container
+web deployments:
+
+```text
+KURA_AUTO_MIGRATE=true
+```
+
+Set `KURA_AUTO_MIGRATE=false` only if you want to run migrations manually or through a separate migration container.
+
 ## kura-worker Container
 
 Unraid Docker template:
@@ -136,7 +151,11 @@ Add the same environment variables as `kura-web`.
 
 ## Database Migration
 
-Run database migration once before starting Kura for the first time, and again after image updates that include schema changes.
+`kura-web` runs `npm run prisma:migrate:deploy` automatically before the web server starts when
+`KURA_AUTO_MIGRATE=true`, which is the image default.
+
+If you disabled automatic migrations, run database migration once before starting Kura for the first time, and again
+after image updates that include schema changes.
 
 From Unraid Terminal:
 
@@ -161,10 +180,9 @@ docker run --rm \
 
 1. Start PostgreSQL.
 2. Start aria2.
-3. Run database migration.
-4. Start `kura-web`.
-5. Start `kura-worker`.
-6. Open:
+3. Start `kura-web`.
+4. Start `kura-worker`.
+5. Open:
 
 ```text
 http://your-unraid-ip:3000/zh-Hans
