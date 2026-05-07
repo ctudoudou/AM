@@ -1,13 +1,8 @@
 import { notFound } from "next/navigation";
-import { isLocale } from "@/lib/i18n";
+import { isLocale, locales } from "@/lib/i18n";
 
 export function generateStaticParams() {
-  return [
-    { locale: "en" },
-    { locale: "zh-Hans" },
-    { locale: "zh-Hant" },
-    { locale: "ja" },
-  ];
+  return locales.map((locale) => ({ locale }));
 }
 
 export default async function LocaleLayout({
@@ -25,4 +20,3 @@ export default async function LocaleLayout({
 
   return children;
 }
-
