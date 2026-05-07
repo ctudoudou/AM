@@ -1019,11 +1019,12 @@ function subscriptionCandidateParams(filter: CandidateFilter) {
   const params = new URLSearchParams();
   if (filter === "SUBSCRIBED") {
     params.set("view", "subscribed");
+    params.set("limit", "300");
   } else if (filter === "EMPTY") {
     params.set("view", "empty");
   } else if (filter === "ALL") {
     params.set("view", "all");
-    params.set("limit", "200");
+    params.set("limit", "300");
   } else {
     params.set("view", "active");
     params.set("limit", "100");

@@ -8,11 +8,10 @@ export async function GET(request: Request) {
     const url = new URL(request.url);
     const view = url.searchParams.get("view") ?? "active";
     const requestedLimit = Number(url.searchParams.get("limit"));
+    const defaultLimit = view === "all" || view === "subscribed" ? 300 : 100;
     const limit = Number.isFinite(requestedLimit)
       ? Math.min(Math.max(Math.floor(requestedLimit), 1), 300)
-      : view === "all"
-        ? 200
-        : 100;
+      : defaultLimit;
     const where =
       view === "subscribed"
         ? { subscriptions: { some: { enabled: true } } }
