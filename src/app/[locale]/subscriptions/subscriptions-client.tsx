@@ -49,8 +49,21 @@ type CandidateGroup = {
 
 type CandidateStats = {
   totalGroups: number;
+  filteredGroups: number;
+  activeGroups: number;
+  subscribedGroups: number;
   emptyGroups: number;
+  reviewGroups: number;
   ungroupedCandidates: number;
+};
+
+type CandidatePage = {
+  page: number;
+  pageSize: number;
+  total: number;
+  totalPages: number;
+  hasNext: boolean;
+  hasPrevious: boolean;
 };
 
 type Subscription = {
@@ -92,8 +105,21 @@ export function SubscriptionsClient({ locale }: { locale: Locale }) {
   const [candidateStatus, setCandidateStatus] = useState<CandidateStatusFilter>("ALL");
   const [candidateStats, setCandidateStats] = useState<CandidateStats>({
     totalGroups: 0,
+    filteredGroups: 0,
+    activeGroups: 0,
+    subscribedGroups: 0,
     emptyGroups: 0,
+    reviewGroups: 0,
     ungroupedCandidates: 0,
+  });
+  const [candidatePage, setCandidatePage] = useState(1);
+  const [candidatePageInfo, setCandidatePageInfo] = useState<CandidatePage>({
+    page: 1,
+    pageSize: 50,
+    total: 0,
+    totalPages: 1,
+    hasNext: false,
+    hasPrevious: false,
   });
   const [rssDraft, setRssDraft] = useState<{ name: string; url: string; mediaType: MediaType }>({
     name: "",
@@ -169,7 +195,13 @@ export function SubscriptionsClient({ locale }: { locale: Locale }) {
 
   const load = useCallback(async () => {
     try {
-      const params = subscriptionCandidateParams(candidateFilter);
+      const params = subscriptionCandidateParams({
+        filter: candidateFilter,
+        mediaType: candidateMediaType,
+        page: candidatePage,
+        query: candidateQuery,
+        status: candidateStatus,
+      });
       const [candidateResponse, rssResponse, subscriptionsResponse] = await Promise.all([
         fetch(`/api/subscription-candidates?${params}`),
         fetch("/api/rss-sources"),
@@ -181,6 +213,7 @@ export function SubscriptionsClient({ locale }: { locale: Locale }) {
       const candidateBody = (await candidateResponse.json()) as {
         groups: CandidateGroup[];
         stats?: CandidateStats;
+        page?: CandidatePage;
       };
       const rssBody = (await rssResponse.json()) as { sources: RssSource[] };
       const subscriptionsBody = (await subscriptionsResponse.json()) as {
@@ -190,8 +223,22 @@ export function SubscriptionsClient({ locale }: { locale: Locale }) {
       setCandidateStats(
         candidateBody.stats ?? {
           totalGroups: candidateBody.groups.length,
+          filteredGroups: candidateBody.groups.length,
+          activeGroups: candidateBody.groups.filter((group) => group.candidates.length > 0).length,
+          subscribedGroups: 0,
           emptyGroups: candidateBody.groups.filter((group) => group.candidates.length === 0).length,
+          reviewGroups: candidateBody.groups.filter((group) => group.reviewRequired).length,
           ungroupedCandidates: 0,
+        },
+      );
+      setCandidatePageInfo(
+        candidateBody.page ?? {
+          page: candidatePage,
+          pageSize: candidateBody.groups.length,
+          total: candidateBody.groups.length,
+          totalPages: 1,
+          hasNext: false,
+          hasPrevious: candidatePage > 1,
         },
       );
       setRssSources(rssBody.sources);
@@ -202,7 +249,14 @@ export function SubscriptionsClient({ locale }: { locale: Locale }) {
     } finally {
       setLoading(false);
     }
-  }, [candidateFilter, t.subscriptionsLoadError]);
+  }, [
+    candidateFilter,
+    candidateMediaType,
+    candidatePage,
+    candidateQuery,
+    candidateStatus,
+    t.subscriptionsLoadError,
+  ]);
 
   useEffect(() => {
     const timeout = window.setTimeout(() => {
@@ -635,7 +689,7 @@ export function SubscriptionsClient({ locale }: { locale: Locale }) {
           <div>
             <h2>{t.subscriptionQueue}</h2>
             <p>
-              {visibleGroups.length} / {candidateStats.totalGroups} {t.titles} ·{" "}
+              {visibleGroups.length} / {candidatePageInfo.total} {t.titles} ·{" "}
               {groupsWithVersions} {t.withVersions} ·{" "}
               {candidateStats.ungroupedCandidates} {t.ungroupedCandidates}
             </p>
@@ -652,11 +706,12 @@ export function SubscriptionsClient({ locale }: { locale: Locale }) {
                 <button
                   className={candidateFilter === key ? "active" : ""}
                   key={key}
-                  onClick={() =>
+                  onClick={() => {
+                    setCandidatePage(1);
                     setCandidateFilter(
                       key as CandidateFilter,
-                    )
-                  }
+                    );
+                  }}
                   type="button"
                 >
                   {label}
@@ -665,13 +720,19 @@ export function SubscriptionsClient({ locale }: { locale: Locale }) {
             </div>
             <div className="candidate-filter-bar">
               <input
-                onChange={(event) => setCandidateQuery(event.target.value)}
+                onChange={(event) => {
+                  setCandidatePage(1);
+                  setCandidateQuery(event.target.value);
+                }}
                 placeholder={t.queueSearch}
                 value={candidateQuery}
               />
               <select
                 aria-label={t.mediaType}
-                onChange={(event) => setCandidateMediaType(event.target.value as MediaTypeFilter)}
+                onChange={(event) => {
+                  setCandidatePage(1);
+                  setCandidateMediaType(event.target.value as MediaTypeFilter);
+                }}
                 value={candidateMediaType}
               >
                 <option value="ALL">{t.allMediaTypes}</option>
@@ -683,7 +744,10 @@ export function SubscriptionsClient({ locale }: { locale: Locale }) {
               </select>
               <select
                 aria-label={t.queueStatus}
-                onChange={(event) => setCandidateStatus(event.target.value as CandidateStatusFilter)}
+                onChange={(event) => {
+                  setCandidatePage(1);
+                  setCandidateStatus(event.target.value as CandidateStatusFilter);
+                }}
                 value={candidateStatus}
               >
                 <option value="ALL">{t.subscriptionFilterAll}</option>
@@ -694,6 +758,13 @@ export function SubscriptionsClient({ locale }: { locale: Locale }) {
               </select>
             </div>
           </div>
+        </div>
+        <div className="candidate-stats-row">
+          <span>{t.queueTotal}: {candidateStats.totalGroups}</span>
+          <span>{t.currentCandidates}: {candidateStats.activeGroups}</span>
+          <span>{t.subscribed}: {candidateStats.subscribedGroups}</span>
+          <span>{t.queueStatusReview}: {candidateStats.reviewGroups}</span>
+          <span>{t.futureOnly}: {candidateStats.emptyGroups}</span>
         </div>
         {visibleGroups.length === 0 ? (
           <div className="empty-panel">
@@ -788,6 +859,28 @@ export function SubscriptionsClient({ locale }: { locale: Locale }) {
             );
           })
         )}
+        <div className="candidate-pagination">
+          <span>
+            {t.queuePage} {candidatePageInfo.page} / {candidatePageInfo.totalPages} ·{" "}
+            {t.queueShowing} {pageRangeLabel(candidatePageInfo)}
+          </span>
+          <div>
+            <button
+              disabled={!candidatePageInfo.hasPrevious}
+              onClick={() => setCandidatePage((page) => Math.max(1, page - 1))}
+              type="button"
+            >
+              {t.queuePrevious}
+            </button>
+            <button
+              disabled={!candidatePageInfo.hasNext}
+              onClick={() => setCandidatePage((page) => page + 1)}
+              type="button"
+            >
+              {t.queueNext}
+            </button>
+          </div>
+        </div>
       </section>
     </div>
   );
@@ -1015,19 +1108,42 @@ function formatMediaType(
   return t.autoDetect;
 }
 
-function subscriptionCandidateParams(filter: CandidateFilter) {
+function pageRangeLabel(page: CandidatePage) {
+  if (page.total === 0) {
+    return "0 / 0";
+  }
+  const start = (page.page - 1) * page.pageSize + 1;
+  const end = Math.min(page.page * page.pageSize, page.total);
+  return `${start}-${end} / ${page.total}`;
+}
+
+function subscriptionCandidateParams(input: {
+  filter: CandidateFilter;
+  mediaType: MediaTypeFilter;
+  page: number;
+  query: string;
+  status: CandidateStatusFilter;
+}) {
   const params = new URLSearchParams();
-  if (filter === "SUBSCRIBED") {
+  if (input.filter === "SUBSCRIBED") {
     params.set("view", "subscribed");
-    params.set("limit", "300");
-  } else if (filter === "EMPTY") {
+  } else if (input.filter === "EMPTY") {
     params.set("view", "empty");
-  } else if (filter === "ALL") {
+  } else if (input.filter === "ALL") {
     params.set("view", "all");
-    params.set("limit", "300");
   } else {
     params.set("view", "active");
-    params.set("limit", "100");
+  }
+  params.set("page", String(input.page));
+  params.set("pageSize", "50");
+  if (input.mediaType !== "ALL") {
+    params.set("mediaType", input.mediaType);
+  }
+  if (input.status !== "ALL") {
+    params.set("status", input.status);
+  }
+  if (input.query.trim()) {
+    params.set("q", input.query.trim());
   }
   return params.toString();
 }

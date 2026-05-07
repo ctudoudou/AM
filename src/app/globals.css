@@ -1098,6 +1098,61 @@ a {
   gap: 10px;
 }
 
+.candidate-stats-row,
+.candidate-pagination {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.candidate-stats-row {
+  color: var(--text-faint);
+  font-size: 12px;
+  line-height: 18px;
+}
+
+.candidate-stats-row span {
+  display: inline-flex;
+  min-height: 26px;
+  align-items: center;
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.035);
+  padding: 0 9px;
+}
+
+.candidate-pagination {
+  color: var(--text-muted);
+  font-size: 12px;
+  line-height: 18px;
+}
+
+.candidate-pagination div {
+  display: flex;
+  gap: 8px;
+}
+
+.candidate-pagination button {
+  display: inline-flex;
+  min-height: 32px;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--border-default);
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.055);
+  color: var(--text-primary);
+  padding: 0 11px;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.candidate-pagination button:disabled {
+  cursor: default;
+  opacity: 0.45;
+}
+
 .empty-panel,
 .candidate-group {
   border: 1px solid var(--border-subtle);

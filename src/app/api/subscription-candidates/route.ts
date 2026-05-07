@@ -1,3 +1,4 @@
+import type { MediaType, Prisma } from "@prisma/client";
 import { jsonError, jsonResponse } from "@/lib/api";
 import { prisma } from "@/lib/db";
 
@@ -7,23 +8,31 @@ export async function GET(request: Request) {
   try {
     const url = new URL(request.url);
     const view = url.searchParams.get("view") ?? "active";
+    const page = clampPositiveInt(Number(url.searchParams.get("page")), 1, 1_000);
+    const pageSize = clampPositiveInt(Number(url.searchParams.get("pageSize")), 50, 100);
     const requestedLimit = Number(url.searchParams.get("limit"));
     const defaultLimit = view === "all" || view === "subscribed" ? 300 : 100;
-    const limit = Number.isFinite(requestedLimit)
+    const legacyLimit = Number.isFinite(requestedLimit)
       ? Math.min(Math.max(Math.floor(requestedLimit), 1), 300)
       : defaultLimit;
-    const where =
-      view === "subscribed"
-        ? { subscriptions: { some: { enabled: true } } }
-        : view === "empty"
-          ? { candidates: { none: {} }, subscriptions: { none: { enabled: true } } }
-          : view === "all"
-            ? {}
-            : { candidates: { some: {} }, subscriptions: { none: { enabled: true } } };
+    const pagination = url.searchParams.has("page") || url.searchParams.has("pageSize");
+    const take = pagination ? pageSize : legacyLimit;
+    const skip = pagination ? (page - 1) * pageSize : 0;
+    const mediaType = normalizeMediaType(url.searchParams.get("mediaType"));
+    const status = url.searchParams.get("status") ?? "ALL";
+    const query = url.searchParams.get("q")?.trim() ?? "";
+    const viewWhere = whereForView(view);
+    const where = mergeWhere(
+      viewWhere,
+      mediaType ? { mediaType } : {},
+      whereForStatus(status),
+      whereForQuery(query),
+    );
     const groups = await prisma.releaseCandidateGroup.findMany({
       where,
       orderBy: [{ candidates: { _count: "desc" } }, { updatedAt: "desc" }],
-      take: limit,
+      skip,
+      take,
       include: {
         _count: { select: { candidates: true, subscriptions: true } },
         candidates: {
@@ -47,10 +56,24 @@ export async function GET(request: Request) {
         },
       },
     });
-    const [totalGroups, emptyGroups, ungroupedCandidates] = await Promise.all([
+    const [
+      totalGroups,
+      filteredGroups,
+      activeGroups,
+      subscribedGroups,
+      emptyGroups,
+      reviewGroups,
+      ungroupedCandidates,
+    ] = await Promise.all([
       prisma.releaseCandidateGroup.count(),
+      prisma.releaseCandidateGroup.count({ where }),
+      prisma.releaseCandidateGroup.count({ where: whereForView("active") }),
+      prisma.releaseCandidateGroup.count({ where: whereForView("subscribed") }),
       prisma.releaseCandidateGroup.count({
-        where: { candidates: { none: {} } },
+        where: whereForView("empty"),
+      }),
+      prisma.releaseCandidateGroup.count({
+        where: { reviewRequired: true },
       }),
       prisma.releaseCandidate.count({
         where: {
@@ -63,11 +86,109 @@ export async function GET(request: Request) {
       groups,
       stats: {
         totalGroups,
+        filteredGroups,
+        activeGroups,
+        subscribedGroups,
         emptyGroups,
+        reviewGroups,
         ungroupedCandidates,
+      },
+      page: {
+        page,
+        pageSize: take,
+        total: filteredGroups,
+        totalPages: Math.max(1, Math.ceil(filteredGroups / take)),
+        hasNext: skip + groups.length < filteredGroups,
+        hasPrevious: skip > 0,
       },
     });
   } catch (error) {
     return jsonError(error);
   }
+}
+
+function whereForView(view: string): Prisma.ReleaseCandidateGroupWhereInput {
+  if (view === "subscribed") {
+    return { subscriptions: { some: { enabled: true } } };
+  }
+  if (view === "empty") {
+    return { candidates: { none: {} }, subscriptions: { none: { enabled: true } } };
+  }
+  if (view === "all") {
+    return {};
+  }
+  return { candidates: { some: {} }, subscriptions: { none: { enabled: true } } };
+}
+
+function whereForStatus(status: string): Prisma.ReleaseCandidateGroupWhereInput {
+  if (status === "READY") {
+    return { candidates: { some: {} }, reviewRequired: false };
+  }
+  if (status === "REVIEW") {
+    return { reviewRequired: true };
+  }
+  if (status === "SUBSCRIBED") {
+    return { subscriptions: { some: { enabled: true } } };
+  }
+  if (status === "EMPTY") {
+    return { candidates: { none: {} } };
+  }
+  return {};
+}
+
+function whereForQuery(query: string): Prisma.ReleaseCandidateGroupWhereInput {
+  if (!query) {
+    return {};
+  }
+  const contains = { contains: query, mode: "insensitive" as const };
+  return {
+    OR: [
+      { displayTitle: contains },
+      { normalizedTitle: contains },
+      { aiSummary: contains },
+      {
+        candidates: {
+          some: {
+            OR: [
+              { rawTitle: contains },
+              { parsedTitle: contains },
+              { normalizedTitle: contains },
+              { subtitleGroup: contains },
+              { resolution: contains },
+              { codec: contains },
+              { audio: contains },
+              { subtitleLanguage: contains },
+              { releaseProfile: contains },
+              { sourceKind: contains },
+            ],
+          },
+        },
+      },
+    ],
+  };
+}
+
+function mergeWhere(...items: Prisma.ReleaseCandidateGroupWhereInput[]) {
+  const conditions = items.filter((item) => Object.keys(item).length > 0);
+  if (conditions.length === 0) {
+    return {};
+  }
+  if (conditions.length === 1) {
+    return conditions[0];
+  }
+  return { AND: conditions };
+}
+
+function normalizeMediaType(value: string | null): MediaType | null {
+  if (value === "ANIME" || value === "MOVIE" || value === "TV") {
+    return value;
+  }
+  return null;
+}
+
+function clampPositiveInt(value: number, fallback: number, max: number) {
+  if (!Number.isFinite(value)) {
+    return fallback;
+  }
+  return Math.min(Math.max(Math.floor(value), 1), max);
 }
