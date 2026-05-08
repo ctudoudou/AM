@@ -24,6 +24,7 @@ type AnimeTitle = {
   backdropUrl?: string | null;
   seasonCount: number;
   episodeCount: number;
+  updatedAt: string;
   nextEpisode?: {
     id: string;
     number: number;
@@ -48,7 +49,7 @@ type AnimeLibraryTag =
   | "NOT_STARTED"
   | "MULTI_SEASON"
   | "WITH_SYNOPSIS";
-type AnimeLibrarySort = "TITLE" | "YEAR_DESC" | "EPISODES_DESC" | "PROGRESS";
+type AnimeLibrarySort = "UPDATED_DESC" | "TITLE" | "YEAR_DESC" | "EPISODES_DESC" | "PROGRESS";
 
 export function AnimeLibraryClient({ locale }: { locale: Locale }) {
   const t = getMessages(locale);
@@ -57,7 +58,7 @@ export function AnimeLibraryClient({ locale }: { locale: Locale }) {
   const [query, setQuery] = useState("");
   const [yearFilter, setYearFilter] = useState("ALL");
   const [tagFilter, setTagFilter] = useState<AnimeLibraryTag>("ALL");
-  const [sortMode, setSortMode] = useState<AnimeLibrarySort>("TITLE");
+  const [sortMode, setSortMode] = useState<AnimeLibrarySort>("UPDATED_DESC");
   const [loading, setLoading] = useState(true);
   const [refreshingMetadata, setRefreshingMetadata] = useState(false);
   const [repairingLibrary, setRepairingLibrary] = useState(false);
@@ -238,6 +239,7 @@ export function AnimeLibraryClient({ locale }: { locale: Locale }) {
               onChange={(event) => setSortMode(event.target.value as AnimeLibrarySort)}
               value={sortMode}
             >
+              <option value="UPDATED_DESC">{t.sortUpdatedDesc}</option>
               <option value="TITLE">{t.sortTitle}</option>
               <option value="YEAR_DESC">{t.sortYearDesc}</option>
               <option value="EPISODES_DESC">{t.sortEpisodesDesc}</option>
@@ -395,6 +397,12 @@ function compareAnimeTitles(
   sortMode: AnimeLibrarySort,
   locale: Locale,
 ): number {
+  if (sortMode === "UPDATED_DESC") {
+    return (
+      new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime() ||
+      compareAnimeTitles(a, b, "TITLE", locale)
+    );
+  }
   if (sortMode === "YEAR_DESC") {
     return (b.year ?? 0) - (a.year ?? 0) || compareAnimeTitles(a, b, "TITLE", locale);
   }

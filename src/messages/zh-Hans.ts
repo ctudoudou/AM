@@ -186,6 +186,7 @@ export const zhHans = {
   tag: "标签",
   allTags: "全部标签",
   sortBy: "排序",
+  sortUpdatedDesc: "最近更新",
   sortTitle: "按标题",
   sortYearDesc: "按年份",
   sortEpisodesDesc: "按集数",

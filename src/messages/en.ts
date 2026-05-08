@@ -186,6 +186,7 @@ export const en = {
   tag: "Tag",
   allTags: "All tags",
   sortBy: "Sort",
+  sortUpdatedDesc: "Recently updated",
   sortTitle: "Title",
   sortYearDesc: "Year",
   sortEpisodesDesc: "Episodes",
