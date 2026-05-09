@@ -18,6 +18,8 @@ type MediaWithEpisodes = MediaTitle & {
       id: string;
       number: number;
       title: string | null;
+      overview?: string | null;
+      airDate?: Date | null;
       files: Array<{ id: string; originalName?: string | null }>;
     }>;
   }>;
@@ -42,6 +44,94 @@ export async function getAnimeEpisodeCoverage(mediaTitleId: string) {
     where: { mediaTitleId },
   });
   return buildWantedEpisodeCoverage(media, candidates, wanted);
+}
+
+export async function repairAnimeEpisodeNumbering(input?: { mediaTitleId?: string }) {
+  const mediaTitles = await prisma.mediaTitle.findMany({
+    where: {
+      type: "ANIME",
+      id: input?.mediaTitleId,
+    },
+    select: { id: true },
+    orderBy: { updatedAt: "desc" },
+  });
+  let repairedEpisodes = 0;
+  let movedFiles = 0;
+  let rescannedWanted = 0;
+
+  for (const mediaTitle of mediaTitles) {
+    const media = await loadMedia(mediaTitle.id);
+    const candidates = await findCandidatesForMedia(media);
+
+    for (const season of media.seasons) {
+      for (const episode of season.episodes) {
+        const rawTitle = episode.files[0]?.originalName ?? episode.title ?? "";
+        const normalized = normalizeCandidateEpisodeNumber(
+          {
+            rawTitle,
+            parsedTitle: episode.title,
+            normalizedTitle: media.primaryTitle,
+            season: season.number,
+            episodeNumber: episode.number,
+          },
+          candidates,
+        );
+        if (
+          normalized.episodeNumber === null ||
+          normalized.season !== season.number ||
+          normalized.episodeNumber === episode.number
+        ) {
+          continue;
+        }
+
+        const targetEpisode = await prisma.episode.upsert({
+          where: {
+            seasonId_number: {
+              seasonId: season.id,
+              number: normalized.episodeNumber,
+            },
+          },
+          create: {
+            seasonId: season.id,
+            number: normalized.episodeNumber,
+            title: episode.title,
+            overview: episode.overview,
+            airDate: episode.airDate,
+          },
+          update: {
+            title: episode.title ?? undefined,
+            overview: episode.overview ?? undefined,
+            airDate: episode.airDate ?? undefined,
+          },
+        });
+        const files = await prisma.mediaFile.updateMany({
+          where: { episodeId: episode.id },
+          data: { episodeId: targetEpisode.id },
+        });
+        await prisma.watchProgress.updateMany({
+          where: { episodeId: episode.id },
+          data: { episodeId: targetEpisode.id },
+        });
+        await prisma.subtitleTrack.updateMany({
+          where: { episodeId: episode.id },
+          data: { episodeId: targetEpisode.id },
+        });
+        await prisma.episode.delete({ where: { id: episode.id } }).catch(() => null);
+        movedFiles += files.count;
+        repairedEpisodes += 1;
+      }
+    }
+
+    await scanWantedEpisodes(mediaTitle.id);
+    rescannedWanted += 1;
+  }
+
+  return {
+    inspected: mediaTitles.length,
+    repairedEpisodes,
+    movedFiles,
+    rescannedWanted,
+  };
 }
 
 export async function scanWantedEpisodes(mediaTitleId: string) {

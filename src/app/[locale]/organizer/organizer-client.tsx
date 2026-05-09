@@ -199,6 +199,7 @@ export function OrganizerClient({ locale }: { locale: Locale }) {
       "organizer.inspectCompletedDownloads",
       "organizer.aiReviewPlans",
       "library.mergeDuplicateAnimeTitles",
+      "library.repairEpisodeNumbering",
     ];
     const results: Array<{ job: string; result: Record<string, unknown> }> = [];
 
@@ -534,6 +535,7 @@ function formatRepairSummary(
   const inspect = byJob.get("organizer.inspectCompletedDownloads");
   const review = byJob.get("organizer.aiReviewPlans");
   const merge = byJob.get("library.mergeDuplicateAnimeTitles");
+  const episodeRepair = byJob.get("library.repairEpisodeNumbering");
   return [
     t.repairOrganizerPipelineDone,
     `deleted: ${numberValue(cleanup?.deleted)}`,
@@ -543,6 +545,7 @@ function formatRepairSummary(
     `ai reviewed: ${numberValue(review?.reviewed)}`,
     `filtered: ${numberValue(review?.filteredItems)}`,
     `merged titles: ${numberValue(merge?.merged)}`,
+    `episode repairs: ${numberValue(episodeRepair?.repairedEpisodes)}`,
   ].join(" ");
 }
 

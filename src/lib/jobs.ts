@@ -11,6 +11,7 @@ import {
 } from "@/lib/organizer";
 import { scanLibraryRoots } from "@/lib/library-scan";
 import { mergeDuplicateAnimeTitles } from "@/lib/media-title-repair";
+import { repairAnimeEpisodeNumbering } from "@/lib/wanted-episodes";
 
 export const jobNames = [
   "rss.fetchAll",
@@ -26,6 +27,7 @@ export const jobNames = [
   "organizer.autoExecuteReadyPlans",
   "library.scan",
   "library.mergeDuplicateAnimeTitles",
+  "library.repairEpisodeNumbering",
 ] as const;
 
 export type JobName = (typeof jobNames)[number];
@@ -63,5 +65,7 @@ export async function runJob(name: JobName) {
       return scanLibraryRoots();
     case "library.mergeDuplicateAnimeTitles":
       return mergeDuplicateAnimeTitles();
+    case "library.repairEpisodeNumbering":
+      return repairAnimeEpisodeNumbering();
   }
 }
