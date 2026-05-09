@@ -69,7 +69,7 @@ export async function repairAnimeEpisodeNumbering(input?: { mediaTitleId?: strin
         const normalized = normalizeCandidateEpisodeNumber(
           {
             rawTitle,
-            parsedTitle: episode.title,
+            parsedTitle: [episode.title, media.primaryTitle, media.originalTitle].filter(Boolean).join(" "),
             normalizedTitle: media.primaryTitle,
             season: season.number,
             episodeNumber: episode.number,
@@ -320,7 +320,12 @@ export function buildWantedEpisodeCoverage(
 
   for (const seasonNumber of [...seasonNumbers].sort((a, b) => a - b)) {
     const season = media.seasons.find((item) => item.number === seasonNumber);
-    const seasonEpisodes = normalizeSeasonEpisodes(season?.episodes ?? [], seasonNumber, relevantCandidates);
+    const seasonEpisodes = normalizeSeasonEpisodes(
+      season?.episodes ?? [],
+      seasonNumber,
+      relevantCandidates,
+      [media.primaryTitle, media.originalTitle].filter(Boolean).join(" "),
+    );
     const seasonCandidates = effectiveCandidates.filter(
       (item) => item.normalized.season === seasonNumber,
     );
@@ -402,6 +407,7 @@ function normalizeSeasonEpisodes(
   episodes: MediaWithEpisodes["seasons"][number]["episodes"],
   seasonNumber: number,
   candidates: CandidateWithState[],
+  mediaTitleContext = "",
 ) {
   const byEpisodeNumber = new Map<number, MediaWithEpisodes["seasons"][number]["episodes"][number]>();
   for (const episode of episodes) {
@@ -409,7 +415,7 @@ function normalizeSeasonEpisodes(
     const normalized = normalizeCandidateEpisodeNumber(
       {
         rawTitle,
-        parsedTitle: episode.title,
+        parsedTitle: [episode.title, mediaTitleContext].filter(Boolean).join(" "),
         normalizedTitle: "",
         season: seasonNumber,
         episodeNumber: episode.number,
