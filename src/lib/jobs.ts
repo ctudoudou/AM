@@ -3,6 +3,7 @@ import { groupUngroupedCandidates, repairCandidateGroups } from "@/lib/candidate
 import { syncAria2Downloads } from "@/lib/downloads";
 import { matchSubscriptionsToCandidates } from "@/lib/subscription-matcher";
 import {
+  autoExecuteReadyOrganizerPlans,
   cleanupPollutedOrganizerPlans,
   cleanupStaleOrganizerPlans,
   inspectCompletedDownloads,
@@ -22,6 +23,7 @@ export const jobNames = [
   "organizer.cleanupPollutedPlans",
   "organizer.cleanupStalePlans",
   "organizer.aiReviewPlans",
+  "organizer.autoExecuteReadyPlans",
   "library.scan",
   "library.mergeDuplicateAnimeTitles",
 ] as const;
@@ -55,6 +57,8 @@ export async function runJob(name: JobName) {
       return cleanupStaleOrganizerPlans();
     case "organizer.aiReviewPlans":
       return reviewOrganizerPlansWithAi();
+    case "organizer.autoExecuteReadyPlans":
+      return autoExecuteReadyOrganizerPlans();
     case "library.scan":
       return scanLibraryRoots();
     case "library.mergeDuplicateAnimeTitles":

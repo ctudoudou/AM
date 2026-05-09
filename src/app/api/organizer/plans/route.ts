@@ -1,4 +1,4 @@
-import type { OrganizerPlanStatus } from "@prisma/client";
+import type { OrganizerPlanStatus, Prisma } from "@prisma/client";
 import { jsonError, jsonResponse } from "@/lib/api";
 import { prisma } from "@/lib/db";
 
@@ -23,27 +23,61 @@ export async function GET(request: Request) {
     const statusFilter: OrganizerPlanStatus[] =
       status && statusSet.has(status)
         ? [status as OrganizerPlanStatus]
-        : view === "history"
-          ? [...historyStatuses]
-          : view === "all"
-            ? [...statusValues]
-            : [...activeStatuses];
-    const activeView = view !== "history" && view !== "all" && !status;
-    const plans = await prisma.organizerPlan.findMany({
-      where: {
-        status: { in: statusFilter },
-        ...(activeView ? { items: { some: {} } } : {}),
-      },
-      orderBy: { updatedAt: "desc" },
-      take: limit,
-      include: {
-        items: true,
-        candidate: { include: { group: true } },
-        download: true,
-        mediaTitle: true,
+        : view === "auto"
+          ? ["PENDING"]
+          : view === "history"
+            ? [...historyStatuses]
+            : view === "all"
+              ? [...statusValues]
+              : [...activeStatuses];
+    const activeView = view === "active" && !status;
+    const where = {
+      status: { in: statusFilter },
+      ...(activeView ? { items: { some: {} } } : {}),
+      ...(view === "auto" ? { autoExecutable: true, items: { some: {} } } : {}),
+    } satisfies Prisma.OrganizerPlanWhereInput;
+    const [plans, groupedStatuses, active, autoExecutable, all] = await Promise.all([
+      prisma.organizerPlan.findMany({
+        where,
+        orderBy: { updatedAt: "desc" },
+        take: limit,
+        include: {
+          items: true,
+          candidate: { include: { group: true } },
+          download: true,
+          mediaTitle: true,
+        },
+      }),
+      prisma.organizerPlan.groupBy({
+        by: ["status"],
+        _count: { _all: true },
+      }),
+      prisma.organizerPlan.count({
+        where: {
+          status: { in: [...activeStatuses] },
+          items: { some: {} },
+        },
+      }),
+      prisma.organizerPlan.count({
+        where: {
+          status: "PENDING",
+          autoExecutable: true,
+          items: { some: {} },
+        },
+      }),
+      prisma.organizerPlan.count(),
+    ]);
+    return jsonResponse({
+      plans,
+      stats: {
+        active,
+        autoExecutable,
+        all,
+        byStatus: Object.fromEntries(
+          groupedStatuses.map((item) => [item.status, item._count._all]),
+        ),
       },
     });
-    return jsonResponse({ plans });
   } catch (error) {
     return jsonError(error);
   }

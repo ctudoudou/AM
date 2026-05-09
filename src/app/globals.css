@@ -1352,6 +1352,24 @@ a {
   color: #000;
 }
 
+.filter-tabs button small {
+  display: inline-flex;
+  min-width: 18px;
+  height: 18px;
+  align-items: center;
+  justify-content: center;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.08);
+  color: var(--text-muted);
+  font-size: 11px;
+  line-height: 18px;
+}
+
+.filter-tabs button.active small {
+  background: rgba(0, 0, 0, 0.12);
+  color: rgba(0, 0, 0, 0.72);
+}
+
 .download-overview {
   display: flex;
   flex-wrap: wrap;

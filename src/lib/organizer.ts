@@ -24,6 +24,7 @@ const videoExtensions = new Set([
   ".m4v",
   ".ts",
 ]);
+const minAutoOrganizerConfidence = 0.9;
 
 type OrganizerCandidateIdentity = {
   mediaType: MediaType;
@@ -186,6 +187,7 @@ export async function createOrganizerPlanForCandidateSource(input: {
       const conflict = await exists(targetPath);
       return {
         hasPlayableIdentity: identity.episodeNumber !== null,
+        sourceMatchesCandidate: sourcePathMatchesCandidate(sourcePath, candidate),
         item: {
           sourcePath,
           targetPath,
@@ -206,11 +208,17 @@ export async function createOrganizerPlanForCandidateSource(input: {
     plannedItems.every((item) => item.hasPlayableIdentity);
   const readyForConfirmation =
     metadataReliable && confidence >= 0.82 && hasPlayableIdentity && !hasConflict;
+  const readyForAutoExecution =
+    readyForConfirmation &&
+    confidence >= minAutoOrganizerConfidence &&
+    plannedItems.every((item) => item.sourceMatchesCandidate);
   const status = hasConflict ? "CONFLICT" : readyForConfirmation ? "PENDING" : "NEEDS_REVIEW";
   const reason = hasConflict
     ? "Target path conflict"
-    : readyForConfirmation
-      ? "Ready for confirmation"
+    : readyForAutoExecution
+      ? "Ready for automatic archive"
+      : readyForConfirmation
+        ? "Ready for confirmation"
       : metadataReliable
         ? "Needs manual confirmation"
         : "Metadata needs manual confirmation";
@@ -222,7 +230,7 @@ export async function createOrganizerPlanForCandidateSource(input: {
       mediaType: candidate.mediaType,
       status,
       confidence,
-      autoExecutable: false,
+      autoExecutable: readyForAutoExecution,
       reason,
       metadata: planMetadata as Prisma.InputJsonValue,
       items: {
@@ -331,6 +339,60 @@ export async function executeOrganizerPlan(planId: string, automatic = false) {
   });
 
   return updated;
+}
+
+export function isAutoExecutableOrganizerPlan(plan: {
+  status: string;
+  confidence: number;
+  autoExecutable: boolean;
+  items: Array<{ conflict: boolean }>;
+}) {
+  return (
+    plan.status === "PENDING" &&
+    plan.autoExecutable &&
+    plan.confidence >= minAutoOrganizerConfidence &&
+    plan.items.length > 0 &&
+    plan.items.every((item) => !item.conflict)
+  );
+}
+
+export async function autoExecuteReadyOrganizerPlans(limit = 20) {
+  const plans = await prisma.organizerPlan.findMany({
+    where: {
+      status: "PENDING",
+      autoExecutable: true,
+      confidence: { gte: minAutoOrganizerConfidence },
+      items: { some: {} },
+    },
+    include: { items: true },
+    orderBy: { updatedAt: "asc" },
+    take: limit,
+  });
+  let executed = 0;
+  let skipped = 0;
+  let failed = 0;
+
+  for (const plan of plans) {
+    if (!isAutoExecutableOrganizerPlan(plan)) {
+      skipped += 1;
+      continue;
+    }
+    try {
+      await executeOrganizerPlan(plan.id, true);
+      executed += 1;
+    } catch (error) {
+      failed += 1;
+      await prisma.organizerPlan.update({
+        where: { id: plan.id },
+        data: {
+          status: "FAILED",
+          reason: error instanceof Error ? error.message : "Automatic organizer execution failed.",
+        },
+      });
+    }
+  }
+
+  return { inspected: plans.length, executed, skipped, failed };
 }
 
 export async function rejectOrganizerPlan(planId: string) {

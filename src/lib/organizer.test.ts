@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { resolveOrganizerItemIdentity } from "./organizer";
+import { isAutoExecutableOrganizerPlan, resolveOrganizerItemIdentity } from "./organizer";
 
 describe("resolveOrganizerItemIdentity", () => {
   it("uses the actual file episode for downloaded batch releases", () => {
@@ -47,5 +47,43 @@ describe("resolveOrganizerItemIdentity", () => {
 
     expect(identity.season).toBe(2);
     expect(identity.episodeNumber).toBe(4);
+  });
+});
+
+describe("isAutoExecutableOrganizerPlan", () => {
+  it("allows only high-confidence pending plans without conflicts", () => {
+    expect(
+      isAutoExecutableOrganizerPlan({
+        status: "PENDING",
+        confidence: 0.93,
+        autoExecutable: true,
+        items: [{ conflict: false }],
+      }),
+    ).toBe(true);
+
+    expect(
+      isAutoExecutableOrganizerPlan({
+        status: "PENDING",
+        confidence: 0.89,
+        autoExecutable: true,
+        items: [{ conflict: false }],
+      }),
+    ).toBe(false);
+    expect(
+      isAutoExecutableOrganizerPlan({
+        status: "NEEDS_REVIEW",
+        confidence: 0.96,
+        autoExecutable: true,
+        items: [{ conflict: false }],
+      }),
+    ).toBe(false);
+    expect(
+      isAutoExecutableOrganizerPlan({
+        status: "PENDING",
+        confidence: 0.96,
+        autoExecutable: true,
+        items: [{ conflict: true }],
+      }),
+    ).toBe(false);
   });
 });

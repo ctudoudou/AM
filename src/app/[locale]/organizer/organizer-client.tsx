@@ -1,7 +1,16 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { Check, FolderSearch, Loader2, RefreshCw, ShieldCheck, WandSparkles, X } from "lucide-react";
+import {
+  Check,
+  CheckCheck,
+  FolderSearch,
+  Loader2,
+  RefreshCw,
+  ShieldCheck,
+  WandSparkles,
+  X,
+} from "lucide-react";
 import { getMessages } from "@/messages";
 import type { Locale } from "@/lib/i18n";
 
@@ -38,6 +47,7 @@ type OrganizerSettings = {
 
 const organizerFilters = [
   "ACTIVE",
+  "AUTO_READY",
   "PENDING",
   "NEEDS_REVIEW",
   "CONFLICT",
@@ -51,13 +61,22 @@ const organizerFilters = [
 
 type OrganizerFilter = (typeof organizerFilters)[number];
 
+type OrganizerStats = {
+  active: number;
+  autoExecutable: number;
+  all: number;
+  byStatus: Record<string, number | undefined>;
+};
+
 export function OrganizerClient({ locale }: { locale: Locale }) {
   const t = getMessages(locale);
   const [plans, setPlans] = useState<OrganizerPlan[]>([]);
+  const [stats, setStats] = useState<OrganizerStats | null>(null);
   const [filter, setFilter] = useState<OrganizerFilter>("ACTIVE");
   const [importDraft, setImportDraft] = useState({ root: "", mediaType: "AUTO" });
   const [importing, setImporting] = useState(false);
   const [reviewing, setReviewing] = useState(false);
+  const [autoExecuting, setAutoExecuting] = useState(false);
   const [repairing, setRepairing] = useState(false);
   const [status, setStatus] = useState("");
   const [loading, setLoading] = useState(true);
@@ -69,8 +88,9 @@ export function OrganizerClient({ locale }: { locale: Locale }) {
       if (!response.ok) {
         throw new Error(t.organizerLoadError);
       }
-      const body = (await response.json()) as { plans: OrganizerPlan[] };
+      const body = (await response.json()) as { plans: OrganizerPlan[]; stats?: OrganizerStats };
       setPlans(body.plans);
+      setStats(body.stats ?? null);
       setError("");
     } catch (loadError) {
       setError(loadError instanceof Error ? loadError.message : t.organizerLoadError);
@@ -140,6 +160,30 @@ export function OrganizerClient({ locale }: { locale: Locale }) {
     };
     setStatus(
       `${t.aiReviewPlansDone} reviewed: ${body.result?.reviewed ?? 0}, filtered: ${body.result?.filteredItems ?? 0}, flagged: ${body.result?.flagged ?? 0}, skipped: ${body.result?.skipped ?? 0}.`,
+    );
+    await load();
+  }
+
+  async function runAutoExecute() {
+    setAutoExecuting(true);
+    setStatus("");
+    setError("");
+    const response = await fetch("/api/jobs/run", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ job: "organizer.autoExecuteReadyPlans" }),
+    });
+    setAutoExecuting(false);
+    if (!response.ok) {
+      const body = await response.json().catch(() => null);
+      setError(body?.message || t.autoExecuteOrganizerPlansError);
+      return;
+    }
+    const body = (await response.json()) as {
+      result?: { inspected?: number; executed?: number; skipped?: number; failed?: number };
+    };
+    setStatus(
+      `${t.autoExecuteOrganizerPlansDone} inspected: ${body.result?.inspected ?? 0}, executed: ${body.result?.executed ?? 0}, skipped: ${body.result?.skipped ?? 0}, failed: ${body.result?.failed ?? 0}.`,
     );
     await load();
   }
@@ -250,6 +294,14 @@ export function OrganizerClient({ locale }: { locale: Locale }) {
             {repairing ? <Loader2 size={14} /> : <ShieldCheck size={14} />}
             {t.repairOrganizerPipeline}
           </button>
+          <button
+            disabled={autoExecuting || (stats ? stats.autoExecutable === 0 : false)}
+            onClick={() => void runAutoExecute()}
+            type="button"
+          >
+            {autoExecuting ? <Loader2 size={14} /> : <CheckCheck size={14} />}
+            {t.autoExecuteOrganizerPlans}
+          </button>
           <button disabled={reviewing} onClick={() => void runAiReview()} type="button">
             {reviewing ? <Loader2 size={14} /> : <WandSparkles size={14} />}
             {t.aiReviewPlans}
@@ -292,7 +344,8 @@ export function OrganizerClient({ locale }: { locale: Locale }) {
             onClick={() => setFilter(status)}
             type="button"
           >
-            {formatOrganizerFilter(status, t)}
+            <span>{formatOrganizerFilter(status, t)}</span>
+            <small>{countForOrganizerFilter(status, stats)}</small>
           </button>
         ))}
       </div>
@@ -386,6 +439,8 @@ function organizerPlanParams(filter: OrganizerFilter) {
   const params = new URLSearchParams();
   if (filter === "ACTIVE") {
     params.set("view", "active");
+  } else if (filter === "AUTO_READY") {
+    params.set("view", "auto");
   } else if (filter === "HISTORY") {
     params.set("view", "history");
   } else if (filter === "ALL") {
@@ -402,13 +457,57 @@ function formatOrganizerFilter(filter: OrganizerFilter, t: ReturnType<typeof get
   if (filter === "ACTIVE") {
     return t.activeOrganizerPlans;
   }
+  if (filter === "AUTO_READY") {
+    return t.autoExecutableOrganizerPlans;
+  }
   if (filter === "HISTORY") {
     return t.organizerHistory;
   }
   if (filter === "ALL") {
     return t.allOrganizerPlans;
   }
-  return filter;
+  if (filter === "PENDING") {
+    return t.organizerStatusPending;
+  }
+  if (filter === "NEEDS_REVIEW") {
+    return t.organizerStatusNeedsReview;
+  }
+  if (filter === "CONFLICT") {
+    return t.organizerStatusConflict;
+  }
+  if (filter === "FAILED") {
+    return t.organizerStatusFailed;
+  }
+  if (filter === "EXECUTED") {
+    return t.organizerStatusExecuted;
+  }
+  if (filter === "REJECTED") {
+    return t.organizerStatusRejected;
+  }
+  return t.organizerStatusAutoArchived;
+}
+
+function countForOrganizerFilter(filter: OrganizerFilter, stats: OrganizerStats | null) {
+  if (!stats) {
+    return "-";
+  }
+  if (filter === "ACTIVE") {
+    return String(stats.active);
+  }
+  if (filter === "AUTO_READY") {
+    return String(stats.autoExecutable);
+  }
+  if (filter === "HISTORY") {
+    return String(
+      (stats.byStatus.EXECUTED ?? 0) +
+        (stats.byStatus.AUTO_ARCHIVED ?? 0) +
+        (stats.byStatus.REJECTED ?? 0),
+    );
+  }
+  if (filter === "ALL") {
+    return String(stats.all);
+  }
+  return String(stats.byStatus[filter] ?? 0);
 }
 
 function formatMediaType(
