@@ -3,6 +3,7 @@ import { XMLParser } from "fast-xml-parser";
 import { Prisma, type MediaTitle, type TitleAlias, type WantedEpisode } from "@prisma/client";
 import { prisma } from "@/lib/db";
 import { normalizeTitleAliases } from "@/lib/anime-parser";
+import { normalizeParsedReleaseEpisode } from "@/lib/episode-normalizer";
 import { parseMediaReleaseTitle } from "@/lib/media-parser";
 import { enqueueCandidateDownload } from "@/lib/downloads";
 
@@ -147,7 +148,13 @@ export async function selectWantedSearchResultForDownload(
   const wanted = await loadWanted(wantedEpisodeId);
   const parsed = parseMediaReleaseTitle(input.title, "ANIME");
   const targetEpisode = wanted.episodeNumber;
-  const parsedEpisode = parsed.episodeNumber ? Math.floor(parsed.episodeNumber) : null;
+  const normalizedEpisode = normalizeParsedReleaseEpisode({
+    rawTitle: input.title,
+    parsedTitle: parsed.parsedTitle,
+    season: parsed.season ?? wanted.seasonNumber,
+    episodeNumber: parsed.episodeNumber,
+  });
+  const parsedEpisode = normalizedEpisode.episodeNumber;
   if (parsedEpisode !== targetEpisode) {
     throw new Error("Selected release does not match the wanted episode.");
   }
@@ -197,8 +204,8 @@ export async function selectWantedSearchResultForDownload(
         parsedTitle: parsed.parsedTitle,
         normalizedTitle: parsed.normalizedTitle,
         subtitleGroup: parsed.subtitleGroup,
-        episodeNumber: parsed.episodeNumber,
-        season: parsed.season ?? wanted.seasonNumber,
+        episodeNumber: normalizedEpisode.episodeNumber,
+        season: normalizedEpisode.season,
         resolution: parsed.resolution,
         codec: parsed.codec,
         audio: parsed.audio,
@@ -385,8 +392,14 @@ function addScoredResult(
     return;
   }
   const parsed = parseMediaReleaseTitle(result.title, "ANIME");
-  const parsedEpisode = parsed.episodeNumber ? Math.floor(parsed.episodeNumber) : null;
-  const parsedSeason = parsed.season ?? wanted.seasonNumber;
+  const normalizedEpisode = normalizeParsedReleaseEpisode({
+    rawTitle: result.title,
+    parsedTitle: parsed.parsedTitle,
+    season: parsed.season ?? wanted.seasonNumber,
+    episodeNumber: parsed.episodeNumber,
+  });
+  const parsedEpisode = normalizedEpisode.episodeNumber;
+  const parsedSeason = normalizedEpisode.season;
   const titleMatches = normalizeTitleAliases(parsed.parsedTitle)
     .concat(normalizeTitleAliases(parsed.normalizedTitle))
     .some((alias) => mediaAliasSet.has(alias));
@@ -407,8 +420,8 @@ function addScoredResult(
         : "Title or episode partially matched",
     parsed: {
       title: parsed.parsedTitle,
-      episodeNumber: parsed.episodeNumber ?? null,
-      season: parsed.season ?? null,
+      episodeNumber: normalizedEpisode.episodeNumber,
+      season: normalizedEpisode.season,
       resolution: parsed.resolution ?? null,
       subtitleGroup: parsed.subtitleGroup ?? null,
       codec: parsed.codec ?? null,

@@ -34,8 +34,29 @@ describe("resolveMediaDisplayTitle", () => {
       settings,
     );
 
-    expect(title.displayTitle).toBe("魔入りました！入間くん 第4シリーズ");
+    expect(title.displayTitle).toBe("魔入りました！入間くん");
     expect(title.matchedLocale).toBe("ja");
+  });
+
+  it("removes explicit season qualifiers from display titles", () => {
+    const title = resolveMediaDisplayTitle(
+      {
+        primaryTitle: "Kanojo, Okarishimasu 5th Season",
+        originalTitle: "彼女、お借りします 第5期",
+        aliases: [
+          { title: "出租女友 第五季", locale: "zh-Hant" },
+          { title: "租借女友 第五季", locale: "zh-Hant" },
+          { title: "RentaGirlfriend S05", locale: "romaji" },
+        ],
+      },
+      settings,
+    );
+
+    expect(title.displayTitle).toBe("出租女友");
+    expect(title.secondaryTitles).toContain("租借女友");
+    expect([title.displayTitle, ...title.secondaryTitles].join(" ")).not.toMatch(
+      /第五季|第5期|5th Season|S05/i,
+    );
   });
 
   it("uses custom display title above aliases", () => {

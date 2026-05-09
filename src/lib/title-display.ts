@@ -17,6 +17,12 @@ const toSimplifiedChinese = OpenCC.Converter({ from: "tw", to: "cn" });
 const toTraditionalChinese = OpenCC.Converter({ from: "cn", to: "tw" });
 const releaseEditionPattern =
   /(?:^|[\s（(【\[])(?:放送版|オンエア版|先行放送版|先行版|無修正版|修正版|on[\s-]?air\s+version|broadcast\s+version|uncensored|censored)(?:$|[\s）)】\]])/gi;
+const seasonQualifierPatterns = [
+  /\s+第\s*[一二三四五六七八九十\d]+\s*(?:季|期|シリーズ|クール)\s*$/i,
+  /\s+\d{1,2}(?:st|nd|rd|th)\s+season\s*$/i,
+  /\s+season\s*\d{1,2}\s*$/i,
+  /\s+s\d{1,2}\s*$/i,
+];
 
 type TitleAliasInput = {
   title: string;
@@ -263,12 +269,19 @@ function splitTitleParts(value: string) {
 }
 
 function cleanTitle(value: string | null | undefined) {
-  return (
+  const cleaned =
     value
       ?.replace(releaseEditionPattern, " ")
       .replace(/\s+/g, " ")
-      .trim() || ""
-  );
+      .trim() || "";
+  return stripSeasonQualifier(cleaned);
+}
+
+function stripSeasonQualifier(value: string) {
+  return seasonQualifierPatterns
+    .reduce((current, pattern) => current.replace(pattern, ""), value)
+    .replace(/\s+/g, " ")
+    .trim();
 }
 
 function uniqueTitles(values: string[]) {

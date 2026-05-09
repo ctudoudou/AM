@@ -38,7 +38,7 @@ const releaseSeasonBannerPattern =
 const releaseDescriptorPattern =
   /(?:日英[双雙]语|[中日英]+[双雙]语|多[国國]字幕|无字幕|無字幕|内[嵌封]|內[嵌封]|外挂字幕|外掛字幕|简体中文|繁体中文|繁體中文|简中|繁中|中文字幕)/gi;
 const seasonTitlePatterns = [
-  /第\s*(?<season>[一二三四五六七八九十\d]+)\s*(?:季|期|シリーズ)/i,
+  /第\s*(?<season>[一二三四五六七八九十\d]+)\s*(?:季|期|シリーズ|クール)/i,
   /\bS(?<season>\d{1,2})\b(?!\s*E\d)/i,
   /\b(?<season>\d{1,2})(?:st|nd|rd|th)\s+Season\b/i,
   /\bSeason\s*(?<season>\d{1,2})\b/i,

@@ -326,4 +326,87 @@ describe("buildWantedEpisodeCoverage", () => {
       }),
     );
   });
+
+  it("does not let base-season cumulative candidates pollute a later-season title", () => {
+    const coverage = buildWantedEpisodeCoverage(
+      {
+        ...baseMedia,
+        primaryTitle: "Kanojo, Okarishimasu 5th Season",
+        originalTitle: "彼女、お借りします 第5期",
+        aliases: [{ title: "出租女友 第五季" }, { title: "出租女友" }],
+        seasons: [
+          {
+            number: 5,
+            episodes: [
+              { id: "s5e3", number: 3, title: "EP03", files: [{ id: "file3" }] },
+              { id: "s5e4", number: 4, title: "EP04", files: [{ id: "file4" }] },
+            ],
+          },
+        ],
+      },
+      [
+        wantedCandidate({ id: "s5e5", rawTitle: "出租女友 第五季 - 05", season: 5, episodeNumber: 5 }),
+        wantedCandidate({ id: "abs52", rawTitle: "出租女友 第五季 - 52", season: 5, episodeNumber: 52 }),
+        wantedCandidate({ id: "base49", rawTitle: "租借女友 - 49", season: 1, episodeNumber: 49 }),
+      ],
+      [
+        {
+          id: "stale-52",
+          seasonNumber: 5,
+          episodeNumber: 52,
+          status: "MISSING",
+          ignored: false,
+          matchedCandidateId: null,
+          reason: "stale",
+        },
+      ],
+    );
+
+    expect(coverage.seasons).toEqual([5]);
+    expect(coverage.episodes.map((episode) => episode.episodeNumber)).toEqual([1, 2, 3, 4, 5]);
+    expect(coverage.episodes.find((episode) => episode.episodeNumber === 5)).toMatchObject({
+      status: "CANDIDATE_FOUND",
+      candidateId: "s5e5",
+    });
+    expect(coverage.episodes.some((episode) => episode.episodeNumber === 52)).toBe(false);
+  });
 });
+
+function wantedCandidate(input: {
+  id: string;
+  rawTitle: string;
+  season: number;
+  episodeNumber: number;
+}) {
+  return {
+    id: input.id,
+    groupId: "group-1",
+    rssItemId: "rss-1",
+    mediaType: "ANIME" as const,
+    rawTitle: input.rawTitle,
+    parsedTitle: input.rawTitle.replace(/\s+-\s+\d+$/, ""),
+    normalizedTitle: "出租女友",
+    subtitleGroup: null,
+    episodeNumber: input.episodeNumber,
+    season: input.season,
+    resolution: null,
+    codec: null,
+    audio: null,
+    subtitleLanguage: null,
+    releaseProfile: null,
+    sourceKind: null,
+    variantKey: null,
+    releaseTags: null,
+    magnetUrl: "magnet:?xt=urn:btih:test",
+    torrentUrl: null,
+    torrentFilePath: null,
+    sourceUrl: null,
+    confidence: 0.9,
+    status: "READY" as const,
+    createdAt: new Date(),
+    updatedAt: new Date(),
+    downloads: [],
+    organizerPlans: [],
+    group: { displayTitle: "出租女友 第五季", normalizedTitle: "出租女友", aliases: [] },
+  };
+}

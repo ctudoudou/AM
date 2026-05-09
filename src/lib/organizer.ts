@@ -7,6 +7,10 @@ import { getAppSettings } from "@/lib/settings";
 import { matchMetadataForGroup, type MetadataMatch } from "@/lib/metadata";
 import { addMediaTitleAliases, findExistingMediaTitle } from "@/lib/media-title-repair";
 import { normalizeTitleAliases } from "@/lib/anime-parser";
+import {
+  normalizeCandidateEpisodeNumber,
+  parseTargetPathEpisodeIdentity,
+} from "@/lib/episode-normalizer";
 import { parseMediaReleaseTitle } from "@/lib/media-parser";
 import { aliasesFromMetadataRaw } from "@/lib/title-display";
 import {
@@ -125,6 +129,28 @@ export async function createOrganizerPlanForCandidateSource(input: {
     where: { id: input.candidateId },
     include: { group: true },
   });
+  const siblingCandidates = await prisma.releaseCandidate.findMany({
+    where: {
+      mediaType: candidate.mediaType,
+      normalizedTitle: candidate.normalizedTitle,
+      season: candidate.season,
+      groupId: candidate.groupId,
+    },
+    select: {
+      id: true,
+      rawTitle: true,
+      parsedTitle: true,
+      normalizedTitle: true,
+      season: true,
+      episodeNumber: true,
+    },
+  });
+  const normalizedCandidateEpisode = normalizeCandidateEpisodeNumber(candidate, siblingCandidates);
+  const organizerCandidate = {
+    ...candidate,
+    season: normalizedCandidateEpisode.season,
+    episodeNumber: normalizedCandidateEpisode.episodeNumber,
+  };
 
   if (!candidate.groupId) {
     return prisma.organizerPlan.create({
@@ -168,20 +194,23 @@ export async function createOrganizerPlanForCandidateSource(input: {
     files.map(async (sourcePath) => {
       const stat = await fs.stat(sourcePath);
       const identity = resolveOrganizerItemIdentity({
-        candidate,
+        candidate: organizerCandidate,
         sourcePath,
       });
       const targetPath = buildTargetPath({
-        mediaType: candidate.mediaType,
+        mediaType: organizerCandidate.mediaType,
         roots: settings.directories,
-        title: planMetadata.title || candidate.group?.displayTitle || candidate.parsedTitle,
+        title:
+          planMetadata.title ||
+          organizerCandidate.group?.displayTitle ||
+          organizerCandidate.parsedTitle,
         year: planMetadata.year,
         season: identity.season,
         episode: identity.episodeNumber,
         episodeTitle: identity.episodeTitle,
-        group: candidate.subtitleGroup,
-        resolution: candidate.resolution,
-        codec: candidate.codec,
+        group: organizerCandidate.subtitleGroup,
+        resolution: organizerCandidate.resolution,
+        codec: organizerCandidate.codec,
         sourcePath,
       });
       const conflict = await exists(targetPath);
@@ -204,7 +233,7 @@ export async function createOrganizerPlanForCandidateSource(input: {
 
   const hasConflict = itemInputs.some((item) => item.conflict);
   const hasPlayableIdentity =
-    candidate.mediaType === "MOVIE" ||
+    organizerCandidate.mediaType === "MOVIE" ||
     plannedItems.every((item) => item.hasPlayableIdentity);
   const readyForConfirmation =
     metadataReliable && confidence >= 0.82 && hasPlayableIdentity && !hasConflict;
@@ -227,7 +256,7 @@ export async function createOrganizerPlanForCandidateSource(input: {
     data: {
       downloadId: input.downloadId,
       candidateId: candidate.id,
-      mediaType: candidate.mediaType,
+      mediaType: organizerCandidate.mediaType,
       status,
       confidence,
       autoExecutable: readyForAutoExecution,
@@ -885,16 +914,24 @@ async function upsertMediaRecords(plan: {
     },
   });
   for (const item of plan.items) {
-    const identity = candidate
-      ? resolveOrganizerItemIdentity({
-          candidate,
-          sourcePath: item.originalName,
-        })
-      : {
-          season: 1,
-          episodeNumber: mediaType === "MOVIE" ? 1 : 0,
-          episodeTitle: path.basename(item.originalName, path.extname(item.originalName)),
-        };
+    const targetIdentity = parseTargetPathEpisodeIdentity(item.targetPath);
+    const identity =
+      targetIdentity && candidate
+        ? {
+            season: targetIdentity.season,
+            episodeNumber: targetIdentity.episodeNumber,
+            episodeTitle: parseMediaReleaseTitle(item.originalName, mediaType).parsedTitle,
+          }
+        : candidate
+          ? resolveOrganizerItemIdentity({
+              candidate,
+              sourcePath: item.originalName,
+            })
+          : {
+              season: 1,
+              episodeNumber: mediaType === "MOVIE" ? 1 : 0,
+              episodeTitle: path.basename(item.originalName, path.extname(item.originalName)),
+            };
     const season = await prisma.season.upsert({
       where: { mediaId_number: { mediaId: media.id, number: identity.season } },
       create: { mediaId: media.id, number: identity.season },

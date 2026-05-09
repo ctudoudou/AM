@@ -2,6 +2,7 @@ import type { MediaTitle, ReleaseCandidate, WantedEpisodeStatus } from "@prisma/
 import { prisma } from "@/lib/db";
 import { normalizeTitleAliases } from "@/lib/anime-parser";
 import { enqueueCandidateDownload } from "@/lib/downloads";
+import { normalizeCandidateEpisodeNumber } from "@/lib/episode-normalizer";
 
 type CandidateWithState = ReleaseCandidate & {
   downloads: Array<{ status: string }>;
@@ -17,7 +18,7 @@ type MediaWithEpisodes = MediaTitle & {
       id: string;
       number: number;
       title: string | null;
-      files: Array<{ id: string }>;
+      files: Array<{ id: string; originalName?: string | null }>;
     }>;
   }>;
 };
@@ -52,6 +53,20 @@ export async function scanWantedEpisodes(mediaTitleId: string) {
     await prisma.wantedEpisode.findMany({ where: { mediaTitleId } }),
   );
   const changed = [];
+  const coverageKeys = new Set(
+    coverage.episodes.map((item) => `${item.seasonNumber}:${item.episodeNumber}`),
+  );
+  const staleConditions = await staleWantedEpisodeConditions(mediaTitleId, coverageKeys);
+
+  if (staleConditions.length > 0) {
+    await prisma.wantedEpisode.deleteMany({
+      where: {
+        mediaTitleId,
+        ignored: false,
+        OR: staleConditions,
+      },
+    });
+  }
 
   for (const item of coverage.episodes) {
     if (item.status === "AVAILABLE") {
@@ -154,7 +169,7 @@ async function loadMedia(mediaTitleId: string) {
           episodes: {
             orderBy: { number: "asc" },
             include: {
-              files: { select: { id: true } },
+              files: { select: { id: true, originalName: true } },
             },
           },
         },
@@ -178,7 +193,9 @@ async function findCandidatesForMedia(media: MediaWithEpisodes) {
     orderBy: [{ episodeNumber: "asc" }, { createdAt: "desc" }],
   });
 
-  return candidates.filter((candidate) => candidateMatchesMedia(candidate, aliases));
+  return candidates.filter(
+    (candidate) => candidateMatchesMedia(candidate, aliases) && candidateMatchesMediaSeason(candidate, media),
+  );
 }
 
 export function buildWantedEpisodeCoverage(
@@ -194,30 +211,40 @@ export function buildWantedEpisodeCoverage(
     reason: string | null;
   }>,
 ) {
+  const relevantCandidates = candidates.filter((candidate) => candidateMatchesMediaSeason(candidate, media));
+  const effectiveCandidates = relevantCandidates.map((candidate) => ({
+    candidate,
+    normalized: normalizeCandidateEpisodeNumber(candidate, relevantCandidates),
+  }));
   const wantedMap = new Map(
     wantedRows.map((row) => [`${row.seasonNumber}:${row.episodeNumber}`, row]),
   );
   const seasonNumbers = new Set([
     ...media.seasons.map((season) => season.number),
-    ...candidates.map((candidate) => candidate.season ?? 1),
-    ...wantedRows.map((row) => row.seasonNumber),
+    ...effectiveCandidates.map((item) => item.normalized.season),
+    ...wantedRows
+      .filter((row) => row.ignored)
+      .map((row) => row.seasonNumber),
   ]);
   const episodes: EpisodeCoverageItem[] = [];
 
   for (const seasonNumber of [...seasonNumbers].sort((a, b) => a - b)) {
     const season = media.seasons.find((item) => item.number === seasonNumber);
-    const seasonCandidates = candidates.filter((candidate) => (candidate.season ?? 1) === seasonNumber);
+    const seasonEpisodes = normalizeSeasonEpisodes(season?.episodes ?? [], seasonNumber, relevantCandidates);
+    const seasonCandidates = effectiveCandidates.filter(
+      (item) => item.normalized.season === seasonNumber,
+    );
     const maxEpisode = Math.max(
       0,
-      ...((season?.episodes ?? []).map((episode) => episode.number)),
+      ...seasonEpisodes.map((episode) => episode.number),
       ...seasonCandidates.map(candidateKnownMaxEpisode),
       ...wantedRows
-        .filter((row) => row.seasonNumber === seasonNumber)
+        .filter((row) => row.seasonNumber === seasonNumber && row.ignored)
         .map((row) => row.episodeNumber),
     );
 
     for (let episodeNumber = 1; episodeNumber <= maxEpisode; episodeNumber += 1) {
-      const episode = season?.episodes.find((item) => item.number === episodeNumber) ?? null;
+      const episode = seasonEpisodes.find((item) => item.number === episodeNumber) ?? null;
       const wanted = wantedMap.get(`${seasonNumber}:${episodeNumber}`) ?? null;
       if (episode && episode.files.length > 0) {
         episodes.push({
@@ -250,9 +277,9 @@ export function buildWantedEpisodeCoverage(
       }
 
       const episodeCandidates = seasonCandidates.filter(
-        (candidate) => Math.floor(candidate.episodeNumber ?? 0) === episodeNumber,
+        (item) => item.normalized.episodeNumber === episodeNumber,
       );
-      const bestCandidate = selectBestCandidate(episodeCandidates);
+      const bestCandidate = selectBestCandidate(episodeCandidates.map((item) => item.candidate));
       const state = bestCandidate
         ? stateForCandidate(bestCandidate, episodeCandidates.length)
         : {
@@ -281,11 +308,43 @@ export function buildWantedEpisodeCoverage(
   };
 }
 
-function candidateKnownMaxEpisode(candidate: CandidateWithState) {
-  if (candidate.episodeNumber !== null && candidate.episodeNumber !== undefined) {
-    return Math.floor(candidate.episodeNumber);
+function normalizeSeasonEpisodes(
+  episodes: MediaWithEpisodes["seasons"][number]["episodes"],
+  seasonNumber: number,
+  candidates: CandidateWithState[],
+) {
+  const byEpisodeNumber = new Map<number, MediaWithEpisodes["seasons"][number]["episodes"][number]>();
+  for (const episode of episodes) {
+    const rawTitle = episode.files[0]?.originalName ?? episode.title ?? "";
+    const normalized = normalizeCandidateEpisodeNumber(
+      {
+        rawTitle,
+        parsedTitle: episode.title,
+        normalizedTitle: "",
+        season: seasonNumber,
+        episodeNumber: episode.number,
+      },
+      candidates,
+    );
+    const number = normalized.episodeNumber ?? episode.number;
+    const existing = byEpisodeNumber.get(number);
+    if (existing) {
+      existing.files.push(...episode.files);
+      continue;
+    }
+    byEpisodeNumber.set(number, { ...episode, number, files: [...episode.files] });
   }
-  return extractBatchEpisodeEnd(candidate.rawTitle) ?? 0;
+  return [...byEpisodeNumber.values()].sort((a, b) => a.number - b.number);
+}
+
+function candidateKnownMaxEpisode(input: {
+  candidate: CandidateWithState;
+  normalized: { episodeNumber: number | null };
+}) {
+  if (input.normalized.episodeNumber !== null) {
+    return input.normalized.episodeNumber;
+  }
+  return extractBatchEpisodeEnd(input.candidate.rawTitle) ?? 0;
 }
 
 function extractBatchEpisodeEnd(value: string) {
@@ -366,6 +425,18 @@ function candidateMatchesMedia(candidate: CandidateWithState, mediaAliasSet: Set
     .some((alias) => mediaAliasSet.has(alias));
 }
 
+function candidateMatchesMediaSeason(candidate: CandidateWithState, media: MediaWithEpisodes) {
+  const mediaSeasons = new Set(media.seasons.map((season) => season.number));
+  if (mediaSeasons.size === 0) {
+    return true;
+  }
+  const candidateSeason = candidate.season ?? 1;
+  if (mediaSeasons.has(candidateSeason)) {
+    return true;
+  }
+  return !(candidateSeason === 1 && !mediaSeasons.has(1));
+}
+
 function mediaAliases(media: MediaWithEpisodes) {
   return new Set(
     [
@@ -375,6 +446,16 @@ function mediaAliases(media: MediaWithEpisodes) {
       ...media.seasons.flatMap((season) => season.episodes.map((episode) => episode.title ?? "")),
     ].flatMap((value) => normalizeTitleAliases(value ?? "")),
   );
+}
+
+async function staleWantedEpisodeConditions(mediaTitleId: string, coverageKeys: Set<string>) {
+  const existing = await prisma.wantedEpisode.findMany({
+    where: { mediaTitleId, ignored: false },
+    select: { seasonNumber: true, episodeNumber: true },
+  });
+  return existing
+    .filter((row) => !coverageKeys.has(`${row.seasonNumber}:${row.episodeNumber}`))
+    .map((row) => ({ seasonNumber: row.seasonNumber, episodeNumber: row.episodeNumber }));
 }
 
 function groupAliases(value: unknown) {
