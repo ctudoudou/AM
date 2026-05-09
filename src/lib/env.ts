@@ -22,7 +22,9 @@ const parsedEnv = envSchema.parse(process.env);
 
 export const serverEnv = {
   ...parsedEnv,
-  IMPORT_ROOT: parsedEnv.IMPORT_ROOT || path.join(parsedEnv.DATA_ROOT, "import"),
+  IMPORT_ROOT:
+    parsedEnv.IMPORT_ROOT ||
+    path.join(/*turbopackIgnore: true*/ parsedEnv.DATA_ROOT, "import"),
 };
 
 export const allowedRoots = [
@@ -35,10 +37,10 @@ export const allowedRoots = [
   serverEnv.TV_LIBRARY_DIR,
   serverEnv.METADATA_DIR,
   serverEnv.TRANSCODES_DIR,
-].map((root) => path.resolve(root));
+].map((root) => path.resolve(/*turbopackIgnore: true*/ root));
 
 export function assertInsideAllowedRoots(candidatePath: string): string {
-  const resolved = path.resolve(candidatePath);
+  const resolved = path.resolve(/*turbopackIgnore: true*/ candidatePath);
   const isAllowed = allowedRoots.some(
     (root) => resolved === root || resolved.startsWith(`${root}${path.sep}`),
   );

@@ -21,6 +21,7 @@ export async function GET(request: Request) {
     const mediaType = normalizeMediaType(url.searchParams.get("mediaType"));
     const status = url.searchParams.get("status") ?? "ALL";
     const query = url.searchParams.get("q")?.trim() ?? "";
+    const sort = normalizeSort(url.searchParams.get("sort"));
     const viewWhere = whereForView(view);
     const where = mergeWhere(
       viewWhere,
@@ -30,7 +31,7 @@ export async function GET(request: Request) {
     );
     const groups = await prisma.releaseCandidateGroup.findMany({
       where,
-      orderBy: [{ candidates: { _count: "desc" } }, { updatedAt: "desc" }],
+      orderBy: orderByForSort(sort),
       skip,
       take,
       include: {
@@ -184,6 +185,40 @@ function normalizeMediaType(value: string | null): MediaType | null {
     return value;
   }
   return null;
+}
+
+function normalizeSort(value: string | null) {
+  if (value === "UNSUBSCRIBED" || value === "VERSIONS" || value === "REVIEW") {
+    return value;
+  }
+  return "LATEST";
+}
+
+function orderByForSort(sort: ReturnType<typeof normalizeSort>) {
+  if (sort === "UNSUBSCRIBED") {
+    return [
+      { subscriptions: { _count: "asc" } },
+      { updatedAt: "desc" },
+      { candidates: { _count: "desc" } },
+    ] satisfies Prisma.ReleaseCandidateGroupOrderByWithRelationInput[];
+  }
+  if (sort === "VERSIONS") {
+    return [
+      { candidates: { _count: "desc" } },
+      { updatedAt: "desc" },
+    ] satisfies Prisma.ReleaseCandidateGroupOrderByWithRelationInput[];
+  }
+  if (sort === "REVIEW") {
+    return [
+      { reviewRequired: "desc" },
+      { updatedAt: "desc" },
+      { candidates: { _count: "desc" } },
+    ] satisfies Prisma.ReleaseCandidateGroupOrderByWithRelationInput[];
+  }
+  return [
+    { updatedAt: "desc" },
+    { candidates: { _count: "desc" } },
+  ] satisfies Prisma.ReleaseCandidateGroupOrderByWithRelationInput[];
 }
 
 function clampPositiveInt(value: number, fallback: number, max: number) {

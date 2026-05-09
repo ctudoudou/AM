@@ -8,6 +8,7 @@ const activeStatuses = ["PENDING", "NEEDS_REVIEW", "CONFLICT", "FAILED"] as cons
 const historyStatuses = ["EXECUTED", "AUTO_ARCHIVED", "REJECTED"] as const;
 const statusValues = [...activeStatuses, ...historyStatuses] as const;
 const statusSet = new Set<string>(statusValues);
+const minAutoOrganizerConfidence = 0.9;
 
 export async function GET(request: Request) {
   try {
@@ -34,7 +35,13 @@ export async function GET(request: Request) {
     const where = {
       status: { in: statusFilter },
       ...(activeView ? { items: { some: {} } } : {}),
-      ...(view === "auto" ? { autoExecutable: true, items: { some: {} } } : {}),
+      ...(view === "auto"
+        ? {
+            autoExecutable: true,
+            confidence: { gte: minAutoOrganizerConfidence },
+            items: { some: {}, every: { conflict: false } },
+          }
+        : {}),
     } satisfies Prisma.OrganizerPlanWhereInput;
     const [plans, groupedStatuses, active, autoExecutable, all] = await Promise.all([
       prisma.organizerPlan.findMany({
@@ -62,7 +69,8 @@ export async function GET(request: Request) {
         where: {
           status: "PENDING",
           autoExecutable: true,
-          items: { some: {} },
+          confidence: { gte: minAutoOrganizerConfidence },
+          items: { some: {}, every: { conflict: false } },
         },
       }),
       prisma.organizerPlan.count(),

@@ -28,12 +28,14 @@ export async function GET(request: Request) {
       path.join(/*turbopackIgnore: true*/ rootPath, relativePath),
       rootPath,
     );
-    const entries = await fs.readdir(currentPath, { withFileTypes: true }).catch((error: unknown) => {
-      if (isMissingPathError(error)) {
-        return null;
-      }
-      throw error;
-    });
+    const entries = await fs
+      .readdir(/* turbopackIgnore: true */ currentPath, { withFileTypes: true })
+      .catch((error: unknown) => {
+        if (isMissingPathError(error)) {
+          return null;
+        }
+        throw error;
+      });
     if (!entries) {
       return jsonResponse({
         root: rootKey,
@@ -44,20 +46,32 @@ export async function GET(request: Request) {
         items: [],
       });
     }
-    const items = await Promise.all(
-      entries.map(async (entry) => {
-        const fullPath = path.join(/*turbopackIgnore: true*/ currentPath, entry.name);
-        const stat = await fs.stat(fullPath);
-        return {
-          name: entry.name,
-          type: entry.isDirectory() ? "directory" : "file",
-          sizeBytes: entry.isDirectory() ? null : BigInt(stat.size),
-          modifiedAt: stat.mtime,
-          extension: entry.isDirectory() ? null : path.extname(entry.name).slice(1),
-          relativePath: path.relative(rootPath, fullPath),
-        };
-      }),
-    );
+    const items = (
+      await Promise.all(
+        entries.map(async (entry) => {
+          const fullPath = path.join(currentPath, entry.name);
+          const stat = await fs
+            .stat(/* turbopackIgnore: true */ fullPath)
+            .catch((error: unknown) => {
+              if (isMissingPathError(error)) {
+                return null;
+              }
+              throw error;
+            });
+          if (!stat) {
+            return null;
+          }
+          return {
+            name: entry.name,
+            type: entry.isDirectory() ? "directory" : "file",
+            sizeBytes: entry.isDirectory() ? null : BigInt(stat.size),
+            modifiedAt: stat.mtime,
+            extension: entry.isDirectory() ? null : path.extname(entry.name).slice(1),
+            relativePath: path.relative(rootPath, fullPath),
+          };
+        }),
+      )
+    ).filter((item) => item !== null);
 
     items.sort((a, b) => {
       if (a.type !== b.type) {

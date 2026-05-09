@@ -1634,6 +1634,54 @@ a {
   line-height: 18px;
 }
 
+.organizer-plan-badges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.organizer-badge {
+  display: inline-flex;
+  min-height: 22px;
+  align-items: center;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.04);
+  color: var(--text-muted);
+  padding: 0 8px;
+  font-size: 11px;
+  line-height: 16px;
+  white-space: nowrap;
+}
+
+.organizer-badge.ready {
+  border-color: rgba(74, 222, 128, 0.22);
+  background: rgba(34, 197, 94, 0.1);
+  color: rgba(187, 247, 208, 0.95);
+}
+
+.organizer-badge.review {
+  border-color: rgba(250, 204, 21, 0.24);
+  background: rgba(234, 179, 8, 0.1);
+  color: rgba(254, 240, 138, 0.95);
+}
+
+.organizer-badge.danger {
+  border-color: rgba(248, 113, 113, 0.24);
+  background: rgba(239, 68, 68, 0.1);
+  color: rgba(254, 202, 202, 0.95);
+}
+
+.organizer-badge.muted {
+  color: var(--text-faint);
+}
+
+.organizer-plan-title .organizer-plan-hint {
+  margin-top: 4px;
+  color: var(--text-faint);
+}
+
 .organizer-list .toolbar-actions button:disabled {
   cursor: not-allowed;
   color: rgba(255, 255, 255, 0.36);

@@ -4,6 +4,11 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { Download, Loader2, Play, Plus, RefreshCw, Trash2, WandSparkles } from "lucide-react";
 import { getMessages } from "@/messages";
 import type { Locale } from "@/lib/i18n";
+import {
+  type CandidateQueueSort,
+  sortCandidateGroupsForQueue,
+  summarizeCandidateGroupFreshness,
+} from "./subscription-queue";
 
 type RssSource = {
   id: string;
@@ -30,6 +35,7 @@ type Candidate = {
   sourceKind?: string | null;
   variantKey?: string | null;
   status: string;
+  createdAt?: string | null;
 };
 
 type CandidateGroup = {
@@ -103,6 +109,7 @@ export function SubscriptionsClient({ locale }: { locale: Locale }) {
   const [candidateQuery, setCandidateQuery] = useState("");
   const [candidateMediaType, setCandidateMediaType] = useState<MediaTypeFilter>("ALL");
   const [candidateStatus, setCandidateStatus] = useState<CandidateStatusFilter>("ALL");
+  const [candidateSort, setCandidateSort] = useState<CandidateQueueSort>("LATEST");
   const [candidateStats, setCandidateStats] = useState<CandidateStats>({
     totalGroups: 0,
     filteredGroups: 0,
@@ -160,7 +167,7 @@ export function SubscriptionsClient({ locale }: { locale: Locale }) {
         .filter((id): id is string => Boolean(id)),
     );
     const needle = candidateQuery.trim().toLowerCase();
-    return groups
+    const filteredGroups = groups
       .filter((group) => {
         if (candidateFilter === "ACTIVE" || candidateFilter === "UNSUBSCRIBED") {
           return group.candidates.length > 0;
@@ -181,17 +188,17 @@ export function SubscriptionsClient({ locale }: { locale: Locale }) {
           return false;
         }
         return !needle || matchesCandidateQuery(group, needle);
-      })
-      .sort((a, b) => {
-        const aSubscribed = subscriptionGroupIds.has(a.id) ? 1 : 0;
-        const bSubscribed = subscriptionGroupIds.has(b.id) ? 1 : 0;
-        return (
-          bSubscribed - aSubscribed ||
-          b.candidates.length - a.candidates.length ||
-          b.confidence - a.confidence
-        );
       });
-  }, [candidateFilter, candidateMediaType, candidateQuery, candidateStatus, groups, subscriptions]);
+    return sortCandidateGroupsForQueue(filteredGroups, candidateSort, subscriptionGroupIds);
+  }, [
+    candidateFilter,
+    candidateMediaType,
+    candidateQuery,
+    candidateSort,
+    candidateStatus,
+    groups,
+    subscriptions,
+  ]);
 
   const load = useCallback(async () => {
     try {
@@ -200,6 +207,7 @@ export function SubscriptionsClient({ locale }: { locale: Locale }) {
         mediaType: candidateMediaType,
         page: candidatePage,
         query: candidateQuery,
+        sort: candidateSort,
         status: candidateStatus,
       });
       const [candidateResponse, rssResponse, subscriptionsResponse] = await Promise.all([
@@ -254,6 +262,7 @@ export function SubscriptionsClient({ locale }: { locale: Locale }) {
     candidateMediaType,
     candidatePage,
     candidateQuery,
+    candidateSort,
     candidateStatus,
     t.subscriptionsLoadError,
   ]);
@@ -756,6 +765,16 @@ export function SubscriptionsClient({ locale }: { locale: Locale }) {
                 <option value="SUBSCRIBED">{t.queueStatusSubscribed}</option>
                 <option value="EMPTY">{t.queueStatusEmpty}</option>
               </select>
+              <select
+                aria-label={t.sortBy}
+                onChange={(event) => setCandidateSort(event.target.value as CandidateQueueSort)}
+                value={candidateSort}
+              >
+                <option value="LATEST">{t.queueSortLatest}</option>
+                <option value="UNSUBSCRIBED">{t.queueSortUnsubscribed}</option>
+                <option value="VERSIONS">{t.queueSortVersions}</option>
+                <option value="REVIEW">{t.queueSortReview}</option>
+              </select>
             </div>
           </div>
         </div>
@@ -776,6 +795,7 @@ export function SubscriptionsClient({ locale }: { locale: Locale }) {
               (subscription) => subscription.candidateGroupId === group.id,
             );
             const hasSubscription = groupSubscriptions.length > 0;
+            const freshness = summarizeCandidateGroupFreshness(group);
 
             return (
               <article className="candidate-group" key={group.id}>
@@ -787,6 +807,12 @@ export function SubscriptionsClient({ locale }: { locale: Locale }) {
                       {group._count.candidates} {t.candidates} ·{" "}
                       {Math.round(group.confidence * 100)}% ·{" "}
                       {group.reviewRequired ? t.needsReview : t.ready}
+                      {freshness ? (
+                        <>
+                          {" · "}
+                          {formatCandidateFreshness(freshness, locale, t)}
+                        </>
+                      ) : null}
                     </p>
                   </div>
                   <div className="candidate-heading-actions">
@@ -1117,11 +1143,37 @@ function pageRangeLabel(page: CandidatePage) {
   return `${start}-${end} / ${page.total}`;
 }
 
+function formatCandidateFreshness(
+  freshness: ReturnType<typeof summarizeCandidateGroupFreshness>,
+  locale: Locale,
+  t: ReturnType<typeof getMessages>,
+) {
+  if (!freshness) {
+    return "";
+  }
+  const parts = [freshness.sourceKind ? `${t.latestSource}: ${freshness.sourceKind}` : null];
+  if (freshness.createdAt) {
+    const date = new Date(freshness.createdAt);
+    if (Number.isFinite(date.getTime())) {
+      parts.push(
+        `${t.latestCandidate}: ${new Intl.DateTimeFormat(locale, {
+          month: "short",
+          day: "numeric",
+          hour: "2-digit",
+          minute: "2-digit",
+        }).format(date)}`,
+      );
+    }
+  }
+  return parts.filter(Boolean).join(" · ");
+}
+
 function subscriptionCandidateParams(input: {
   filter: CandidateFilter;
   mediaType: MediaTypeFilter;
   page: number;
   query: string;
+  sort: CandidateQueueSort;
   status: CandidateStatusFilter;
 }) {
   const params = new URLSearchParams();
@@ -1136,6 +1188,7 @@ function subscriptionCandidateParams(input: {
   }
   params.set("page", String(input.page));
   params.set("pageSize", "50");
+  params.set("sort", input.sort);
   if (input.mediaType !== "ALL") {
     params.set("mediaType", input.mediaType);
   }

@@ -354,7 +354,7 @@ export function OrganizerClient({ locale }: { locale: Locale }) {
       {status ? <div className="settings-success">{status}</div> : null}
       <div className="organizer-list">
         {plans.length === 0 ? (
-          <p>{t.noOrganizerPlans}</p>
+          <p>{emptyOrganizerMessage(filter, t)}</p>
         ) : (
           plans.map((plan) => {
             const executable = canExecutePlan(plan);
@@ -377,10 +377,23 @@ export function OrganizerClient({ locale }: { locale: Locale }) {
                     <div className="organizer-plan-title">
                       <h2>{title}</h2>
                       {plan.metadata?.year ? <span>{plan.metadata.year}</span> : null}
+                      <div className="organizer-plan-badges">
+                        <span className={`organizer-badge ${statusBadgeClass(plan.status)}`}>
+                          {formatOrganizerStatus(plan.status, t)}
+                        </span>
+                        <span className={`organizer-badge ${confidenceBadgeClass(plan.confidence)}`}>
+                          {t.organizerConfidence}: {Math.round(plan.confidence * 100)}%
+                        </span>
+                        {plan.autoExecutable ? (
+                          <span className="organizer-badge ready">
+                            {t.organizerAutoReadyBadge}
+                          </span>
+                        ) : null}
+                      </div>
                       <p>
-                        {formatMediaType(plan.mediaType, t)} · {plan.status} ·{" "}
-                        {Math.round(plan.confidence * 100)}% · {plan.reason || "-"}
+                        {formatMediaType(plan.mediaType, t)} · {plan.reason || "-"}
                       </p>
+                      <p className="organizer-plan-hint">{organizerPlanHint(plan, t)}</p>
                     </div>
                   </div>
                   <div className="toolbar-actions">
@@ -486,6 +499,92 @@ function formatOrganizerFilter(filter: OrganizerFilter, t: ReturnType<typeof get
     return t.organizerStatusRejected;
   }
   return t.organizerStatusAutoArchived;
+}
+
+function formatOrganizerStatus(status: string, t: ReturnType<typeof getMessages>) {
+  if (status === "PENDING") {
+    return t.organizerStatusPending;
+  }
+  if (status === "NEEDS_REVIEW") {
+    return t.organizerStatusNeedsReview;
+  }
+  if (status === "CONFLICT") {
+    return t.organizerStatusConflict;
+  }
+  if (status === "FAILED") {
+    return t.organizerStatusFailed;
+  }
+  if (status === "EXECUTED") {
+    return t.organizerStatusExecuted;
+  }
+  if (status === "REJECTED") {
+    return t.organizerStatusRejected;
+  }
+  if (status === "AUTO_ARCHIVED") {
+    return t.organizerStatusAutoArchived;
+  }
+  return status;
+}
+
+function statusBadgeClass(status: string) {
+  if (status === "PENDING" || status === "AUTO_ARCHIVED" || status === "EXECUTED") {
+    return "ready";
+  }
+  if (status === "CONFLICT" || status === "FAILED") {
+    return "danger";
+  }
+  if (status === "REJECTED") {
+    return "muted";
+  }
+  return "review";
+}
+
+function confidenceBadgeClass(confidence: number) {
+  if (confidence >= 0.9) {
+    return "ready";
+  }
+  if (confidence >= 0.82) {
+    return "review";
+  }
+  return "danger";
+}
+
+function organizerPlanHint(plan: OrganizerPlan, t: ReturnType<typeof getMessages>) {
+  if (plan.items.length === 0) {
+    return t.organizerNoFilesHint;
+  }
+  if (plan.items.some((item) => item.conflict)) {
+    return t.organizerConflictHint;
+  }
+  if (plan.status === "PENDING") {
+    return plan.autoExecutable ? t.organizerAutoReadyHint : t.organizerReadyToExecuteHint;
+  }
+  if (plan.status === "NEEDS_REVIEW") {
+    return t.organizerNeedsReviewHint;
+  }
+  if (plan.status === "FAILED") {
+    return t.organizerFailedHint;
+  }
+  if (plan.status === "EXECUTED" || plan.status === "AUTO_ARCHIVED") {
+    return t.organizerCompletedHint;
+  }
+  if (plan.status === "REJECTED") {
+    return t.organizerRejectedHint;
+  }
+  return t.organizerReadyToExecuteHint;
+}
+
+function emptyOrganizerMessage(filter: OrganizerFilter, t: ReturnType<typeof getMessages>) {
+  if (filter === "ALL") {
+    return t.noOrganizerPlans;
+  }
+  if (filter === "AUTO_READY") {
+    return t.noAutoExecutableOrganizerPlans;
+  }
+  if (filter === "ACTIVE") {
+    return t.noActiveOrganizerPlans;
+  }
+  return t.noOrganizerPlansForFilter;
 }
 
 function countForOrganizerFilter(filter: OrganizerFilter, stats: OrganizerStats | null) {
