@@ -32,6 +32,7 @@ export function normalizeCandidateEpisodeNumber(
   const offset =
     inferEpisodeOffsetForSeason(candidates, season, candidate) ??
     inferCourEpisodeOffset(candidate, season, rawEpisodeNumber) ??
+    inferTwelveEpisodeWindowOffset(candidate, rawEpisodeNumber) ??
     inferTwelveEpisodeSeasonOffset(candidate, season, rawEpisodeNumber) ??
     0;
   const episodeNumber = rawEpisodeNumber - offset;
@@ -146,8 +147,20 @@ function inferTwelveEpisodeSeasonOffset(
   return normalized >= 1 && normalized <= maxTypicalSeasonEpisodes ? offset : null;
 }
 
+function inferTwelveEpisodeWindowOffset(
+  candidate: EpisodeNumberCandidate,
+  episodeNumber: number,
+) {
+  if (episodeNumber <= 12 || !hasExplicitSeasonQualifier(candidate)) {
+    return null;
+  }
+  const offset = Math.floor((episodeNumber - 1) / 12) * 12;
+  const normalized = episodeNumber - offset;
+  return offset >= minCumulativeOffset && normalized >= 1 && normalized <= 12 ? offset : null;
+}
+
 function hasExplicitSeasonQualifier(candidate: EpisodeNumberCandidate) {
-  return /(?:第\s*[一二三四五六七八九十\d]+\s*(?:季|期|シリーズ)|\b\d{1,2}(?:st|nd|rd|th)\s+season\b|\bseason\s*\d{1,2}\b|\bs\d{1,2}\b)/i.test(
+  return /(?:第\s*[一二三四五六七八九十\d]+\s*(?:季|期|シリーズ|クール)|\b\d{1,2}(?:st|nd|rd|th)\s+season\b|\bseason\s*\d{1,2}\b|\bs\d{1,2}\b|\b(?:part|cour)\s*\d{1,2}\b)/i.test(
     [candidate.rawTitle, candidate.parsedTitle].join(" "),
   );
 }

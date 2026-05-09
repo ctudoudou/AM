@@ -30,6 +30,7 @@ const releaseEditionPattern =
 const episodePatterns = [
   /\bS(?<season>\d{1,2})E(?<episode>\d{1,4}(?:\.\d)?)\b/i,
   /★\s*(?<episode>\d{1,4}(?:\.\d)?)\s*★/i,
+  /\s+-\s*(?<episode>\d{1,4}(?:\.\d)?)(?:\s|\[|\(|v\d|$)/i,
   /(?:第|\s|\[| - )(?<episode>\d{1,4}(?:\.\d)?)(?:话|集|\]|\s|v\d|$)/i,
   /\bEP?\s?(?<episode>\d{1,4}(?:\.\d)?)\b/i,
 ];
