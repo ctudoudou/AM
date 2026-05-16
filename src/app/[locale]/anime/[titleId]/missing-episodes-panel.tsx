@@ -4,6 +4,10 @@ import { useMemo, useState } from "react";
 import { Download, Loader2, RotateCcw, RefreshCw, Search, X } from "lucide-react";
 import { getMessages } from "@/messages";
 import type { Locale } from "@/lib/i18n";
+import type {
+  HistoryBackfillEpisodeResult,
+  HistoryBackfillResult,
+} from "@/lib/history-backfill";
 import type { EpisodeCoverageItem } from "@/lib/wanted-episodes";
 import type { WantedSearchResult, WantedSearchSourceError } from "@/lib/wanted-rss-search";
 
@@ -20,6 +24,15 @@ type WantedSearchState = {
   error: string;
 };
 
+type HistoryBackfillPayload = {
+  mediaTitleId: string;
+  title: string;
+  seasonNumber: number;
+  episodeStart: number;
+  episodeEnd: number;
+  episodes: HistoryBackfillEpisodeResult[];
+};
+
 export function MissingEpisodesPanel({
   initialCoverage,
   locale,
@@ -34,6 +47,16 @@ export function MissingEpisodesPanel({
   const [loading, setLoading] = useState(false);
   const [busyId, setBusyId] = useState<string | null>(null);
   const [searches, setSearches] = useState<Record<string, WantedSearchState>>({});
+  const [backfillDraft, setBackfillDraft] = useState(() => {
+    const firstMissing = initialCoverage.episodes.find((episode) => episode.status !== "AVAILABLE");
+    return {
+      seasonNumber: firstMissing?.seasonNumber ?? initialCoverage.episodes[0]?.seasonNumber ?? 1,
+      episodeStart: firstMissing?.episodeNumber ?? 1,
+      episodeEnd: firstMissing?.episodeNumber ?? 1,
+    };
+  });
+  const [backfillLoading, setBackfillLoading] = useState(false);
+  const [backfillResult, setBackfillResult] = useState<HistoryBackfillPayload | null>(null);
   const [error, setError] = useState("");
   const visibleEpisodes = useMemo(
     () => coverage.episodes.filter((episode) => episode.status !== "AVAILABLE"),
@@ -140,6 +163,53 @@ export function MissingEpisodesPanel({
     }
   }
 
+  async function searchHistoryBackfill() {
+    setBackfillLoading(true);
+    setError("");
+    try {
+      const response = await fetch(`/api/library/anime/${mediaTitleId}/history-backfill/search`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(backfillDraft),
+      });
+      if (!response.ok) {
+        throw new Error(t.historyBackfillError);
+      }
+      setBackfillResult((await response.json()) as HistoryBackfillPayload);
+      await scan();
+    } catch (backfillError) {
+      setError(backfillError instanceof Error ? backfillError.message : t.historyBackfillError);
+    } finally {
+      setBackfillLoading(false);
+    }
+  }
+
+  async function selectHistoryBackfillResult(episode: HistoryBackfillEpisodeResult, result: HistoryBackfillResult) {
+    setBusyId(`history:${episode.episodeNumber}:${result.key}`);
+    setError("");
+    try {
+      const response = await fetch("/api/history-backfill/select-download", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          mediaTitleId,
+          seasonNumber: episode.seasonNumber,
+          episodeNumber: episode.episodeNumber,
+          result,
+        }),
+      });
+      if (!response.ok) {
+        const body = await response.json().catch(() => null);
+        throw new Error(body?.message || t.downloadCreateError);
+      }
+      await scan();
+    } catch (selectError) {
+      setError(selectError instanceof Error ? selectError.message : t.downloadCreateError);
+    } finally {
+      setBusyId(null);
+    }
+  }
+
   return (
     <section className="missing-episodes-panel">
       <div className="episode-browser-heading">
@@ -153,6 +223,120 @@ export function MissingEpisodesPanel({
         </button>
       </div>
       {error ? <div className="settings-alert">{error}</div> : null}
+      <div className="history-backfill-panel">
+        <div>
+          <strong>{t.historyBackfill}</strong>
+          <span>{t.historyBackfillDescription}</span>
+        </div>
+        <label>
+          <span>{t.seasons}</span>
+          <input
+            min={1}
+            onChange={(event) =>
+              setBackfillDraft((current) => ({
+                ...current,
+                seasonNumber: Number(event.target.value),
+              }))
+            }
+            type="number"
+            value={backfillDraft.seasonNumber}
+          />
+        </label>
+        <label>
+          <span>{t.episodeStart}</span>
+          <input
+            min={1}
+            onChange={(event) =>
+              setBackfillDraft((current) => ({
+                ...current,
+                episodeStart: Number(event.target.value),
+              }))
+            }
+            type="number"
+            value={backfillDraft.episodeStart}
+          />
+        </label>
+        <label>
+          <span>{t.episodeEnd}</span>
+          <input
+            min={1}
+            onChange={(event) =>
+              setBackfillDraft((current) => ({
+                ...current,
+                episodeEnd: Number(event.target.value),
+              }))
+            }
+            type="number"
+            value={backfillDraft.episodeEnd}
+          />
+        </label>
+        <button disabled={backfillLoading} onClick={() => void searchHistoryBackfill()} type="button">
+          {backfillLoading ? <Loader2 size={14} /> : <Search size={14} />}
+          {t.searchHistoryBackfill}
+        </button>
+      </div>
+      {backfillResult ? (
+        <div className="history-backfill-results">
+          <div className="wanted-search-heading">
+            <strong>
+              {t.historyBackfillResults} · S{String(backfillResult.seasonNumber).padStart(2, "0")}{" "}
+              EP{backfillResult.episodeStart}-{backfillResult.episodeEnd}
+            </strong>
+            <span>{t.historyBackfillStrictHint}</span>
+          </div>
+          {backfillResult.episodes.map((episode) => (
+            <div className="history-backfill-episode" key={`${episode.seasonNumber}-${episode.episodeNumber}`}>
+              <strong>
+                S{String(episode.seasonNumber).padStart(2, "0")}E
+                {String(episode.episodeNumber).padStart(2, "0")}
+              </strong>
+              {episode.results.length === 0 ? <p>{t.noWantedSearchResults}</p> : null}
+              {episode.results.slice(0, 5).map((result) => (
+                <article className="wanted-search-result" key={result.key}>
+                  <div>
+                    <div className="wanted-search-meta">
+                      <span>{result.sourceName}</span>
+                      <span>{result.safeToDownload ? t.safeToDownload : t.requiresReview}</span>
+                      <span>{result.identity.numberingScheme}</span>
+                      {result.parsed.resolution ? <span>{result.parsed.resolution}</span> : null}
+                    </div>
+                    <strong>{result.title}</strong>
+                    <small>
+                      {[
+                        result.parsed.subtitleGroup,
+                        result.identity.rawEpisode
+                          ? `${t.episode}${result.identity.rawEpisode}`
+                          : null,
+                        result.identity.episodeOffset > 0
+                          ? `${t.episodeOffset} ${result.identity.episodeOffset}`
+                          : null,
+                        result.safetyReason,
+                      ]
+                        .filter(Boolean)
+                        .join(" · ")}
+                    </small>
+                  </div>
+                  <button
+                    disabled={
+                      !result.safeToDownload ||
+                      busyId === `history:${episode.episodeNumber}:${result.key}`
+                    }
+                    onClick={() => void selectHistoryBackfillResult(episode, result)}
+                    type="button"
+                  >
+                    {busyId === `history:${episode.episodeNumber}:${result.key}` ? (
+                      <Loader2 size={14} />
+                    ) : (
+                      <Download size={14} />
+                    )}
+                    {result.safeToDownload ? t.selectWantedResult : t.reviewRequired}
+                  </button>
+                </article>
+              ))}
+            </div>
+          ))}
+        </div>
+      ) : null}
       {visibleEpisodes.length === 0 ? (
         <div className="empty-panel">{t.noMissingEpisodes}</div>
       ) : (
