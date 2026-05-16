@@ -274,6 +274,7 @@ export const en = {
   metadataNeedsAttention: "Metadata needs attention",
   clearMetadata: "Clear metadata",
   rebuildTitleFromEpisodes: "Rebuild title from episodes",
+  rebuildTitleFromFiles: "Rebuild title from files",
   metadataActionError: "Metadata action failed.",
   metadataActionDone: "Metadata updated.",
   titleDisplayMode: "Title display",

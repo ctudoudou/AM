@@ -65,6 +65,30 @@ describe("subscription matching", () => {
     expect(selected.needsReview).toBe(false);
   });
 
+  it("selects a movie candidate with the same version scoring rules", () => {
+    const selected = selectSubscriptionCandidate(
+      [
+        {
+          ...baseCandidate,
+          id: "movie-720p",
+          episodeNumber: 1,
+          resolution: "720p",
+          variantKey: "movie|720p",
+          createdAt: new Date("2026-04-26T00:00:00.000Z"),
+        },
+        {
+          ...baseCandidate,
+          id: "movie-1080p",
+          episodeNumber: 1,
+        },
+      ],
+      baseSubscription,
+    );
+
+    expect(selected.candidate?.id).toBe("movie-1080p");
+    expect(selected.needsReview).toBe(false);
+  });
+
   it("requires manual review when two different variants tie", () => {
     const selected = selectSubscriptionCandidate(
       [

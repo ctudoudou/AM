@@ -274,6 +274,7 @@ export const zhHans = {
   metadataNeedsAttention: "元数据需要检查",
   clearMetadata: "清除元数据",
   rebuildTitleFromEpisodes: "按集数重建标题",
+  rebuildTitleFromFiles: "按文件重建标题",
   metadataActionError: "元数据操作失败。",
   metadataActionDone: "元数据已更新。",
   titleDisplayMode: "标题显示",

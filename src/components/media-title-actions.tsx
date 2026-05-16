@@ -65,7 +65,7 @@ export function MediaTitleActions({
         type="button"
       >
         {busyAction === "rebuildTitleFromFiles" ? <Loader2 size={14} /> : <WandSparkles size={14} />}
-        {t.rebuildTitle}
+        {t.rebuildTitleFromFiles}
       </button>
       {message ? <span>{message}</span> : null}
     </div>

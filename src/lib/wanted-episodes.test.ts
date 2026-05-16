@@ -45,6 +45,35 @@ describe("buildWantedEpisodeCoverage", () => {
     expect(coverage.missingCount).toBe(1);
   });
 
+  it("detects TV in-between missing episodes without anime-only assumptions", () => {
+    const coverage = buildWantedEpisodeCoverage(
+      {
+        ...baseMedia,
+        type: "TV",
+        primaryTitle: "Slow Horses",
+        originalTitle: "Slow Horses",
+        aliases: [{ title: "Slow Horses" }],
+        seasons: [
+          {
+            number: 2,
+            episodes: [
+              { id: "tv-ep1", number: 1, title: "S02E01", files: [{ id: "file1" }] },
+              { id: "tv-ep3", number: 3, title: "S02E03", files: [{ id: "file3" }] },
+            ],
+          },
+        ],
+      },
+      [],
+      [],
+    );
+
+    expect(coverage.episodes).toMatchObject([
+      { seasonNumber: 2, episodeNumber: 1, status: "AVAILABLE" },
+      { seasonNumber: 2, episodeNumber: 2, status: "MISSING" },
+      { seasonNumber: 2, episodeNumber: 3, status: "AVAILABLE" },
+    ]);
+  });
+
   it("uses complete batch ranges to infer missing tail episodes", () => {
     const coverage = buildWantedEpisodeCoverage(
       {

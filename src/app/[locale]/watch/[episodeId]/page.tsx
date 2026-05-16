@@ -59,10 +59,18 @@ export default async function WatchPage({
 
   const t = getMessages(locale);
   const settings = await getAppSettings();
+  const media = episode.season.media;
   const mediaDisplay =
-    episode.season.media.type === "ANIME"
-      ? resolveMediaDisplayTitle(episode.season.media, settings)
-      : { displayTitle: episode.season.media.primaryTitle };
+    media.type === "ANIME"
+      ? resolveMediaDisplayTitle(media, settings)
+      : { displayTitle: media.primaryTitle };
+  const activeKey = media.type === "MOVIE" ? "movies" : media.type === "TV" ? "tv" : "anime";
+  const detailPath =
+    media.type === "MOVIE"
+      ? `/${locale}/movies/${media.id}`
+      : media.type === "TV"
+        ? `/${locale}/tv/${media.id}`
+        : `/${locale}/anime/${media.id}`;
   const file = episode.files.find((item) => item.id === requestedFileId) ?? selectPlayableFile(episode.files);
   const episodes = episode.season.media.seasons
     .flatMap((season) =>
@@ -99,18 +107,19 @@ export default async function WatchPage({
 
   return (
     <main className="app-shell">
-      <AppSidebar activeKey="anime" locale={locale} />
+      <AppSidebar activeKey={activeKey} locale={locale} />
       <section className="watch-content">
         <header className="watch-heading">
           <div>
             <p>{mediaDisplay.displayTitle}</p>
             <h1>
-              S{String(episode.season.number).padStart(2, "0")}E
-              {String(episode.number).padStart(2, "0")} ·{" "}
+              {media.type === "MOVIE"
+                ? ""
+                : `S${String(episode.season.number).padStart(2, "0")}E${String(episode.number).padStart(2, "0")} · `}
               {episode.title || t.unknownTitle}
             </h1>
           </div>
-          <a href={`/${locale}/anime/${episode.season.media.id}`}>{t.backToLibrary}</a>
+          <a href={detailPath}>{t.backToLibrary}</a>
         </header>
         <WatchClient
           currentEpisode={{
