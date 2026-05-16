@@ -27,6 +27,7 @@ export default async function TvPage({
         </header>
         <MediaLibraryClient
           apiPath="/api/library/tv"
+          detailBasePath="/tv"
           emptyMessage={t.noTvTitles}
           locale={locale}
         />

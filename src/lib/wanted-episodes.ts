@@ -38,7 +38,18 @@ export type EpisodeCoverageItem = {
 };
 
 export async function getAnimeEpisodeCoverage(mediaTitleId: string) {
+  return getMediaEpisodeCoverage(mediaTitleId, "ANIME");
+}
+
+export async function getTvEpisodeCoverage(mediaTitleId: string) {
+  return getMediaEpisodeCoverage(mediaTitleId, "TV");
+}
+
+async function getMediaEpisodeCoverage(mediaTitleId: string, expectedType: "ANIME" | "TV") {
   const media = await loadMedia(mediaTitleId);
+  if (media.type !== expectedType) {
+    throw new Error(`Wanted episodes are only available for ${expectedType} titles.`);
+  }
   const candidates = await findCandidatesForMedia(media);
   const wanted = await prisma.wantedEpisode.findMany({
     where: { mediaTitleId },
@@ -136,6 +147,9 @@ export async function repairAnimeEpisodeNumbering(input?: { mediaTitleId?: strin
 
 export async function scanWantedEpisodes(mediaTitleId: string) {
   const media = await loadMedia(mediaTitleId);
+  if (media.type !== "ANIME" && media.type !== "TV") {
+    throw new Error("Wanted episodes are only available for anime and TV titles.");
+  }
   const candidates = await findCandidatesForMedia(media);
   const coverage = buildWantedEpisodeCoverage(
     media,

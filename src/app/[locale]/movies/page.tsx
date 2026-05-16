@@ -27,6 +27,7 @@ export default async function MoviesPage({
         </header>
         <MediaLibraryClient
           apiPath="/api/library/movies"
+          detailBasePath="/movies"
           emptyMessage={t.noMoviesTitles}
           locale={locale}
         />

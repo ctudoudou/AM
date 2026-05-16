@@ -24,10 +24,12 @@ type MediaTitle = {
 
 export function MediaLibraryClient({
   apiPath,
+  detailBasePath,
   emptyMessage,
   locale,
 }: {
   apiPath: string;
+  detailBasePath: string;
   emptyMessage: string;
   locale: Locale;
 }) {
@@ -125,16 +127,20 @@ export function MediaLibraryClient({
         <section className="anime-grid">
           {visibleTitles.map((title) => (
             <article className="anime-card" key={title.id}>
-              <div
+              <a
+                aria-label={title.primaryTitle}
                 className="anime-poster"
+                href={`/${locale}${detailBasePath}/${title.id}`}
                 style={{
                   backgroundImage: title.posterUrl ? `url(${title.posterUrl})` : undefined,
                 }}
               >
                 {!title.posterUrl ? <span>{title.primaryTitle.slice(0, 1)}</span> : null}
-              </div>
+              </a>
               <div className="anime-card-body">
-                <h2>{title.primaryTitle}</h2>
+                <h2>
+                  <a href={`/${locale}${detailBasePath}/${title.id}`}>{title.primaryTitle}</a>
+                </h2>
                 <p>
                   {title.year ?? "-"} · {title.seasonCount} {t.seasons} ·{" "}
                   {title.episodeCount} {t.episodes}

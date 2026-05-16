@@ -34,10 +34,12 @@ type HistoryBackfillPayload = {
 };
 
 export function MissingEpisodesPanel({
+  libraryKind = "anime",
   initialCoverage,
   locale,
   mediaTitleId,
 }: {
+  libraryKind?: "anime" | "tv";
   initialCoverage: MissingEpisodesPayload;
   locale: Locale;
   mediaTitleId: string;
@@ -76,7 +78,7 @@ export function MissingEpisodesPanel({
     setLoading(true);
     setError("");
     try {
-      const response = await fetch(`/api/library/anime/${mediaTitleId}/missing-episodes/scan`, {
+      const response = await fetch(`/api/library/${libraryKind}/${mediaTitleId}/missing-episodes/scan`, {
         method: "POST",
       });
       if (!response.ok) {
@@ -176,7 +178,7 @@ export function MissingEpisodesPanel({
     setBackfillLoading(true);
     setError("");
     try {
-      const response = await fetch(`/api/library/anime/${mediaTitleId}/history-backfill/search`, {
+      const response = await fetch(`/api/library/${libraryKind}/${mediaTitleId}/history-backfill/search`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(backfillDraft),

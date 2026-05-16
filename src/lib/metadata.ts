@@ -224,9 +224,17 @@ export async function matchMetadataForGroup(groupId: string) {
 }
 
 export async function refreshAnimeLibraryMetadata(input?: { titleId?: string; onlyMissing?: boolean }) {
+  return refreshMediaLibraryMetadata({ ...input, mediaType: "ANIME" });
+}
+
+export async function refreshMediaLibraryMetadata(input?: {
+  titleId?: string;
+  onlyMissing?: boolean;
+  mediaType?: MediaType;
+}) {
   const titles = await prisma.mediaTitle.findMany({
     where: {
-      type: "ANIME",
+      type: input?.mediaType,
       id: input?.titleId,
       ...(input?.onlyMissing === false
         ? {}
@@ -241,13 +249,129 @@ export async function refreshAnimeLibraryMetadata(input?: { titleId?: string; on
   const results = [];
 
   for (const title of titles) {
-    results.push(await refreshAnimeMetadata(title.id));
+    results.push(await refreshMediaMetadata(title.id));
   }
 
   return {
     checked: titles.length,
     updated: results.filter((result) => result.updated).length,
     results,
+  };
+}
+
+export async function refreshMediaMetadata(titleId: string) {
+  const media = await prisma.mediaTitle.findUniqueOrThrow({
+    where: { id: titleId },
+    include: {
+      aliases: true,
+      seasons: {
+        include: {
+          episodes: {
+            include: {
+              files: {
+                select: {
+                  originalName: true,
+                  absolutePath: true,
+                },
+              },
+            },
+          },
+        },
+      },
+    },
+  });
+  if (media.type === "ANIME") {
+    return refreshAnimeMetadata(titleId);
+  }
+
+  const queryTexts = collectMediaMetadataQueryTexts(media);
+  const queries = buildGenericMetadataQueries(queryTexts);
+  const matches = [];
+  for (const query of queries) {
+    matches.push(...(await searchMediaMetadata(query, media.type)));
+    const best = selectBestMetadataMatch(matches);
+    if (best?.posterUrl && best.score >= 0.9 && (best.relevance ?? 0) >= 0.86) {
+      break;
+    }
+  }
+
+  const best = selectBestMetadataMatch(matches);
+  if (!best) {
+    return {
+      id: media.id,
+      title: media.primaryTitle,
+      updated: false,
+      queries,
+      provider: null,
+    };
+  }
+
+  await upsertTitleAliases(media.id, [
+    ...aliasesFromTitleTexts([
+      media.primaryTitle,
+      media.originalTitle,
+      best.title,
+      best.originalTitle,
+      ...media.aliases.map((alias) => alias.title),
+    ]),
+    ...aliasesFromMetadataRaw(best.raw),
+  ]);
+  const posterUrl =
+    (await cacheRemoteMediaAsset(best.posterUrl, {
+      mediaId: media.id,
+      kind: "poster",
+    })) ?? (isLocalMediaAssetUrl(media.posterUrl) ? media.posterUrl : undefined);
+  const backdropUrl =
+    (await cacheRemoteMediaAsset(best.backdropUrl, {
+      mediaId: media.id,
+      kind: "backdrop",
+    })) ?? (isLocalMediaAssetUrl(media.backdropUrl) ? media.backdropUrl : undefined);
+
+  const updated = await prisma.mediaTitle.update({
+    where: { id: media.id },
+    data: {
+      primaryTitle: best.title,
+      originalTitle: best.originalTitle,
+      year: best.year,
+      synopsis: best.synopsis,
+      posterUrl,
+      backdropUrl,
+    },
+    select: {
+      id: true,
+      primaryTitle: true,
+      posterUrl: true,
+      backdropUrl: true,
+      synopsis: true,
+    },
+  });
+
+  await prisma.metadataLink
+    .upsert({
+      where: {
+        provider_externalId: {
+          provider: best.provider,
+          externalId: best.externalId,
+        },
+      },
+      create: {
+        provider: best.provider,
+        externalId: best.externalId,
+        mediaId: media.id,
+      },
+      update: {
+        mediaId: media.id,
+      },
+    })
+    .catch(() => null);
+
+  return {
+    id: updated.id,
+    title: updated.primaryTitle,
+    updated: Boolean(updated.posterUrl || updated.backdropUrl || updated.synopsis),
+    queries,
+    provider: best.provider,
+    posterUrl: updated.posterUrl,
   };
 }
 
@@ -409,6 +533,52 @@ export function collectAnimeMetadataQueryTexts(media: {
     }
   }
   return uniqueQueryTexts(values);
+}
+
+export function collectMediaMetadataQueryTexts(media: {
+  primaryTitle: string;
+  originalTitle?: string | null;
+  aliases?: Array<{ title: string }>;
+  seasons?: Array<{
+    episodes: Array<{
+      title?: string | null;
+      files?: Array<{
+        originalName?: string | null;
+        absolutePath?: string | null;
+      }>;
+    }>;
+  }>;
+}) {
+  const values = [
+    media.primaryTitle,
+    media.originalTitle,
+    ...(media.aliases ?? []).map((alias) => alias.title),
+  ];
+  for (const episode of (media.seasons ?? []).flatMap((season) => season.episodes)) {
+    for (const file of episode.files ?? []) {
+      values.push(file.originalName);
+      values.push(file.absolutePath ? path.basename(file.absolutePath, path.extname(file.absolutePath)) : null);
+    }
+  }
+  return uniqueQueryTexts(values);
+}
+
+export function buildGenericMetadataQueries(values: Array<string | null | undefined>) {
+  const queries: string[] = [];
+  for (const value of values) {
+    const title = cleanSearchTitle(value ?? "")
+      .replace(/\bS\d{1,2}E\d{1,4}\b/gi, " ")
+      .replace(/\b\d{1,2}x\d{1,4}\b/gi, " ")
+      .replace(/\b(1080p|2160p|720p|web-?dl|webrip|bluray|bdrip|x26[45]|h\.?26[45]|hevc|avc)\b/gi, " ")
+      .replace(/\s+/g, " ")
+      .trim();
+    if (!title) {
+      continue;
+    }
+    addQuery(queries, title);
+    addQuery(queries, title.replace(/\b(19\d{2}|20\d{2})\b/g, " ").replace(/\s+/g, " ").trim());
+  }
+  return queries.slice(0, 8);
 }
 
 export function buildAnimeMetadataQueries(values: Array<string | null | undefined>) {

@@ -83,13 +83,15 @@ export async function searchWantedEpisodeSources(wantedEpisodeId: string) {
   const configuredSources = await prisma.rssSource.findMany({
     where: {
       enabled: true,
-      mediaType: "ANIME",
+      mediaType: wanted.mediaTitle.type,
       OR: [{ url: { contains: "{query}" } }, { url: { contains: "{{query}}" } }],
     },
     orderBy: { createdAt: "asc" },
   });
   const sources = [
-    ...builtinSearchSources.map((source) => ({ ...source, sourceId: null })),
+    ...(wanted.mediaTitle.type === "ANIME"
+      ? builtinSearchSources.map((source) => ({ ...source, sourceId: null }))
+      : []),
     ...configuredSources.map((source) => ({
       provider: "rss-source",
       sourceId: source.id,
@@ -146,7 +148,7 @@ export async function selectWantedSearchResultForDownload(
   input: WantedSearchResult,
 ) {
   const wanted = await loadWanted(wantedEpisodeId);
-  const parsed = parseMediaReleaseTitle(input.title, "ANIME");
+  const parsed = parseMediaReleaseTitle(input.title, wanted.mediaTitle.type);
   const targetEpisode = wanted.episodeNumber;
   const normalizedEpisode = normalizeParsedReleaseEpisode({
     rawTitle: input.title,
@@ -180,7 +182,7 @@ export async function selectWantedSearchResultForDownload(
       data: {
         source: sourceId ? { connect: { id: sourceId } } : undefined,
         origin: "wanted-search",
-        mediaType: "ANIME",
+        mediaType: wanted.mediaTitle.type,
         guid,
         title: input.title,
         link: input.link,
@@ -199,7 +201,7 @@ export async function selectWantedSearchResultForDownload(
       data: {
         rssItem: { connect: { id: rssItem.id } },
         group: { connect: { id: group.id } },
-        mediaType: "ANIME",
+        mediaType: wanted.mediaTitle.type,
         rawTitle: input.title,
         parsedTitle: parsed.parsedTitle,
         normalizedTitle: parsed.normalizedTitle,
@@ -335,7 +337,7 @@ async function searchCachedConfiguredSources(
   }
   const items = await prisma.rssItem.findMany({
     where: {
-      mediaType: "ANIME",
+      mediaType: wanted.mediaTitle.type,
       sourceId: { not: null },
       OR: aliases.slice(0, 16).map((title) => ({
         title: { contains: title, mode: "insensitive" },
@@ -391,7 +393,7 @@ function addScoredResult(
   if (seen.has(dedupeKey)) {
     return;
   }
-  const parsed = parseMediaReleaseTitle(result.title, "ANIME");
+  const parsed = parseMediaReleaseTitle(result.title, wanted.mediaTitle.type);
   const normalizedEpisode = normalizeParsedReleaseEpisode({
     rawTitle: result.title,
     parsedTitle: parsed.parsedTitle,
@@ -454,13 +456,13 @@ async function upsertWantedCandidateGroup(wanted: WantedWithMedia, parsed: Retur
   return prisma.releaseCandidateGroup.upsert({
     where: {
       mediaType_normalizedTitle_season: {
-        mediaType: "ANIME",
+        mediaType: wanted.mediaTitle.type,
         normalizedTitle,
         season: wanted.seasonNumber,
       },
     },
     create: {
-      mediaType: "ANIME",
+      mediaType: wanted.mediaTitle.type,
       normalizedTitle,
       displayTitle: wanted.mediaTitle.primaryTitle,
       season: wanted.seasonNumber,

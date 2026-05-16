@@ -1,4 +1,4 @@
-import { Prisma } from "@prisma/client";
+import { Prisma, type MediaType } from "@prisma/client";
 import { prisma } from "@/lib/db";
 import { normalizeTitleAliases } from "@/lib/anime-parser";
 import { analyzeEpisodeIdentity, type EpisodeIdentity } from "@/lib/episode-identity";
@@ -47,7 +47,9 @@ export async function searchHistoryBackfill(input: {
     include: { aliases: true },
   });
   if (media.type !== "ANIME") {
-    throw new Error("History backfill is currently only available for anime titles.");
+    if (media.type !== "TV") {
+      throw new Error("History backfill is currently only available for anime and TV titles.");
+    }
   }
 
   const wantedRows = [];
@@ -60,7 +62,7 @@ export async function searchHistoryBackfill(input: {
       .filter((title): title is string => Boolean(title?.trim()))
       .flatMap((title) => normalizeTitleAliases(title)),
   );
-  const siblingCandidates = await loadSiblingCandidates(media.id, seasonNumber);
+  const siblingCandidates = await loadSiblingCandidates(media.id, seasonNumber, media.type);
   const episodes: HistoryBackfillEpisodeResult[] = [];
 
   for (const wanted of wantedRows) {
@@ -69,6 +71,7 @@ export async function searchHistoryBackfill(input: {
       .map((result) =>
         assessHistoryBackfillResult({
           mediaAliasSet,
+          mediaType: media.type,
           result,
           seasonNumber,
           siblingCandidates,
@@ -111,7 +114,9 @@ export async function selectHistoryBackfillDownload(input: {
     include: { aliases: true },
   });
   if (media.type !== "ANIME") {
-    throw new Error("History backfill is currently only available for anime titles.");
+    if (media.type !== "TV") {
+      throw new Error("History backfill is currently only available for anime and TV titles.");
+    }
   }
   const mediaAliasSet = new Set(
     [media.primaryTitle, media.originalTitle, ...media.aliases.map((alias) => alias.title)]
@@ -120,9 +125,10 @@ export async function selectHistoryBackfillDownload(input: {
   );
   const assessed = assessHistoryBackfillResult({
     mediaAliasSet,
+    mediaType: media.type,
     result: input.result,
     seasonNumber,
-    siblingCandidates: await loadSiblingCandidates(media.id, seasonNumber),
+    siblingCandidates: await loadSiblingCandidates(media.id, seasonNumber, media.type),
     targetEpisode: episodeNumber,
   });
   if (!assessed.safeToDownload) {
@@ -161,6 +167,7 @@ export async function selectHistoryBackfillDownload(input: {
 
 function assessHistoryBackfillResult(input: {
   mediaAliasSet: Set<string>;
+  mediaType: MediaType;
   result: WantedSearchResult;
   seasonNumber: number;
   siblingCandidates: Array<{
@@ -172,7 +179,7 @@ function assessHistoryBackfillResult(input: {
   }>;
   targetEpisode: number;
 }): HistoryBackfillResult {
-  const parsed = parseMediaReleaseTitle(input.result.title, "ANIME");
+  const parsed = parseMediaReleaseTitle(input.result.title, input.mediaType);
   const titleMatches = normalizeTitleAliases(parsed.parsedTitle)
     .concat(normalizeTitleAliases(parsed.normalizedTitle))
     .some((alias) => input.mediaAliasSet.has(alias));
@@ -250,7 +257,7 @@ async function ensureWantedEpisode(mediaTitleId: string, seasonNumber: number, e
   });
 }
 
-async function loadSiblingCandidates(mediaTitleId: string, seasonNumber: number) {
+async function loadSiblingCandidates(mediaTitleId: string, seasonNumber: number, mediaType: MediaType) {
   const media = await prisma.mediaTitle.findUniqueOrThrow({
     where: { id: mediaTitleId },
     include: { aliases: true },
@@ -263,7 +270,7 @@ async function loadSiblingCandidates(mediaTitleId: string, seasonNumber: number)
   }
   const candidates = await prisma.releaseCandidate.findMany({
     where: {
-      mediaType: "ANIME",
+      mediaType,
       season: seasonNumber,
       OR: aliases.slice(0, 16).map((alias) => ({
         normalizedTitle: { contains: alias, mode: "insensitive" },
