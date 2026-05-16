@@ -76,6 +76,15 @@ type SubtitleTrackDescriptor = {
   url: string;
 };
 
+type WatchProgressPayload = {
+  episodeId: string;
+  positionSec: number;
+  durationSec?: number;
+};
+
+const AUTO_NEXT_STORAGE_KEY = "kura.watch.autoNext";
+const WATCH_PROGRESS_FLUSH_INTERVAL_MS = 10_000;
+
 export function WatchClient({
   currentEpisode,
   episodeId,
@@ -101,11 +110,15 @@ export function WatchClient({
   const currentTimeRef = useRef(initialPositionSec);
   const durationRef = useRef(0);
   const restoredRef = useRef(false);
+  const lastProgressKeyRef = useRef("");
+  const autoNextRef = useRef(false);
+  const nextEpisodeRef = useRef(nextEpisode);
   const [descriptor, setDescriptor] = useState<PlaybackDescriptor | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [panelOpen, setPanelOpen] = useState(true);
   const [ended, setEnded] = useState(false);
+  const [autoNext, setAutoNext] = useState(false);
   const [subtitleTracks, setSubtitleTracks] = useState<SubtitleTrackDescriptor[]>([]);
   const [subtitleLoading, setSubtitleLoading] = useState(false);
   const [subtitleMessage, setSubtitleMessage] = useState("");
@@ -188,22 +201,49 @@ export function WatchClient({
     }).catch(() => undefined);
   }, [mediaFileId]);
 
-  const saveProgress = useCallback(async () => {
+  const flushProgress = useCallback((options?: {
+    beacon?: boolean;
+    force?: boolean;
+    keepalive?: boolean;
+  }) => {
     if (Number.isNaN(currentTimeRef.current)) {
-      return;
+      return undefined;
     }
-    await fetch("/api/watch-progress", {
-      method: "PATCH",
+
+    const payload: WatchProgressPayload = {
+      episodeId,
+      positionSec: Math.floor(currentTimeRef.current),
+      durationSec:
+        Number.isFinite(durationRef.current) && durationRef.current > 0
+          ? Math.floor(durationRef.current)
+          : undefined,
+    };
+    const progressKey = JSON.stringify(payload);
+    if (!options?.force && progressKey === lastProgressKeyRef.current) {
+      return undefined;
+    }
+
+    if (options?.beacon && typeof navigator !== "undefined" && "sendBeacon" in navigator) {
+      const queued = navigator.sendBeacon(
+        "/api/watch-progress",
+        new Blob([progressKey], { type: "application/json" }),
+      );
+      if (queued) {
+        lastProgressKeyRef.current = progressKey;
+        return undefined;
+      }
+    }
+
+    return fetch("/api/watch-progress", {
+      method: options?.beacon || options?.keepalive ? "POST" : "PATCH",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        episodeId,
-        positionSec: Math.floor(currentTimeRef.current),
-        durationSec:
-          Number.isFinite(durationRef.current) && durationRef.current > 0
-            ? Math.floor(durationRef.current)
-            : undefined,
-      }),
-    }).catch(() => undefined);
+      body: progressKey,
+      keepalive: Boolean(options?.keepalive),
+    })
+      .then(() => {
+        lastProgressKeyRef.current = progressKey;
+      })
+      .catch(() => undefined);
   }, [episodeId]);
 
   const seekTo = useCallback((seconds: number) => {
@@ -235,6 +275,21 @@ export function WatchClient({
   useEffect(() => {
     descriptorRef.current = descriptor;
   }, [descriptor]);
+
+  useEffect(() => {
+    nextEpisodeRef.current = nextEpisode;
+  }, [nextEpisode]);
+
+  useEffect(() => {
+    const timeout = window.setTimeout(() => {
+      const storedPreference = window.localStorage.getItem(AUTO_NEXT_STORAGE_KEY);
+      if (storedPreference === "1") {
+        autoNextRef.current = true;
+        setAutoNext(true);
+      }
+    }, 0);
+    return () => window.clearTimeout(timeout);
+  }, []);
 
   useEffect(() => {
     const stopOnPageHide = () => stopHls();
@@ -292,18 +347,36 @@ export function WatchClient({
 
   useEffect(() => {
     const timer = window.setInterval(() => {
-      void saveProgress();
-    }, 10_000);
-    const flush = () => {
-      void saveProgress();
+      void flushProgress();
+    }, WATCH_PROGRESS_FLUSH_INTERVAL_MS);
+    const flush = (beacon = false) => {
+      void flushProgress({ beacon, force: true, keepalive: beacon });
     };
-    window.addEventListener("beforeunload", flush);
+    const flushHidden = () => {
+      if (document.visibilityState === "hidden") {
+        flush(true);
+      }
+    };
+    const flushOnPageHide = () => flush(true);
+    const flushBeforeUnload = () => flush(true);
+    document.addEventListener("visibilitychange", flushHidden);
+    window.addEventListener("pagehide", flushOnPageHide);
+    window.addEventListener("beforeunload", flushBeforeUnload);
     return () => {
       window.clearInterval(timer);
-      window.removeEventListener("beforeunload", flush);
-      flush();
+      document.removeEventListener("visibilitychange", flushHidden);
+      window.removeEventListener("pagehide", flushOnPageHide);
+      window.removeEventListener("beforeunload", flushBeforeUnload);
+      flush(true);
     };
-  }, [saveProgress]);
+  }, [flushProgress]);
+
+  const toggleAutoNext = useCallback(() => {
+    const nextValue = !autoNextRef.current;
+    autoNextRef.current = nextValue;
+    setAutoNext(nextValue);
+    window.localStorage.setItem(AUTO_NEXT_STORAGE_KEY, nextValue ? "1" : "0");
+  }, []);
 
   if (loading) {
     return (
@@ -331,8 +404,23 @@ export function WatchClient({
                     : durationRef.current;
                 }}
                 onEnded={() => {
+                  if (durationRef.current > 0) {
+                    currentTimeRef.current = Math.max(currentTimeRef.current, durationRef.current);
+                  }
+                  const save = flushProgress({ force: true });
+                  const next = nextEpisodeRef.current;
+                  if (autoNextRef.current && next) {
+                    const goToNext = () => {
+                      window.location.href = `/${locale}/watch/${next.id}`;
+                    };
+                    if (save instanceof Promise) {
+                      void save.finally(goToNext);
+                    } else {
+                      goToNext();
+                    }
+                    return;
+                  }
                   setEnded(true);
-                  void saveProgress();
                 }}
                 onError={() => setError(t.playbackLoadError)}
                 onLoadedMetadata={() => {
@@ -341,11 +429,11 @@ export function WatchClient({
                   }
                   restoredRef.current = true;
                 }}
-                onPause={() => void saveProgress()}
+                onPause={() => void flushProgress({ force: true })}
                 onPlay={() => setEnded(false)}
                 onSeeked={(nextTime) => {
                   currentTimeRef.current = nextTime;
-                  void saveProgress();
+                  void flushProgress({ force: true });
                 }}
                 onSeeking={(nextTime) => {
                   currentTimeRef.current = nextTime;
@@ -413,6 +501,7 @@ export function WatchClient({
           )}
           <button
             aria-label={t.episodePanel}
+            aria-controls="watch-inspector"
             aria-expanded={panelOpen}
             className="watch-panel-toggle"
             onClick={() => setPanelOpen((value) => !value)}
@@ -437,7 +526,7 @@ export function WatchClient({
           ) : <span />}
         </div>
       </div>
-      <aside className="watch-inspector">
+      <aside className="watch-inspector" id="watch-inspector">
         <section>
           <div className="watch-panel-heading">
             <h2>{t.episodePanel}</h2>
@@ -515,6 +604,14 @@ export function WatchClient({
         <section>
           <div className="watch-panel-heading">
             <h2>{t.playbackStatus}</h2>
+            <button
+              aria-pressed={autoNext}
+              className={autoNext ? "toggle active" : "toggle"}
+              onClick={toggleAutoNext}
+              type="button"
+            >
+              {t.autoNextEpisode}: {autoNext ? t.enabled : t.disabled}
+            </button>
           </div>
           {error ? <div className="settings-alert">{error}</div> : null}
           <dl>

@@ -10,9 +10,10 @@ const progressSchema = z.object({
 
 export const dynamic = "force-dynamic";
 
-export async function PATCH(request: Request) {
+async function updateWatchProgress(request: Request) {
   try {
-    const input = progressSchema.parse(await request.json());
+    const body = await request.text();
+    const input = progressSchema.parse(body ? JSON.parse(body) : {});
     const completed = input.durationSec
       ? input.positionSec / input.durationSec >= 0.9
       : false;
@@ -34,4 +35,12 @@ export async function PATCH(request: Request) {
   } catch (error) {
     return jsonError(error);
   }
+}
+
+export async function PATCH(request: Request) {
+  return updateWatchProgress(request);
+}
+
+export async function POST(request: Request) {
+  return updateWatchProgress(request);
 }

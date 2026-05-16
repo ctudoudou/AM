@@ -1,6 +1,7 @@
 import type { MediaType, Prisma } from "@prisma/client";
 import { jsonError, jsonResponse } from "@/lib/api";
 import { prisma } from "@/lib/db";
+import { describeSubscriptionQueueGroup } from "@/lib/subscription-queue-state";
 
 export const dynamic = "force-dynamic";
 
@@ -36,6 +37,10 @@ export async function GET(request: Request) {
       take,
       include: {
         _count: { select: { candidates: true, subscriptions: true } },
+        subscriptions: {
+          where: { enabled: true },
+          select: { id: true },
+        },
         candidates: {
           orderBy: [{ episodeNumber: "asc" }, { createdAt: "desc" }],
           select: {
@@ -53,6 +58,20 @@ export async function GET(request: Request) {
             variantKey: true,
             status: true,
             createdAt: true,
+            rssItem: {
+              select: {
+                origin: true,
+                createdAt: true,
+                publishedAt: true,
+                status: true,
+                source: {
+                  select: {
+                    id: true,
+                    name: true,
+                  },
+                },
+              },
+            },
           },
         },
       },
@@ -84,7 +103,15 @@ export async function GET(request: Request) {
       }),
     ]);
     return jsonResponse({
-      groups,
+      groups: groups.map((group) => ({
+        ...group,
+        queueStatus: describeSubscriptionQueueGroup({
+          candidateCount: group._count.candidates,
+          enabledSubscriptionCount: group.subscriptions.length,
+          reviewRequired: group.reviewRequired,
+        }),
+        sourceSummary: summarizeGroupSources(group),
+      })),
       stats: {
         totalGroups,
         filteredGroups,
@@ -125,6 +152,13 @@ function whereForStatus(status: string): Prisma.ReleaseCandidateGroupWhereInput 
   if (status === "READY") {
     return { candidates: { some: {} }, reviewRequired: false };
   }
+  if (status === "ACTIONABLE") {
+    return {
+      candidates: { some: {} },
+      reviewRequired: false,
+      subscriptions: { none: { enabled: true } },
+    };
+  }
   if (status === "REVIEW") {
     return { reviewRequired: true };
   }
@@ -135,6 +169,56 @@ function whereForStatus(status: string): Prisma.ReleaseCandidateGroupWhereInput 
     return { candidates: { none: {} } };
   }
   return {};
+}
+
+function summarizeGroupSources(group: {
+  updatedAt: Date;
+  candidates: Array<{
+    createdAt: Date;
+    rssItem: {
+      origin: string;
+      createdAt: Date;
+      publishedAt: Date | null;
+      source: { id: string; name: string } | null;
+    };
+  }>;
+}) {
+  const sources = new Map<string, { id: string | null; name: string; count: number }>();
+  let latestFetchedAt: Date | null = null;
+  let latestPublishedAt: Date | null = null;
+
+  for (const candidate of group.candidates) {
+    const source = candidate.rssItem.source;
+    const sourceKey = source?.id ?? `origin:${candidate.rssItem.origin}`;
+    const sourceName = source?.name ?? candidate.rssItem.origin;
+    const current = sources.get(sourceKey) ?? {
+      id: source?.id ?? null,
+      name: sourceName,
+      count: 0,
+    };
+    current.count += 1;
+    sources.set(sourceKey, current);
+    latestFetchedAt = maxDate(latestFetchedAt, candidate.rssItem.createdAt);
+    latestPublishedAt = maxDate(latestPublishedAt, candidate.rssItem.publishedAt);
+  }
+
+  return {
+    candidateCount: group.candidates.length,
+    sources: [...sources.values()].sort((a, b) => b.count - a.count || a.name.localeCompare(b.name)),
+    latestFetchedAt,
+    latestPublishedAt,
+    latestMergedAt: group.updatedAt,
+  };
+}
+
+function maxDate(current: Date | null, candidate: Date | null) {
+  if (!candidate) {
+    return current;
+  }
+  if (!current || candidate.getTime() > current.getTime()) {
+    return candidate;
+  }
+  return current;
 }
 
 function whereForQuery(query: string): Prisma.ReleaseCandidateGroupWhereInput {

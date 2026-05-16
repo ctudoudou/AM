@@ -71,16 +71,30 @@ export async function syncAria2Downloads() {
     },
   });
   let synced = 0;
+  let failed = 0;
+  const errors: Array<{ id: string; message: string }> = [];
 
   for (const download of downloads) {
     if (!download.aria2Gid) {
       continue;
     }
-    await syncSingleAria2Download(download.id).catch(() => undefined);
-    synced += 1;
+    try {
+      const updated = await syncSingleAria2Download(download.id);
+      synced += 1;
+      if (updated.status === "FAILED" && updated.errorMessage?.startsWith("aria2 task is not available")) {
+        failed += 1;
+        errors.push({ id: download.id, message: updated.errorMessage });
+      }
+    } catch (error) {
+      failed += 1;
+      errors.push({
+        id: download.id,
+        message: error instanceof Error ? error.message : "Unknown aria2 sync error",
+      });
+    }
   }
 
-  return { synced };
+  return { synced, failed, errors: errors.slice(0, 5) };
 }
 
 export async function syncSingleAria2Download(downloadId: string) {
@@ -118,10 +132,15 @@ export async function syncSingleAria2Download(downloadId: string) {
 
   const totalBytes = BigInt(status.totalLength ?? 0);
   const completedBytes = BigInt(status.completedLength ?? 0);
+  const downloadSpeed = BigInt(status.downloadSpeed ?? 0);
   const progress =
     totalBytes > 0 ? Number(completedBytes) / Number(totalBytes) : download.progress;
   const nextStatus = mapAria2Status(status.status);
   const targetPath = selectTargetPath(status.files) ?? download.targetPath;
+  const etaSeconds =
+    downloadSpeed > 0 && totalBytes > completedBytes
+      ? Number((totalBytes - completedBytes) / downloadSpeed)
+      : null;
   const updated = await prisma.download.update({
     where: { id: download.id },
     data: {
@@ -129,11 +148,12 @@ export async function syncSingleAria2Download(downloadId: string) {
       status: nextStatus,
       totalBytes,
       completedBytes,
-      downloadSpeed: BigInt(status.downloadSpeed ?? 0),
+      downloadSpeed,
+      etaSeconds,
       progress,
       targetPath,
       aria2Files: (status.files ?? []) as Prisma.InputJsonValue,
-      errorMessage: status.errorMessage,
+      errorMessage: status.errorMessage ?? null,
       lastSyncedAt: new Date(),
     },
   });
@@ -178,6 +198,137 @@ async function resolveFollowedAria2Status(status: Aria2Status) {
 
 export function isMetadataOnlyAria2Status(status: Aria2Status) {
   return !selectTargetPath(status.files) && Boolean(status.followedBy?.length);
+}
+
+export type DownloadDiagnosticsInput = {
+  aria2Gid?: string | null;
+  status: string;
+  progress?: number | null;
+  totalBytes?: bigint | number | string | null;
+  completedBytes?: bigint | number | string | null;
+  downloadSpeed?: bigint | number | string | null;
+  etaSeconds?: number | null;
+  aria2Files?: unknown;
+  targetPath?: string | null;
+  errorMessage?: string | null;
+  archiveStatus?: string | null;
+  lastSyncedAt?: Date | string | null;
+};
+
+export type DownloadDiagnostics = {
+  reason:
+    | "none"
+    | "no_gid"
+    | "aria2_error"
+    | "metadata"
+    | "queued"
+    | "no_peers"
+    | "no_files"
+    | "paused"
+    | "organizer_pending";
+  speedBytesPerSecond: string;
+  completedBytes: string;
+  totalBytes: string;
+  etaSeconds: number | null;
+  visibleFileCount: number;
+  metadataOnly: boolean;
+  lastSyncedAt: string | null;
+};
+
+export function buildDownloadDiagnostics(download: DownloadDiagnosticsInput): DownloadDiagnostics {
+  const files = normalizeAria2Files(download.aria2Files);
+  const visibleFiles = files.filter((file) => file.path && file.path !== "[METADATA]");
+  const metadataOnly = files.length > 0 && visibleFiles.length === 0;
+  const speedBytesPerSecond = bigintString(download.downloadSpeed);
+  const totalBytes = bigintString(download.totalBytes);
+  const completedBytes = bigintString(download.completedBytes);
+  const speed = BigInt(speedBytesPerSecond);
+  const total = BigInt(totalBytes);
+  const completed = BigInt(completedBytes);
+  const etaSeconds =
+    typeof download.etaSeconds === "number"
+      ? download.etaSeconds
+      : speed > 0 && total > completed
+        ? Number((total - completed) / speed)
+        : null;
+
+  return {
+    reason: inferDownloadReason(download, {
+      completed,
+      metadataOnly,
+      speed,
+      total,
+      visibleFileCount: visibleFiles.length,
+    }),
+    speedBytesPerSecond,
+    completedBytes,
+    totalBytes,
+    etaSeconds,
+    visibleFileCount: visibleFiles.length,
+    metadataOnly,
+    lastSyncedAt: download.lastSyncedAt ? new Date(download.lastSyncedAt).toISOString() : null,
+  };
+}
+
+function inferDownloadReason(
+  download: DownloadDiagnosticsInput,
+  details: {
+    completed: bigint;
+    metadataOnly: boolean;
+    speed: bigint;
+    total: bigint;
+    visibleFileCount: number;
+  },
+): DownloadDiagnostics["reason"] {
+  if (!download.aria2Gid) {
+    return "no_gid";
+  }
+  if (download.status === "FAILED" && download.errorMessage) {
+    return "aria2_error";
+  }
+  if (download.status === "COMPLETED" && !download.archiveStatus) {
+    return "organizer_pending";
+  }
+  if (download.status === "PAUSED") {
+    return "paused";
+  }
+  if (details.metadataOnly) {
+    return "metadata";
+  }
+  if (download.status === "WAITING") {
+    return details.visibleFileCount === 0 ? "no_files" : "queued";
+  }
+  if (download.status === "ACTIVE" && details.speed === BigInt(0) && details.total > details.completed) {
+    return "no_peers";
+  }
+  return "none";
+}
+
+function normalizeAria2Files(value: unknown): Array<{
+  path?: string;
+  length?: string;
+  completedLength?: string;
+  selected?: string;
+}> {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  return value.filter((file): file is { path?: string; length?: string; completedLength?: string; selected?: string } => {
+    return typeof file === "object" && file !== null;
+  });
+}
+
+function bigintString(value: bigint | number | string | null | undefined) {
+  if (typeof value === "bigint") {
+    return value.toString();
+  }
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return Math.max(0, Math.trunc(value)).toString();
+  }
+  if (typeof value === "string" && /^\d+$/.test(value)) {
+    return value;
+  }
+  return "0";
 }
 
 export async function controlAria2Download(

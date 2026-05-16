@@ -83,7 +83,7 @@ export function AppSidebar({
         <kbd>⌘K</kbd>
       </button>
 
-      <nav className="nav">
+      <nav aria-label={t.library} className="nav">
         {navGroups.map((group) => (
           <section key={group.labelKey}>
             <p>{t[group.labelKey]}</p>

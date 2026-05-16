@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { isAutoExecutableOrganizerPlan, resolveOrganizerItemIdentity } from "./organizer";
+import {
+  assessOrganizerPlanAutomation,
+  isAutoExecutableOrganizerPlan,
+  resolveOrganizerItemIdentity,
+} from "./organizer";
 
 describe("resolveOrganizerItemIdentity", () => {
   it("uses the actual file episode for downloaded batch releases", () => {
@@ -57,7 +61,8 @@ describe("isAutoExecutableOrganizerPlan", () => {
         status: "PENDING",
         confidence: 0.93,
         autoExecutable: true,
-        items: [{ conflict: false }],
+        candidate: organizerCandidate(),
+        items: [{ sourcePath: "/data/downloads/Some Anime - 05.mkv", conflict: false }],
       }),
     ).toBe(true);
 
@@ -66,7 +71,8 @@ describe("isAutoExecutableOrganizerPlan", () => {
         status: "PENDING",
         confidence: 0.89,
         autoExecutable: true,
-        items: [{ conflict: false }],
+        candidate: organizerCandidate(),
+        items: [{ sourcePath: "/data/downloads/Some Anime - 05.mkv", conflict: false }],
       }),
     ).toBe(false);
     expect(
@@ -74,7 +80,8 @@ describe("isAutoExecutableOrganizerPlan", () => {
         status: "NEEDS_REVIEW",
         confidence: 0.96,
         autoExecutable: true,
-        items: [{ conflict: false }],
+        candidate: organizerCandidate(),
+        items: [{ sourcePath: "/data/downloads/Some Anime - 05.mkv", conflict: false }],
       }),
     ).toBe(false);
     expect(
@@ -82,8 +89,58 @@ describe("isAutoExecutableOrganizerPlan", () => {
         status: "PENDING",
         confidence: 0.96,
         autoExecutable: true,
-        items: [{ conflict: true }],
+        candidate: organizerCandidate(),
+        items: [{ sourcePath: "/data/downloads/Some Anime - 05.mkv", conflict: true }],
       }),
     ).toBe(false);
   });
 });
+
+describe("assessOrganizerPlanAutomation", () => {
+  it("explains why a legacy plan cannot be automatically archived", () => {
+    const assessment = assessOrganizerPlanAutomation({
+      status: "PENDING",
+      confidence: 0.95,
+      autoExecutable: false,
+      candidate: organizerCandidate(),
+      items: [{ sourcePath: "/data/downloads/Some Anime - 05.mkv", conflict: false }],
+    });
+
+    expect(assessment.executable).toBe(true);
+    expect(assessment.autoExecutable).toBe(false);
+    expect(assessment.reasons).toContain("Plan was not marked trusted when it was created.");
+  });
+
+  it("blocks execution when a source file is known missing", () => {
+    const assessment = assessOrganizerPlanAutomation({
+      status: "PENDING",
+      confidence: 0.95,
+      autoExecutable: true,
+      candidate: organizerCandidate(),
+      items: [
+        {
+          sourcePath: "/data/downloads/Some Anime - 05.mkv",
+          conflict: false,
+          sourceExists: false,
+        },
+      ],
+    });
+
+    expect(assessment.executable).toBe(false);
+    expect(assessment.autoExecutable).toBe(false);
+    expect(assessment.reasons).toContain("One or more source files are missing.");
+  });
+});
+
+function organizerCandidate() {
+  return {
+    mediaType: "ANIME" as const,
+    parsedTitle: "Some Anime",
+    normalizedTitle: "some anime",
+    group: {
+      displayTitle: "Some Anime",
+      normalizedTitle: "some anime",
+      aliases: [],
+    },
+  };
+}

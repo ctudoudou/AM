@@ -30,6 +30,12 @@ const videoExtensions = new Set([
 ]);
 const minAutoOrganizerConfidence = 0.9;
 
+type OrganizerAutomationAssessment = {
+  executable: boolean;
+  autoExecutable: boolean;
+  reasons: string[];
+};
+
 type OrganizerCandidateIdentity = {
   mediaType: MediaType;
   parsedTitle: string;
@@ -374,15 +380,77 @@ export function isAutoExecutableOrganizerPlan(plan: {
   status: string;
   confidence: number;
   autoExecutable: boolean;
-  items: Array<{ conflict: boolean }>;
+  candidate?: {
+    mediaType: MediaType;
+    parsedTitle: string;
+    normalizedTitle: string;
+    group: { displayTitle: string; normalizedTitle: string; aliases: unknown } | null;
+  } | null;
+  items: Array<{ sourcePath?: string; conflict: boolean; sourceExists?: boolean }>;
 }) {
-  return (
-    plan.status === "PENDING" &&
-    plan.autoExecutable &&
-    plan.confidence >= minAutoOrganizerConfidence &&
-    plan.items.length > 0 &&
-    plan.items.every((item) => !item.conflict)
-  );
+  return assessOrganizerPlanAutomation(plan).autoExecutable;
+}
+
+export function assessOrganizerPlanAutomation(plan: {
+  status: string;
+  confidence: number;
+  autoExecutable?: boolean;
+  candidate?: {
+    mediaType: MediaType;
+    parsedTitle: string;
+    normalizedTitle: string;
+    group: { displayTitle: string; normalizedTitle: string; aliases: unknown } | null;
+  } | null;
+  items: Array<{ sourcePath?: string; conflict: boolean; sourceExists?: boolean }>;
+}): OrganizerAutomationAssessment {
+  const reasons: string[] = [];
+  const terminal = ["EXECUTED", "AUTO_ARCHIVED", "REJECTED"].includes(plan.status);
+  const failed = plan.status === "FAILED";
+
+  if (terminal) {
+    reasons.push("Plan is already closed.");
+  } else if (failed) {
+    reasons.push("Plan is marked as failed.");
+  }
+  if (!["PENDING", "NEEDS_REVIEW"].includes(plan.status)) {
+    reasons.push("Plan is not in an executable status.");
+  }
+  if (plan.items.length === 0) {
+    reasons.push("Plan has no files.");
+  }
+  if (plan.items.some((item) => item.conflict)) {
+    reasons.push("Plan has target path conflicts.");
+  }
+  if (plan.items.some((item) => item.sourceExists === false)) {
+    reasons.push("One or more source files are missing.");
+  }
+
+  const executable = reasons.length === 0;
+  const autoReasons = [...reasons];
+
+  if (plan.status !== "PENDING") {
+    autoReasons.push("Automatic archive requires pending status.");
+  }
+  if (plan.confidence < minAutoOrganizerConfidence) {
+    autoReasons.push("Confidence is below the automatic archive threshold.");
+  }
+  if (plan.autoExecutable === false) {
+    autoReasons.push("Plan was not marked trusted when it was created.");
+  }
+  const candidate = plan.candidate;
+  if (!candidate) {
+    autoReasons.push("Plan has no grouped candidate.");
+  } else if (
+    plan.items.some((item) => item.sourcePath && !sourcePathMatchesCandidate(item.sourcePath, candidate))
+  ) {
+    autoReasons.push("One or more source files do not match the candidate title.");
+  }
+
+  return {
+    executable,
+    autoExecutable: autoReasons.length === 0,
+    reasons: [...new Set(autoReasons)],
+  };
 }
 
 export async function autoExecuteReadyOrganizerPlans(limit = 20) {
@@ -393,7 +461,7 @@ export async function autoExecuteReadyOrganizerPlans(limit = 20) {
       confidence: { gte: minAutoOrganizerConfidence },
       items: { some: {} },
     },
-    include: { items: true },
+    include: { items: true, candidate: { include: { group: true } } },
     orderBy: { updatedAt: "asc" },
     take: limit,
   });
@@ -402,8 +470,17 @@ export async function autoExecuteReadyOrganizerPlans(limit = 20) {
   let failed = 0;
 
   for (const plan of plans) {
-    if (!isAutoExecutableOrganizerPlan(plan)) {
+    const items = await withSourceExistence(plan.items);
+    const assessment = assessOrganizerPlanAutomation({ ...plan, items });
+    if (!assessment.autoExecutable) {
       skipped += 1;
+      await prisma.organizerPlan.update({
+        where: { id: plan.id },
+        data: {
+          autoExecutable: false,
+          reason: `Automatic archive blocked: ${assessment.reasons.join(" ")}`,
+        },
+      });
       continue;
     }
     try {
@@ -470,21 +547,35 @@ export async function cleanupStaleOrganizerPlans() {
     include: {
       items: true,
       download: true,
+      candidate: { include: { group: true } },
     },
   });
   let rejected = 0;
   let empty = 0;
   let missingSource = 0;
   let failedDownload = 0;
+  let staleAutoFlags = 0;
 
   for (const plan of plans) {
     const reasons: string[] = [];
+    const items = await withSourceExistence(plan.items);
+    const assessment = assessOrganizerPlanAutomation({ ...plan, items });
+
+    if (plan.autoExecutable !== assessment.autoExecutable) {
+      await prisma.organizerPlan.update({
+        where: { id: plan.id },
+        data: { autoExecutable: assessment.autoExecutable },
+      });
+      staleAutoFlags += 1;
+    }
+
     if (plan.items.length === 0) {
       empty += 1;
       if (
         /No video file found|no files?|AI review/i.test(plan.reason ?? "") ||
         plan.download?.status === "FAILED" ||
-        plan.download?.archiveStatus === "organizer_failed"
+        plan.download?.archiveStatus === "organizer_failed" ||
+        plan.updatedAt.getTime() < Date.now() - 24 * 60 * 60 * 1000
       ) {
         reasons.push("Organizer plan has no files left to process.");
       }
@@ -494,11 +585,14 @@ export async function cleanupStaleOrganizerPlans() {
       reasons.push("Linked download has failed.");
     }
     if (plan.items.length > 0) {
-      const existing = await Promise.all(plan.items.map((item) => exists(item.sourcePath)));
-      const missing = existing.filter((item) => !item).length;
-      if (missing === plan.items.length) {
+      const missing = items.filter((item) => item.sourceExists === false).length;
+      if (missing > 0) {
         missingSource += missing;
-        reasons.push("All source files are missing.");
+        reasons.push(
+          missing === plan.items.length
+            ? "All source files are missing."
+            : "One or more source files are missing.",
+        );
       }
     }
     if (reasons.length === 0) {
@@ -514,7 +608,7 @@ export async function cleanupStaleOrganizerPlans() {
     rejected += 1;
   }
 
-  return { inspected: plans.length, rejected, empty, missingSource, failedDownload };
+  return { inspected: plans.length, rejected, empty, missingSource, failedDownload, staleAutoFlags };
 }
 
 export async function reviewOrganizerPlansWithAi(limit = 30) {
@@ -723,6 +817,15 @@ function sourcePathMatchesCandidate(
   ].flatMap((value) => normalizeTitleAliases(value ?? ""));
 
   return sourceAliases.some((alias) => candidateAliases.has(alias));
+}
+
+async function withSourceExistence<T extends { sourcePath: string }>(items: T[]) {
+  return Promise.all(
+    items.map(async (item) => ({
+      ...item,
+      sourceExists: await exists(item.sourcePath),
+    })),
+  );
 }
 
 function groupAliases(value: unknown) {

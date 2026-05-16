@@ -4,6 +4,11 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { Download, Loader2, Play, Plus, RefreshCw, Trash2, WandSparkles } from "lucide-react";
 import { getMessages } from "@/messages";
 import type { Locale } from "@/lib/i18n";
+import type {
+  SubscriptionQueueDescription,
+  SubscriptionQueueReason,
+  SubscriptionQueueState,
+} from "@/lib/subscription-queue-state";
 import {
   type CandidateQueueSort,
   sortCandidateGroupsForQueue,
@@ -16,6 +21,18 @@ type RssSource = {
   url: string;
   mediaType: MediaType;
   enabled: boolean;
+  _count?: { items: number };
+  latestItem?: {
+    createdAt?: string | null;
+    publishedAt?: string | null;
+    status?: string | null;
+  } | null;
+};
+
+type JobRunSummary = {
+  job: string;
+  status: "SUCCESS" | "FAILED";
+  finishedAt: string;
 };
 
 type MediaType = "ANIME" | "MOVIE" | "TV";
@@ -36,6 +53,16 @@ type Candidate = {
   variantKey?: string | null;
   status: string;
   createdAt?: string | null;
+  rssItem?: {
+    origin: string;
+    createdAt?: string | null;
+    publishedAt?: string | null;
+    status: string;
+    source?: {
+      id: string;
+      name: string;
+    } | null;
+  };
 };
 
 type CandidateGroup = {
@@ -47,6 +74,15 @@ type CandidateGroup = {
   reviewRequired: boolean;
   aiSummary?: string | null;
   candidates: Candidate[];
+  subscriptions?: Array<{ id: string }>;
+  queueStatus?: SubscriptionQueueDescription;
+  sourceSummary?: {
+    candidateCount: number;
+    latestFetchedAt?: string | null;
+    latestMergedAt?: string | null;
+    latestPublishedAt?: string | null;
+    sources: Array<{ id: string | null; name: string; count: number }>;
+  };
   _count: {
     candidates: number;
     subscriptions: number;
@@ -95,13 +131,17 @@ type Subscription = {
 type CandidateFilter = "ACTIVE" | "UNSUBSCRIBED" | "SUBSCRIBED" | "EMPTY" | "ALL";
 type MediaTypeFilter = MediaType | "ALL";
 type SubscriptionModeFilter = "ALL" | "AUTO" | "MANUAL";
-type CandidateStatusFilter = "ALL" | "READY" | "REVIEW" | "SUBSCRIBED" | "EMPTY";
+type CandidateStatusFilter = "ALL" | "ACTIONABLE" | "READY" | "REVIEW" | "SUBSCRIBED" | "EMPTY";
 
 export function SubscriptionsClient({ locale }: { locale: Locale }) {
   const t = getMessages(locale);
   const [groups, setGroups] = useState<CandidateGroup[]>([]);
   const [subscriptions, setSubscriptions] = useState<Subscription[]>([]);
   const [rssSources, setRssSources] = useState<RssSource[]>([]);
+  const [queueRuns, setQueueRuns] = useState<{
+    lastFetchRun: JobRunSummary | null;
+    lastGroupRun: JobRunSummary | null;
+  }>({ lastFetchRun: null, lastGroupRun: null });
   const [candidateFilter, setCandidateFilter] = useState<CandidateFilter>("ACTIVE");
   const [subscriptionQuery, setSubscriptionQuery] = useState("");
   const [subscriptionMediaType, setSubscriptionMediaType] = useState<MediaTypeFilter>("ALL");
@@ -223,7 +263,13 @@ export function SubscriptionsClient({ locale }: { locale: Locale }) {
         stats?: CandidateStats;
         page?: CandidatePage;
       };
-      const rssBody = (await rssResponse.json()) as { sources: RssSource[] };
+      const rssBody = (await rssResponse.json()) as {
+        sources: RssSource[];
+        queueStatus?: {
+          lastFetchRun: JobRunSummary | null;
+          lastGroupRun: JobRunSummary | null;
+        };
+      };
       const subscriptionsBody = (await subscriptionsResponse.json()) as {
         subscriptions: Subscription[];
       };
@@ -250,6 +296,7 @@ export function SubscriptionsClient({ locale }: { locale: Locale }) {
         },
       );
       setRssSources(rssBody.sources);
+      setQueueRuns(rssBody.queueStatus ?? { lastFetchRun: null, lastGroupRun: null });
       setSubscriptions(subscriptionsBody.subscriptions);
       setError("");
     } catch (loadError) {
@@ -463,7 +510,10 @@ export function SubscriptionsClient({ locale }: { locale: Locale }) {
         <div className="settings-panel-heading">
           <div>
             <h2>{t.rssSources}</h2>
-            <p>{t.subscriptionsRssDescription}</p>
+            <p>
+              {t.subscriptionsRssDescription}
+              {formatQueueRunSummary(queueRuns, locale, t)}
+            </p>
           </div>
           <button onClick={() => void runJob("rss.fetchAll")} type="button">
             <RefreshCw size={14} />
@@ -520,6 +570,13 @@ export function SubscriptionsClient({ locale }: { locale: Locale }) {
                   <h3>{source.name}</h3>
                   <p>
                     {formatMediaType(source.mediaType, t)} · {source.url}
+                  </p>
+                  <p>
+                    {t.rssItems}: {source._count?.items ?? 0}
+                    {source.latestItem?.createdAt
+                      ? ` · ${t.latestFetched}: ${formatShortDate(source.latestItem.createdAt, locale)}`
+                      : ""}
+                    {source.latestItem?.status ? ` · ${source.latestItem.status}` : ""}
                   </p>
                 </div>
                 <button
@@ -760,6 +817,7 @@ export function SubscriptionsClient({ locale }: { locale: Locale }) {
                 value={candidateStatus}
               >
                 <option value="ALL">{t.subscriptionFilterAll}</option>
+                <option value="ACTIONABLE">{t.queueStatusActionable}</option>
                 <option value="READY">{t.queueStatusReady}</option>
                 <option value="REVIEW">{t.queueStatusReview}</option>
                 <option value="SUBSCRIBED">{t.queueStatusSubscribed}</option>
@@ -796,6 +854,7 @@ export function SubscriptionsClient({ locale }: { locale: Locale }) {
             );
             const hasSubscription = groupSubscriptions.length > 0;
             const freshness = summarizeCandidateGroupFreshness(group);
+            const queueStatus = group.queueStatus ?? fallbackQueueStatus(group, hasSubscription);
 
             return (
               <article className="candidate-group" key={group.id}>
@@ -813,11 +872,17 @@ export function SubscriptionsClient({ locale }: { locale: Locale }) {
                           {formatCandidateFreshness(freshness, locale, t)}
                         </>
                       ) : null}
+                      {group.sourceSummary ? (
+                        <>
+                          {" · "}
+                          {formatCandidateSourceSummary(group.sourceSummary, locale, t)}
+                        </>
+                      ) : null}
                     </p>
                   </div>
                   <div className="candidate-heading-actions">
                     <span className={hasSubscription ? "candidate-policy active" : "candidate-policy"}>
-                      {hasSubscription ? t.subscribed : t.futureOnlyPolicy}
+                      {formatQueueState(queueStatus.state, t)}
                     </span>
                     {!hasSubscription ? (
                       <button onClick={() => void createSubscription(group)} type="button">
@@ -827,9 +892,12 @@ export function SubscriptionsClient({ locale }: { locale: Locale }) {
                     ) : null}
                   </div>
                 </div>
+                <p className="candidate-summary">{formatQueueReason(queueStatus.reason, t)}</p>
                 {group.aiSummary ? <p className="candidate-summary">{group.aiSummary}</p> : null}
                 {group.candidates.length === 0 ? (
-                  <div className="candidate-empty-version">{t.noVersionsYet}</div>
+                  <div className="candidate-empty-version">
+                    {t.noVersionsYet} {formatQueueReason(queueStatus.reason, t)}
+                  </div>
                 ) : (
                   <div className="candidate-list">
                     {groupCandidatesByEpisode(group.candidates).map((episode) => (
@@ -1095,6 +1163,13 @@ function matchesCandidateStatus(
   status: CandidateStatusFilter,
   subscriptionGroupIds: Set<string>,
 ) {
+  if (status === "ACTIONABLE") {
+    return (
+      group.candidates.length > 0 &&
+      !group.reviewRequired &&
+      !subscriptionGroupIds.has(group.id)
+    );
+  }
   if (status === "READY") {
     return group.candidates.length > 0 && !group.reviewRequired;
   }
@@ -1166,6 +1241,113 @@ function formatCandidateFreshness(
     }
   }
   return parts.filter(Boolean).join(" · ");
+}
+
+function formatCandidateSourceSummary(
+  summary: NonNullable<CandidateGroup["sourceSummary"]>,
+  locale: Locale,
+  t: ReturnType<typeof getMessages>,
+) {
+  const sources = summary.sources
+    .slice(0, 2)
+    .map((source) => `${source.name} (${source.count})`)
+    .join(", ");
+  const parts = [
+    sources ? `${t.candidateSources}: ${sources}` : null,
+    summary.latestFetchedAt
+      ? `${t.latestFetched}: ${formatShortDate(summary.latestFetchedAt, locale)}`
+      : null,
+    summary.latestMergedAt
+      ? `${t.latestMerged}: ${formatShortDate(summary.latestMergedAt, locale)}`
+      : null,
+  ];
+  return parts.filter(Boolean).join(" · ");
+}
+
+function fallbackQueueStatus(
+  group: CandidateGroup,
+  hasSubscription: boolean,
+): SubscriptionQueueDescription {
+  if (hasSubscription) {
+    return { state: "SUBSCRIBED", reason: "alreadySubscribed", canSubscribeVersion: false };
+  }
+  if (group.candidates.length === 0) {
+    return { state: "EMPTY", reason: "noVersions", canSubscribeVersion: false };
+  }
+  if (group.reviewRequired) {
+    return { state: "REVIEW_REQUIRED", reason: "needsReview", canSubscribeVersion: true };
+  }
+  return { state: "ACTIONABLE", reason: "readyToSubscribe", canSubscribeVersion: true };
+}
+
+function formatQueueState(
+  state: SubscriptionQueueState,
+  t: ReturnType<typeof getMessages>,
+) {
+  if (state === "ACTIONABLE") {
+    return t.queueStatusActionable;
+  }
+  if (state === "REVIEW_REQUIRED") {
+    return t.queueStatusReview;
+  }
+  if (state === "SUBSCRIBED") {
+    return t.queueStatusSubscribed;
+  }
+  return t.queueStatusEmpty;
+}
+
+function formatQueueReason(
+  reason: SubscriptionQueueReason,
+  t: ReturnType<typeof getMessages>,
+) {
+  if (reason === "readyToSubscribe") {
+    return t.queueReasonReadyToSubscribe;
+  }
+  if (reason === "needsReview") {
+    return t.queueReasonNeedsReview;
+  }
+  if (reason === "alreadySubscribed") {
+    return t.queueReasonAlreadySubscribed;
+  }
+  return t.queueReasonNoVersions;
+}
+
+function formatQueueRunSummary(
+  runs: { lastFetchRun: JobRunSummary | null; lastGroupRun: JobRunSummary | null },
+  locale: Locale,
+  t: ReturnType<typeof getMessages>,
+) {
+  const parts = [
+    runs.lastFetchRun
+      ? `${t.lastFetchRun}: ${formatJobRun(runs.lastFetchRun, locale, t)}`
+      : null,
+    runs.lastGroupRun
+      ? `${t.lastGroupRun}: ${formatJobRun(runs.lastGroupRun, locale, t)}`
+      : null,
+  ].filter(Boolean);
+  return parts.length > 0 ? ` ${parts.join(" · ")}` : "";
+}
+
+function formatJobRun(
+  run: JobRunSummary,
+  locale: Locale,
+  t: ReturnType<typeof getMessages>,
+) {
+  const status = run.status === "SUCCESS" ? t.jobStatusSuccess : t.jobStatusFailed;
+  return `${status} ${formatShortDate(run.finishedAt, locale)}`;
+}
+
+function formatShortDate(value: string, locale: Locale) {
+  const date = new Date(value);
+  if (!Number.isFinite(date.getTime())) {
+    return value;
+  }
+  return new Intl.DateTimeFormat(locale, {
+    month: "short",
+    day: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  }).format(date);
 }
 
 function subscriptionCandidateParams(input: {

@@ -26,7 +26,9 @@
 
 html,
 body {
+  width: 100%;
   min-height: 100%;
+  overflow-x: hidden;
   background: var(--background);
   color: var(--text-primary);
 }
@@ -51,7 +53,9 @@ a {
 .app-shell {
   display: grid;
   grid-template-columns: 256px minmax(0, 1fr);
+  width: 100%;
   min-height: 100vh;
+  min-width: 0;
   background: #000;
 }
 
@@ -60,6 +64,7 @@ a {
   top: 0;
   display: flex;
   height: 100vh;
+  min-width: 0;
   flex-direction: column;
   border-right: 1px solid rgba(255, 255, 255, 0.06);
   background: #000;
@@ -68,6 +73,7 @@ a {
 .brand {
   display: flex;
   height: 77px;
+  min-width: 0;
   align-items: center;
   gap: 12px;
   border-bottom: 1px solid rgba(255, 255, 255, 0.06);
@@ -87,17 +93,24 @@ a {
 
 .brand strong {
   display: block;
+  overflow: hidden;
   font-size: 14px;
   line-height: 20px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .brand span {
   display: flex;
+  min-width: 0;
   align-items: center;
   gap: 6px;
+  overflow: hidden;
   color: var(--text-faint);
   font-size: 12px;
   line-height: 14px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .brand i {
@@ -161,6 +174,7 @@ a {
 .nav a {
   display: flex;
   height: 40px;
+  min-width: 0;
   align-items: center;
   gap: 12px;
   border: 1px solid transparent;
@@ -169,6 +183,13 @@ a {
   padding: 0 12px;
   text-decoration: none;
   font-size: 14px;
+}
+
+.nav a span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .nav a.active {
@@ -739,6 +760,10 @@ a {
   gap: 16px;
 }
 
+.settings-panel-heading > div {
+  min-width: 0;
+}
+
 .settings-panel h2 {
   margin: 0;
   color: var(--text-primary);
@@ -980,6 +1005,7 @@ a {
 
 .rss-list h3,
 .subscription-list h3 {
+  min-width: 0;
   margin: 0;
   color: rgba(255, 255, 255, 0.82);
   font-size: 14px;
@@ -1179,6 +1205,10 @@ a {
   gap: 16px;
 }
 
+.candidate-heading > div:first-child {
+  min-width: 0;
+}
+
 .candidate-heading-actions {
   display: flex;
   flex: 0 0 auto;
@@ -1189,6 +1219,7 @@ a {
 }
 
 .candidate-heading h2 {
+  overflow-wrap: anywhere;
   margin: 0;
   color: var(--text-primary);
   font-size: 16px;
@@ -1613,6 +1644,7 @@ a {
   font-weight: 650;
   line-height: 22px;
   text-align: left;
+  overflow-wrap: anywhere;
 }
 
 .organizer-plan-title span {
@@ -2488,6 +2520,7 @@ a {
 
 .watch-stage {
   display: grid;
+  min-width: 0;
   grid-template-columns: minmax(0, 1fr) 320px;
   gap: 16px;
   align-items: start;
@@ -2502,12 +2535,15 @@ a {
 }
 
 .watch-player-shell {
+  width: 100%;
   min-width: 0;
 }
 
 .watch-player {
   position: relative;
   display: block;
+  width: 100%;
+  min-width: 0;
   min-height: 520px;
   overflow: hidden;
   border: 1px solid var(--border-subtle);
@@ -2516,9 +2552,12 @@ a {
 }
 
 .kura-media-player {
+  display: block;
   width: 100%;
+  max-width: 100%;
   min-height: 520px;
   max-height: calc(100vh - 150px);
+  overflow: hidden;
   --media-brand: var(--accent-success);
   --media-focus-ring-color: rgba(0, 212, 146, 0.62);
   --video-border-radius: 14px;
@@ -2680,6 +2719,7 @@ a {
 
 .watch-underbar {
   display: grid;
+  min-width: 0;
   min-height: 42px;
   grid-template-columns: 1fr auto 1fr;
   align-items: center;
@@ -2689,6 +2729,11 @@ a {
 
 .watch-underbar > :last-child {
   justify-self: end;
+}
+
+.watch-underbar a,
+.watch-underbar span {
+  min-width: 0;
 }
 
 .watch-state {
@@ -2705,6 +2750,7 @@ a {
 
 .watch-inspector {
   display: flex;
+  min-width: 0;
   flex-direction: column;
   gap: 16px;
   border: 1px solid var(--border-subtle);
@@ -2988,21 +3034,140 @@ a {
 
 @media (max-width: 900px) {
   .app-shell {
-    grid-template-columns: 1fr;
+    display: block;
+    overflow-x: clip;
   }
 
   .sidebar {
-    position: relative;
+    position: sticky;
+    top: 0;
+    z-index: 20;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(112px, 38vw);
     height: auto;
+    align-items: center;
+    border-right: 0;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+    background: rgba(0, 0, 0, 0.94);
+    backdrop-filter: blur(18px);
   }
 
-  .nav,
+  .brand {
+    height: 60px;
+    border-bottom: 0;
+    padding: 10px 12px 10px 16px;
+  }
+
+  .brand-mark {
+    width: 34px;
+    height: 34px;
+    border-radius: 12px;
+  }
+
+  .sidebar-search {
+    height: 36px;
+    min-width: 0;
+    margin: 0 12px 0 0;
+    border-radius: 12px;
+    padding: 0 10px;
+  }
+
+  .sidebar-search kbd {
+    display: none;
+  }
+
   .storage-card {
     display: none;
   }
 
+  .nav {
+    position: fixed;
+    z-index: 30;
+    right: 0;
+    bottom: 0;
+    left: 0;
+    display: flex;
+    gap: 4px;
+    overflow-x: auto;
+    overscroll-behavior-x: contain;
+    border-top: 1px solid rgba(255, 255, 255, 0.08);
+    background: rgba(0, 0, 0, 0.96);
+    padding:
+      8px max(10px, env(safe-area-inset-right))
+      calc(8px + env(safe-area-inset-bottom))
+      max(10px, env(safe-area-inset-left));
+    scrollbar-width: none;
+  }
+
+  .nav::-webkit-scrollbar {
+    display: none;
+  }
+
+  .nav section {
+    display: contents;
+  }
+
+  .nav p {
+    display: none;
+  }
+
+  .nav a,
+  .nav a.active {
+    flex: 0 0 72px;
+    height: 48px;
+    flex-direction: column;
+    justify-content: center;
+    gap: 4px;
+    border-radius: 12px;
+    padding: 5px 6px;
+    font-size: 11px;
+    line-height: 14px;
+  }
+
+  .nav a svg {
+    flex: 0 0 auto;
+  }
+
+  .content,
+  .watch-content,
+  .settings-content {
+    width: 100%;
+    max-width: 100%;
+    overflow-x: clip;
+    padding-bottom: calc(92px + env(safe-area-inset-bottom));
+  }
+
+  .content {
+    min-height: calc(100svh - 60px);
+  }
+
   .hero {
     height: 460px;
+  }
+
+  .hero-copy {
+    left: 16px;
+    bottom: 48px;
+    width: min(448px, calc(100% - 32px));
+  }
+
+  .stat-strip,
+  .media-section,
+  .dashboard-row {
+    margin-right: 16px;
+    margin-left: 16px;
+  }
+
+  .poster-row {
+    margin-right: -16px;
+    overflow-x: auto;
+    overscroll-behavior-x: contain;
+    padding-right: 16px;
+    scrollbar-width: none;
+  }
+
+  .poster-row::-webkit-scrollbar {
+    display: none;
   }
 
   .stat-strip {
@@ -3018,11 +3183,52 @@ a {
   }
 
   .settings-content {
-    padding: 24px 16px;
+    padding: 24px 16px calc(92px + env(safe-area-inset-bottom));
+  }
+
+  .page-heading {
+    margin-bottom: 18px;
+  }
+
+  .page-heading h1 {
+    overflow-wrap: anywhere;
+    font-size: 22px;
+    line-height: 30px;
+    text-align: left;
+  }
+
+  .page-heading p {
+    overflow-wrap: anywhere;
+  }
+
+  .settings-panel {
+    gap: 12px;
+    padding: 16px;
+  }
+
+  .settings-panel-heading {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 12px;
+  }
+
+  .settings-panel-heading button,
+  .settings-panel button,
+  .rss-draft button,
+  .candidate-heading button,
+  .candidate-row button,
+  .filter-tabs button,
+  .candidate-pagination button,
+  .library-toolbar button {
+    min-height: 42px;
+  }
+
+  .toolbar-actions {
+    justify-content: flex-start;
   }
 
   .watch-content {
-    padding: 16px;
+    padding: 16px 16px calc(92px + env(safe-area-inset-bottom));
   }
 
   .settings-grid,
@@ -3115,8 +3321,9 @@ a {
   }
 
   .kura-media-player {
+    height: 100%;
     min-height: 0;
-    height: auto;
+    aspect-ratio: 16 / 9;
     max-height: min(62svh, 520px);
     --video-border-radius: 12px;
   }
@@ -3124,8 +3331,8 @@ a {
   .watch-panel-toggle {
     top: 10px;
     right: 10px;
-    width: 38px;
-    height: 38px;
+    width: 44px;
+    height: 44px;
   }
 
   .watch-control-row,
@@ -3147,6 +3354,10 @@ a {
     padding: 12px;
   }
 
+  .watch-inspector button {
+    min-height: 40px;
+  }
+
   .watch-episode-list,
   .watch-version-list,
   .watch-subtitle-list {
@@ -3164,6 +3375,11 @@ a {
     min-height: auto;
   }
 
+  .watch-underbar a {
+    width: 100%;
+    min-height: 40px;
+  }
+
   .watch-underbar span {
     justify-self: start;
     color: var(--text-faint);
@@ -3175,6 +3391,9 @@ a {
   }
 
   .candidate-heading,
+  .candidate-row,
+  .subscription-list article,
+  .rss-list article,
   .organizer-import-panel,
   .organizer-plan-heading,
   .download-table article,
@@ -3184,6 +3403,141 @@ a {
 
   .candidate-heading {
     flex-direction: column;
+  }
+
+  .candidate-board-heading {
+    padding: 0;
+  }
+
+  .candidate-board-tools {
+    min-width: 0;
+  }
+
+  .candidate-filter-bar input,
+  .candidate-filter-bar select,
+  .subscription-controls select,
+  .settings-search-field input {
+    height: 42px;
+  }
+
+  .candidate-actions,
+  .candidate-heading-actions {
+    justify-content: flex-start;
+  }
+
+  .candidate-actions button,
+  .candidate-heading-actions button {
+    flex: 1 1 180px;
+  }
+
+  .candidate-row strong {
+    white-space: normal;
+    overflow-wrap: anywhere;
+  }
+
+  .candidate-row .candidate-row-meta,
+  .candidate-summary,
+  .candidate-heading p {
+    overflow-wrap: anywhere;
+  }
+
+  .subscription-list article .danger-button {
+    width: 100%;
+  }
+
+  .rss-list article {
+    align-items: stretch;
+    gap: 10px;
+  }
+
+  .rss-list article .toggle,
+  .rss-list article .icon-button {
+    min-height: 40px;
+    width: 100%;
+  }
+
+  .rss-list h3,
+  .rss-list p,
+  .subscription-list p {
+    white-space: normal;
+    overflow-wrap: anywhere;
+  }
+
+  .filter-tabs {
+    flex-wrap: nowrap;
+    margin-inline: -2px;
+    overflow-x: auto;
+    padding: 0 2px 4px;
+    scrollbar-width: thin;
+  }
+
+  .filter-tabs button {
+    flex: 0 0 auto;
+    white-space: nowrap;
+  }
+
+  .download-table article {
+    gap: 10px;
+    align-items: stretch;
+  }
+
+  .download-table h3,
+  .download-table p,
+  .download-files span {
+    white-space: normal;
+    overflow-wrap: anywhere;
+  }
+
+  .download-table article > span,
+  .download-table article > strong {
+    justify-self: start;
+  }
+
+  .download-actions {
+    justify-content: flex-start;
+  }
+
+  .download-actions small {
+    min-width: 0;
+    text-align: left;
+  }
+
+  .download-actions button {
+    width: 40px;
+    height: 40px;
+  }
+
+  .files-table button {
+    gap: 6px;
+    align-items: start;
+    min-height: 68px;
+  }
+
+  .files-table strong {
+    white-space: normal;
+    overflow-wrap: anywhere;
+  }
+
+  .files-table small {
+    white-space: normal;
+  }
+
+  .breadcrumb {
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    padding-bottom: 2px;
+  }
+
+  .breadcrumb span,
+  .breadcrumb button {
+    flex: 0 0 auto;
+  }
+
+  .breadcrumb button {
+    max-width: 70vw;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
 
   .organizer-plan-media {
@@ -3201,11 +3555,156 @@ a {
   .organizer-list .toolbar-actions {
     justify-content: flex-start;
   }
+
+  .organizer-list .toolbar-actions button {
+    flex: 1 1 140px;
+  }
+
+  .organizer-import-panel button {
+    min-height: 42px;
+  }
+
+  .organizer-paths span,
+  .organizer-paths strong,
+  .organizer-paths em {
+    white-space: normal;
+    overflow-wrap: anywhere;
+  }
 }
 
 @media (max-width: 560px) {
-  .watch-content {
+  .settings-content {
+    padding: 18px 12px calc(92px + env(safe-area-inset-bottom));
+  }
+
+  .settings-panel {
+    border-radius: 14px;
+    padding: 14px;
+  }
+
+  .settings-panel-heading h2,
+  .candidate-board-heading h2 {
+    font-size: 16px;
+    line-height: 22px;
+    text-align: left;
+  }
+
+  .library-toolbar {
+    gap: 10px;
+  }
+
+  .library-search-field {
+    height: 42px;
+  }
+
+  .library-filter-controls {
+    flex: 1 1 100%;
+  }
+
+  .library-filter-controls label {
+    min-width: 100%;
+    height: 42px;
+    grid-template-columns: minmax(48px, auto) minmax(0, 1fr);
+  }
+
+  .library-result-count {
+    min-height: 28px;
+  }
+
+  .anime-grid {
+    gap: 10px;
+  }
+
+  .anime-card {
+    grid-template-columns: 72px minmax(0, 1fr);
+    padding: 10px;
+  }
+
+  .anime-card h2,
+  .anime-card p,
+  .anime-card small {
+    overflow-wrap: anywhere;
+  }
+
+  .anime-card small {
+    white-space: normal;
+    display: -webkit-box;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 2;
+  }
+
+  .anime-card p {
+    white-space: normal;
+  }
+
+  .anime-play-link,
+  .anime-audit-warning {
+    min-height: 36px;
+  }
+
+  .candidate-group {
+    padding: 14px;
+    border-radius: 14px;
+  }
+
+  .candidate-stats-row {
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    padding-bottom: 2px;
+  }
+
+  .candidate-stats-row span {
+    flex: 0 0 auto;
+  }
+
+  .candidate-list {
+    max-height: none;
+  }
+
+  .candidate-pagination {
+    align-items: stretch;
+  }
+
+  .candidate-pagination,
+  .candidate-pagination div {
+    flex-direction: column;
+  }
+
+  .candidate-pagination button {
+    width: 100%;
+  }
+
+  .organizer-plan-media {
+    grid-template-columns: 48px minmax(0, 1fr);
+  }
+
+  .organizer-poster,
+  .organizer-poster-fallback {
+    width: 48px;
+    height: 68px;
+  }
+
+  .organizer-plan-badges {
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    padding-bottom: 2px;
+  }
+
+  .organizer-badge {
+    flex: 0 0 auto;
+  }
+
+  .file-toolbar select,
+  .file-toolbar label {
+    min-height: 42px;
+  }
+
+  .files-table button {
     padding: 12px;
+  }
+
+  .watch-content {
+    padding: 12px 12px calc(92px + env(safe-area-inset-bottom));
   }
 
   .watch-heading p {
@@ -3227,6 +3726,7 @@ a {
   }
 
   .kura-media-player {
+    max-height: 56svh;
     --video-border-radius: 10px;
   }
 
@@ -3248,7 +3748,8 @@ a {
   .watch-ended button,
   .watch-ended a,
   .watch-underbar a {
-    min-height: 36px;
+    min-height: 44px;
+    white-space: normal;
   }
 
   .watch-panel-heading {

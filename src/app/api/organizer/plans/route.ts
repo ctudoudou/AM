@@ -1,6 +1,7 @@
 import type { OrganizerPlanStatus, Prisma } from "@prisma/client";
 import { jsonError, jsonResponse } from "@/lib/api";
 import { prisma } from "@/lib/db";
+import { assessOrganizerPlanAutomation } from "@/lib/organizer";
 
 export const dynamic = "force-dynamic";
 
@@ -75,8 +76,12 @@ export async function GET(request: Request) {
       }),
       prisma.organizerPlan.count(),
     ]);
+    const plansWithAutomation = plans.map((plan) => ({
+      ...plan,
+      automation: assessOrganizerPlanAutomation(plan),
+    }));
     return jsonResponse({
-      plans,
+      plans: plansWithAutomation,
       stats: {
         active,
         autoExecutable,

@@ -21,6 +21,11 @@ type OrganizerPlan = {
   confidence: number;
   reason?: string | null;
   autoExecutable: boolean;
+  automation?: {
+    executable: boolean;
+    autoExecutable: boolean;
+    reasons: string[];
+  };
   candidate?: {
     parsedTitle: string;
     group?: { displayTitle: string } | null;
@@ -384,7 +389,7 @@ export function OrganizerClient({ locale }: { locale: Locale }) {
                         <span className={`organizer-badge ${confidenceBadgeClass(plan.confidence)}`}>
                           {t.organizerConfidence}: {Math.round(plan.confidence * 100)}%
                         </span>
-                        {plan.autoExecutable ? (
+                        {(plan.automation?.autoExecutable ?? plan.autoExecutable) ? (
                           <span className="organizer-badge ready">
                             {t.organizerAutoReadyBadge}
                           </span>
@@ -438,6 +443,9 @@ function getTitleInitial(title: string) {
 }
 
 function canExecutePlan(plan: OrganizerPlan) {
+  if (plan.automation) {
+    return plan.automation.executable;
+  }
   return (
     ["PENDING", "NEEDS_REVIEW"].includes(plan.status) &&
     plan.items.length > 0 &&
@@ -550,6 +558,9 @@ function confidenceBadgeClass(confidence: number) {
 }
 
 function organizerPlanHint(plan: OrganizerPlan, t: ReturnType<typeof getMessages>) {
+  if (plan.automation && !plan.automation.autoExecutable && plan.automation.reasons.length > 0) {
+    return plan.automation.reasons.join(" ");
+  }
   if (plan.items.length === 0) {
     return t.organizerNoFilesHint;
   }

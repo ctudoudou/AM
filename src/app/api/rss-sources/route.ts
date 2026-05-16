@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { Prisma } from "@prisma/client";
 import { jsonError } from "@/lib/api";
 import { prisma } from "@/lib/db";
+import { listJobRuns } from "@/lib/job-runs";
 import { rssSourceCreateSchema } from "@/lib/rss-sources";
 
 export const dynamic = "force-dynamic";
@@ -10,8 +11,32 @@ export async function GET() {
   try {
     const sources = await prisma.rssSource.findMany({
       orderBy: [{ enabled: "desc" }, { name: "asc" }],
+      include: {
+        _count: { select: { items: true } },
+        items: {
+          orderBy: { createdAt: "desc" },
+          take: 1,
+          select: {
+            createdAt: true,
+            publishedAt: true,
+            status: true,
+          },
+        },
+      },
     });
-    return NextResponse.json({ sources });
+    const runs = await listJobRuns(20);
+    return NextResponse.json({
+      sources: sources.map(({ items, ...source }) => ({
+        ...source,
+        latestItem: items[0] ?? null,
+      })),
+      queueStatus: {
+        lastFetchRun: runs.find((run) => run.job === "rss.fetchAll") ?? null,
+        lastGroupRun:
+          runs.find((run) => run.job === "ai.groupCandidates" || run.job === "ai.repairCandidateGroups") ??
+          null,
+      },
+    });
   } catch (error) {
     return jsonError(error);
   }

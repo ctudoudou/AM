@@ -51,9 +51,23 @@ type Dashboard = {
   } | null;
 };
 
+type JobRunStatus = {
+  key: "rss" | "downloads" | "organizerScan" | "aiReview" | "autoArchive";
+  state: "SUCCESS" | "FAILED" | "NEVER";
+  latestRun: {
+    id: string;
+    job: string;
+    status: "SUCCESS" | "FAILED";
+    finishedAt: string;
+    durationMs: number;
+    error?: string;
+  } | null;
+};
+
 export function HomeDashboardClient({ locale }: { locale: Locale }) {
   const t = getMessages(locale);
   const [dashboard, setDashboard] = useState<Dashboard | null>(null);
+  const [jobStatuses, setJobStatuses] = useState<JobRunStatus[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const featured = useMemo(
@@ -63,11 +77,18 @@ export function HomeDashboardClient({ locale }: { locale: Locale }) {
 
   const load = useCallback(async () => {
     try {
-      const response = await fetch("/api/dashboard");
-      if (!response.ok) {
+      const [dashboardResponse, jobStatusResponse] = await Promise.all([
+        fetch("/api/dashboard"),
+        fetch("/api/jobs/runs/status"),
+      ]);
+      if (!dashboardResponse.ok) {
         throw new Error(t.dashboardLoadError);
       }
-      setDashboard((await response.json()) as Dashboard);
+      setDashboard((await dashboardResponse.json()) as Dashboard);
+      if (jobStatusResponse.ok) {
+        const payload = (await jobStatusResponse.json()) as { statuses: JobRunStatus[] };
+        setJobStatuses(payload.statuses);
+      }
       setError("");
     } catch (loadError) {
       setError(loadError instanceof Error ? loadError.message : t.dashboardLoadError);
@@ -145,6 +166,17 @@ export function HomeDashboardClient({ locale }: { locale: Locale }) {
         <DashboardStat icon={<Download size={16} />} label={t.downloads} value={dashboard.downloads.ACTIVE + dashboard.downloads.WAITING} />
         <DashboardStat icon={<Rss size={16} />} label={t.recentlyFetched} value={dashboard.recentlyFetched.length} />
       </section>
+
+      <DashboardSection title={t.recentTaskStatus} empty={t.noJobActivity}>
+        {jobStatuses.map((status) => (
+          <MediaListItem
+            href={`/${locale}/settings`}
+            key={status.key}
+            meta={formatJobStatusMeta(status, t)}
+            title={jobStatusTitle(status.key, t)}
+          />
+        ))}
+      </DashboardSection>
 
       <DashboardSection title={t.continueWatching} empty={t.noContinueWatching}>
         {dashboard.continueWatching.map((item) => (
@@ -267,6 +299,30 @@ function SectionTitle({ icon, title }: { icon: React.ReactNode; title: string })
 
 function progressPercent(position: number, duration?: number | null) {
   return duration && duration > 0 ? (position / duration) * 100 : 0;
+}
+
+function jobStatusTitle(key: JobRunStatus["key"], t: ReturnType<typeof getMessages>) {
+  switch (key) {
+    case "rss":
+      return t.jobGroupRss;
+    case "downloads":
+      return t.jobGroupDownloads;
+    case "organizerScan":
+      return t.jobGroupOrganizerScan;
+    case "aiReview":
+      return t.jobGroupAiReview;
+    case "autoArchive":
+      return t.jobGroupAutoArchive;
+  }
+}
+
+function formatJobStatusMeta(status: JobRunStatus, t: ReturnType<typeof getMessages>) {
+  if (!status.latestRun) {
+    return t.jobNeverRun;
+  }
+  const statusLabel =
+    status.state === "SUCCESS" ? t.jobStatusSuccess : `${t.jobStatusFailed}: ${status.latestRun.error ?? status.latestRun.job}`;
+  return `${statusLabel} · ${new Date(status.latestRun.finishedAt).toLocaleString()} · ${status.latestRun.durationMs}ms`;
 }
 
 function formatBytes(value: string) {
