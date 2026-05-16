@@ -62,6 +62,15 @@ export function MissingEpisodesPanel({
     () => coverage.episodes.filter((episode) => episode.status !== "AVAILABLE"),
     [coverage.episodes],
   );
+  const safeBackfillSelections = useMemo(() => {
+    if (!backfillResult) {
+      return [];
+    }
+    return backfillResult.episodes.flatMap((episode) => {
+      const result = episode.results.find((item) => item.safeToDownload);
+      return result ? [{ episode, result }] : [];
+    });
+  }, [backfillResult]);
 
   async function scan() {
     setLoading(true);
@@ -188,25 +197,47 @@ export function MissingEpisodesPanel({
     setBusyId(`history:${episode.episodeNumber}:${result.key}`);
     setError("");
     try {
-      const response = await fetch("/api/history-backfill/select-download", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          mediaTitleId,
-          seasonNumber: episode.seasonNumber,
-          episodeNumber: episode.episodeNumber,
-          result,
-        }),
-      });
-      if (!response.ok) {
-        const body = await response.json().catch(() => null);
-        throw new Error(body?.message || t.downloadCreateError);
+      await queueHistoryBackfillDownload(episode, result);
+      await scan();
+    } catch (selectError) {
+      setError(selectError instanceof Error ? selectError.message : t.downloadCreateError);
+    } finally {
+      setBusyId(null);
+    }
+  }
+
+  async function selectSafeHistoryBackfillResults() {
+    if (safeBackfillSelections.length === 0) {
+      return;
+    }
+    setBusyId("history:bulk");
+    setError("");
+    try {
+      for (const selection of safeBackfillSelections) {
+        await queueHistoryBackfillDownload(selection.episode, selection.result);
       }
       await scan();
     } catch (selectError) {
       setError(selectError instanceof Error ? selectError.message : t.downloadCreateError);
     } finally {
       setBusyId(null);
+    }
+  }
+
+  async function queueHistoryBackfillDownload(episode: HistoryBackfillEpisodeResult, result: HistoryBackfillResult) {
+    const response = await fetch("/api/history-backfill/select-download", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        mediaTitleId,
+        seasonNumber: episode.seasonNumber,
+        episodeNumber: episode.episodeNumber,
+        result,
+      }),
+    });
+    if (!response.ok) {
+      const body = await response.json().catch(() => null);
+      throw new Error(body?.message || t.downloadCreateError);
     }
   }
 
@@ -278,11 +309,21 @@ export function MissingEpisodesPanel({
       {backfillResult ? (
         <div className="history-backfill-results">
           <div className="wanted-search-heading">
-            <strong>
-              {t.historyBackfillResults} · S{String(backfillResult.seasonNumber).padStart(2, "0")}{" "}
-              EP{backfillResult.episodeStart}-{backfillResult.episodeEnd}
-            </strong>
-            <span>{t.historyBackfillStrictHint}</span>
+            <div>
+              <strong>
+                {t.historyBackfillResults} · S{String(backfillResult.seasonNumber).padStart(2, "0")}{" "}
+                EP{backfillResult.episodeStart}-{backfillResult.episodeEnd}
+              </strong>
+              <span>{t.historyBackfillStrictHint}</span>
+            </div>
+            <button
+              disabled={safeBackfillSelections.length === 0 || busyId === "history:bulk"}
+              onClick={() => void selectSafeHistoryBackfillResults()}
+              type="button"
+            >
+              {busyId === "history:bulk" ? <Loader2 size={14} /> : <Download size={14} />}
+              {t.downloadAllSafeHistoryBackfill} ({safeBackfillSelections.length})
+            </button>
           </div>
           {backfillResult.episodes.map((episode) => (
             <div className="history-backfill-episode" key={`${episode.seasonNumber}-${episode.episodeNumber}`}>

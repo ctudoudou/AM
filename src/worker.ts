@@ -23,6 +23,7 @@ async function main() {
     "subscriptions.matchNewCandidates",
     "downloads.syncAria2",
     "organizer.inspectCompletedDownloads",
+    "organizer.autoExecuteReadyPlans",
     "library.scan",
   ] as JobName[];
 
@@ -47,6 +48,17 @@ async function main() {
             ),
         });
       }
+      if (name === "organizer.autoExecuteReadyPlans" && isScheduledRun) {
+        return runJobWithLog(name, {
+          shouldLogSuccess: (result) =>
+            Boolean(
+              result &&
+                typeof result === "object" &&
+                "executed" in result &&
+                Number((result as { executed: unknown }).executed) > 0,
+            ),
+        });
+      }
       return runJobWithLog(name);
     });
   }
@@ -54,11 +66,13 @@ async function main() {
   const settings = await getAppSettings();
   await boss.unschedule("rss.fetchAll").catch(() => null);
   await boss.unschedule("downloads.syncAria2").catch(() => null);
+  await boss.unschedule("organizer.autoExecuteReadyPlans").catch(() => null);
   await boss.schedule("rss.fetchAll", "*/5 * * * *", { scheduled: true });
   await boss.schedule("downloads.syncAria2", "*/1 * * * *", { scheduled: true });
+  await boss.schedule("organizer.autoExecuteReadyPlans", "*/2 * * * *", { scheduled: true });
 
   console.log(
-    `Kura worker started. RSS frequency: ${settings.general.subscriptionFrequencyMinutes} minutes; download sync: */1 * * * *.`,
+    `Kura worker started. RSS frequency: ${settings.general.subscriptionFrequencyMinutes} minutes; download sync: */1 * * * *; auto organizer: */2 * * * *.`,
   );
 }
 

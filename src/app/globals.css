@@ -2269,6 +2269,13 @@ a {
   gap: 12px;
 }
 
+.wanted-search-heading > div {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 2px;
+}
+
 .wanted-search-heading strong {
   color: var(--text-primary);
   font-size: 12px;
@@ -2281,6 +2288,27 @@ a {
   color: var(--text-faint);
   font-size: 11px;
   line-height: 16px;
+}
+
+.history-backfill-results .wanted-search-heading button {
+  display: inline-flex;
+  min-height: 32px;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  border: 1px solid var(--border-default);
+  border-radius: 9px;
+  background: rgba(255, 255, 255, 0.06);
+  color: var(--text-primary);
+  padding: 0 10px;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.history-backfill-results .wanted-search-heading button:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
 }
 
 .wanted-search-result {

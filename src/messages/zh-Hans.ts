@@ -304,6 +304,7 @@ export const zhHans = {
   historyBackfillResults: "历史搜索",
   historyBackfillStrictHint: "下载前会严格检查季和集。合集、cour、part、累计集数都需要人工确认。",
   searchHistoryBackfill: "搜索历史资源",
+  downloadAllSafeHistoryBackfill: "下载全部安全项",
   historyBackfillError: "历史补番搜索失败。",
   episodeStart: "起始集",
   episodeEnd: "结束集",

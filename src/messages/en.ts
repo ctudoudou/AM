@@ -304,6 +304,7 @@ export const en = {
   historyBackfillResults: "History search",
   historyBackfillStrictHint: "Season and episode identity are checked before download. Batch, cour, part, and cumulative numbering require review.",
   searchHistoryBackfill: "Search history",
+  downloadAllSafeHistoryBackfill: "Download safe matches",
   historyBackfillError: "History backfill search failed.",
   episodeStart: "From EP",
   episodeEnd: "To EP",
