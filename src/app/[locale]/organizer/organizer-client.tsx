@@ -83,6 +83,7 @@ export function OrganizerClient({ locale }: { locale: Locale }) {
   const [reviewing, setReviewing] = useState(false);
   const [autoExecuting, setAutoExecuting] = useState(false);
   const [repairing, setRepairing] = useState(false);
+  const [regeneratingId, setRegeneratingId] = useState<string | null>(null);
   const [status, setStatus] = useState("");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -279,6 +280,22 @@ export function OrganizerClient({ locale }: { locale: Locale }) {
     await load();
   }
 
+  async function regenerate(plan: OrganizerPlan) {
+    setRegeneratingId(plan.id);
+    setStatus("");
+    setError("");
+    const response = await fetch(`/api/organizer/plans/${plan.id}/regenerate`, {
+      method: "POST",
+    });
+    setRegeneratingId(null);
+    if (!response.ok) {
+      const body = await response.json().catch(() => null);
+      setError(body?.message || t.organizerRegenerateError);
+      return;
+    }
+    await load();
+  }
+
   if (loading) {
     return (
       <div className="settings-loading">
@@ -402,6 +419,20 @@ export function OrganizerClient({ locale }: { locale: Locale }) {
                     </div>
                   </div>
                   <div className="toolbar-actions">
+                    {canRegeneratePlan(plan) ? (
+                      <button
+                        disabled={regeneratingId === plan.id}
+                        onClick={() => void regenerate(plan)}
+                        type="button"
+                      >
+                        {regeneratingId === plan.id ? (
+                          <Loader2 size={14} />
+                        ) : (
+                          <RefreshCw size={14} />
+                        )}
+                        {t.regenerateOrganizerPlan}
+                      </button>
+                    ) : null}
                     <button
                       disabled={!executable}
                       onClick={() => void execute(plan)}
@@ -455,6 +486,10 @@ function canExecutePlan(plan: OrganizerPlan) {
 
 function canRejectPlan(plan: OrganizerPlan) {
   return !["AUTO_ARCHIVED", "EXECUTED", "REJECTED"].includes(plan.status);
+}
+
+function canRegeneratePlan(plan: OrganizerPlan) {
+  return plan.status === "REJECTED";
 }
 
 function organizerPlanParams(filter: OrganizerFilter) {

@@ -49,17 +49,25 @@ export async function inspectCompletedDownloads() {
   const downloads = await prisma.download.findMany({
     where: {
       status: "COMPLETED",
-      archiveStatus: { not: "planned" },
+      OR: [
+        { archiveStatus: { not: "planned" } },
+        {
+          organizerPlans: {
+            some: { status: "REJECTED" },
+            every: { status: "REJECTED" },
+          },
+        },
+      ],
     },
     include: {
       candidate: { include: { group: true } },
-      organizerPlans: { select: { id: true, items: { select: { id: true } } } },
+      organizerPlans: { select: { id: true, status: true, items: { select: { id: true } } } },
     },
   });
   const results = [];
 
   for (const download of downloads) {
-    if (download.organizerPlans.some((plan) => plan.items.length > 0)) {
+    if (hasBlockingOrganizerPlan(download.organizerPlans)) {
       continue;
     }
     results.push(await createOrganizerPlanForDownload(download.id));
@@ -276,6 +284,10 @@ export async function createOrganizerPlanForCandidateSource(input: {
   });
 
   return plan;
+}
+
+export function hasBlockingOrganizerPlan(plans: Array<{ status: string; items: Array<unknown> }>) {
+  return plans.some((plan) => plan.status !== "REJECTED" && plan.items.length > 0);
 }
 
 function isReliableMetadataMatch(metadata: MetadataMatch) {
@@ -506,6 +518,41 @@ export async function rejectOrganizerPlan(planId: string) {
     where: { id: planId },
     data: { status: "REJECTED", reason: "Rejected by user" },
   });
+}
+
+export async function regenerateRejectedOrganizerPlan(planId: string) {
+  const plan = await prisma.organizerPlan.findUniqueOrThrow({
+    where: { id: planId },
+    select: { id: true, status: true, downloadId: true },
+  });
+
+  if (plan.status !== "REJECTED") {
+    throw new Error("Only rejected organizer plans can be regenerated.");
+  }
+  if (!plan.downloadId) {
+    throw new Error("Rejected organizer plan has no linked download.");
+  }
+
+  const existingPlans = await prisma.organizerPlan.findMany({
+    where: {
+      downloadId: plan.downloadId,
+      NOT: { id: plan.id },
+    },
+    select: { status: true, items: { select: { id: true } } },
+  });
+  if (hasBlockingOrganizerPlan(existingPlans)) {
+    throw new Error("Download already has an active or completed organizer plan.");
+  }
+
+  await prisma.download.update({
+    where: { id: plan.downloadId },
+    data: { archiveStatus: null },
+  });
+  await prisma.organizerPlan.delete({
+    where: { id: plan.id },
+  });
+
+  return createOrganizerPlanForDownload(plan.downloadId);
 }
 
 export async function cleanupPollutedOrganizerPlans() {

@@ -1543,7 +1543,8 @@ a {
   border-bottom: 0;
 }
 
-.organizer-import-panel {
+.organizer-import-panel,
+.manual-anime-panel {
   display: grid;
   grid-template-columns: minmax(220px, 1fr) minmax(240px, 1.4fr) 150px auto;
   align-items: end;
@@ -1554,22 +1555,31 @@ a {
   padding: 12px;
 }
 
-.organizer-import-panel > div {
+.manual-anime-panel {
+  grid-template-columns: minmax(220px, 1fr) minmax(220px, 1.2fr) minmax(180px, 1fr) 96px auto;
+}
+
+.organizer-import-panel > div,
+.manual-anime-panel > div {
   min-width: 0;
 }
 
 .organizer-import-panel strong,
-.organizer-import-panel span {
+.organizer-import-panel span,
+.manual-anime-panel strong,
+.manual-anime-panel span {
   display: block;
 }
 
-.organizer-import-panel strong {
+.organizer-import-panel strong,
+.manual-anime-panel strong {
   color: var(--text-primary);
   font-size: 13px;
   line-height: 18px;
 }
 
-.organizer-import-panel span {
+.organizer-import-panel span,
+.manual-anime-panel span {
   margin-top: 3px;
   color: var(--text-faint);
   font-size: 12px;
@@ -1577,7 +1587,8 @@ a {
 }
 
 .organizer-import-panel input,
-.organizer-import-panel select {
+.organizer-import-panel select,
+.manual-anime-panel input {
   height: 36px;
   min-width: 0;
   border: 1px solid var(--border-default);
@@ -1587,6 +1598,29 @@ a {
   color: var(--text-primary);
   padding: 0 12px;
   font-size: 13px;
+}
+
+.organizer-import-panel button,
+.manual-anime-panel button {
+  display: inline-flex;
+  height: 36px;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  border: 1px solid var(--border-default);
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.07);
+  color: var(--text-primary);
+  padding: 0 12px;
+  font-size: 12px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.organizer-import-panel button:disabled,
+.manual-anime-panel button:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
 }
 
 .organizer-plan-heading {
@@ -3502,6 +3536,7 @@ a {
   .subscription-list article,
   .rss-list article,
   .organizer-import-panel,
+  .manual-anime-panel,
   .organizer-plan-heading,
   .download-table article,
   .organizer-paths div {

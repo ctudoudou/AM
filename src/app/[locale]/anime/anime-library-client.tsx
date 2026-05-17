@@ -5,6 +5,7 @@ import {
   Image as ImageIcon,
   Loader2,
   Play,
+  Plus,
   Search,
   ShieldAlert,
   WandSparkles,
@@ -63,6 +64,12 @@ export function AnimeLibraryClient({ locale }: { locale: Locale }) {
   const [refreshingMetadata, setRefreshingMetadata] = useState(false);
   const [repairingLibrary, setRepairingLibrary] = useState(false);
   const [repairMessage, setRepairMessage] = useState("");
+  const [creatingTitle, setCreatingTitle] = useState(false);
+  const [manualDraft, setManualDraft] = useState({
+    title: "",
+    originalTitle: "",
+    year: "",
+  });
   const [auditing, setAuditing] = useState(false);
   const [error, setError] = useState("");
   const issueByMediaId = useMemo(() => {
@@ -188,6 +195,40 @@ export function AnimeLibraryClient({ locale }: { locale: Locale }) {
     }
   }
 
+  async function createManualTitle() {
+    const title = manualDraft.title.trim();
+    if (!title) {
+      return;
+    }
+    setCreatingTitle(true);
+    setRepairMessage("");
+    setError("");
+    try {
+      const response = await fetch("/api/library/anime", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          title,
+          originalTitle: manualDraft.originalTitle.trim() || undefined,
+          year: manualDraft.year.trim() ? Number(manualDraft.year) : undefined,
+          refreshMetadata: true,
+        }),
+      });
+      const body = (await response.json().catch(() => null)) as {
+        media?: { id: string };
+        metadataError?: string | null;
+        message?: string;
+      } | null;
+      if (!response.ok || !body?.media?.id) {
+        throw new Error(body?.message || t.manualAnimeCreateError);
+      }
+      window.location.href = `/${locale}/anime/${body.media.id}`;
+    } catch (createError) {
+      setError(createError instanceof Error ? createError.message : t.manualAnimeCreateError);
+      setCreatingTitle(false);
+    }
+  }
+
   if (loading) {
     return (
       <div className="settings-loading">
@@ -199,6 +240,32 @@ export function AnimeLibraryClient({ locale }: { locale: Locale }) {
 
   return (
     <div className="library-workspace">
+      <div className="manual-anime-panel">
+        <div>
+          <strong>{t.manualAnimeTitle}</strong>
+          <span>{t.manualAnimeDescription}</span>
+        </div>
+        <input
+          onChange={(event) => setManualDraft({ ...manualDraft, title: event.target.value })}
+          placeholder={t.manualAnimeTitlePlaceholder}
+          value={manualDraft.title}
+        />
+        <input
+          onChange={(event) => setManualDraft({ ...manualDraft, originalTitle: event.target.value })}
+          placeholder={t.manualAnimeOriginalTitlePlaceholder}
+          value={manualDraft.originalTitle}
+        />
+        <input
+          inputMode="numeric"
+          onChange={(event) => setManualDraft({ ...manualDraft, year: event.target.value })}
+          placeholder={t.year}
+          value={manualDraft.year}
+        />
+        <button disabled={creatingTitle || !manualDraft.title.trim()} onClick={() => void createManualTitle()} type="button">
+          {creatingTitle ? <Loader2 size={14} /> : <Plus size={14} />}
+          {t.createAnimeTitle}
+        </button>
+      </div>
       <div className="library-toolbar">
         <label className="library-search-field">
           <Search size={14} />
