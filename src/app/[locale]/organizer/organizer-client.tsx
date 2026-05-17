@@ -50,21 +50,24 @@ type OrganizerSettings = {
   };
 };
 
-const organizerFilters = [
+const organizerViewFilters = [
   "ACTIVE",
   "AUTO_READY",
+  "HISTORY",
+  "ALL",
+] as const;
+
+const organizerStatusFilters = [
   "PENDING",
   "NEEDS_REVIEW",
   "CONFLICT",
   "FAILED",
-  "HISTORY",
   "EXECUTED",
   "REJECTED",
   "AUTO_ARCHIVED",
-  "ALL",
 ] as const;
 
-type OrganizerFilter = (typeof organizerFilters)[number];
+type OrganizerFilter = (typeof organizerViewFilters)[number] | (typeof organizerStatusFilters)[number];
 
 type OrganizerStats = {
   active: number;
@@ -359,18 +362,39 @@ export function OrganizerClient({ locale }: { locale: Locale }) {
           {t.importScan}
         </button>
       </div>
-      <div className="filter-tabs">
-        {organizerFilters.map((status) => (
-          <button
-            className={filter === status ? "active" : ""}
-            key={status}
-            onClick={() => setFilter(status)}
-            type="button"
-          >
-            <span>{formatOrganizerFilter(status, t)}</span>
-            <small>{countForOrganizerFilter(status, stats)}</small>
-          </button>
-        ))}
+      <div className="organizer-filter-groups">
+        <div className="filter-group">
+          <span>{t.organizerViewFilters}</span>
+          <div className="filter-tabs">
+            {organizerViewFilters.map((status) => (
+              <button
+                className={filter === status ? "active" : ""}
+                key={status}
+                onClick={() => setFilter(status)}
+                type="button"
+              >
+                <span>{formatOrganizerFilter(status, t)}</span>
+                <small>{countForOrganizerFilter(status, stats)}</small>
+              </button>
+            ))}
+          </div>
+        </div>
+        <div className="filter-group">
+          <span>{t.organizerStatusFilters}</span>
+          <div className="filter-tabs">
+            {organizerStatusFilters.map((status) => (
+              <button
+                className={filter === status ? "active" : ""}
+                key={status}
+                onClick={() => setFilter(status)}
+                type="button"
+              >
+                <span>{formatOrganizerFilter(status, t)}</span>
+                <small>{countForOrganizerFilter(status, stats)}</small>
+              </button>
+            ))}
+          </div>
+        </div>
       </div>
       {error ? <div className="settings-alert">{error}</div> : null}
       {status ? <div className="settings-success">{status}</div> : null}

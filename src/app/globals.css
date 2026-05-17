@@ -1371,6 +1371,31 @@ a {
   white-space: normal;
 }
 
+.organizer-filter-groups {
+  display: grid;
+  grid-template-columns: minmax(0, 0.9fr) minmax(0, 1.4fr);
+  gap: 12px;
+  align-items: start;
+}
+
+.filter-group {
+  min-width: 0;
+  border: 1px solid rgba(255, 255, 255, 0.055);
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.025);
+  padding: 10px;
+}
+
+.filter-group > span {
+  display: block;
+  margin-bottom: 8px;
+  color: var(--text-faint);
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 14px;
+  text-transform: uppercase;
+}
+
 .filter-tabs {
   display: flex;
   flex-wrap: wrap;
@@ -3603,6 +3628,10 @@ a {
   .subscription-list p {
     white-space: normal;
     overflow-wrap: anywhere;
+  }
+
+  .organizer-filter-groups {
+    grid-template-columns: 1fr;
   }
 
   .filter-tabs {
