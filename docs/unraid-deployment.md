@@ -8,8 +8,8 @@ Deploy two Kura containers:
 
 | Container | Image | Purpose |
 | --- | --- | --- |
-| `kura-web` | `ctudoudou/kura:latest` | Web UI and API |
-| `kura-worker` | `ctudoudou/kura-worker:latest` | RSS jobs, download sync, organizer jobs, library scan |
+| `kura-web` | `your-registry/kura:latest` | Web UI and API |
+| `kura-worker` | `your-registry/kura-worker:latest` | RSS jobs, download sync, organizer jobs, library scan |
 
 `kura-web` can open the UI by itself, but background automation requires `kura-worker`.
 
@@ -56,7 +56,7 @@ METADATA_DIR=/data/metadata
 TRANSCODES_DIR=/data/transcodes
 
 ARIA2_RPC_URL=http://your-aria2-host:6800/jsonrpc
-ARIA2_RPC_SECRET=your-aria2-rpc-secret
+ARIA2_RPC_SECRET=change-this-secret
 
 OPENROUTER_API_KEY=your-openrouter-key
 OPENROUTER_MODEL=glm5.1
@@ -82,8 +82,8 @@ Do not use `localhost` for PostgreSQL or aria2 unless they run inside the same c
 Use one of these instead:
 
 ```text
-postgresql://kura:password@192.168.1.10:5432/kura?schema=public
-http://192.168.1.10:6800/jsonrpc
+postgresql://kura:password@postgres-host:5432/kura?schema=public
+http://aria2-host:6800/jsonrpc
 ```
 
 Or, if all containers are on the same custom Docker network:
@@ -99,7 +99,7 @@ Unraid Docker template:
 
 ```text
 Name:        kura-web
-Repository:  ctudoudou/kura:latest
+Repository:  your-registry/kura:latest
 Network:     bridge or custom Docker network
 Web UI:      http://[IP]:[PORT:3000]/zh-Hans
 ```
@@ -135,7 +135,7 @@ Unraid Docker template:
 
 ```text
 Name:        kura-worker
-Repository:  ctudoudou/kura-worker:latest
+Repository:  your-registry/kura-worker:latest
 Network:     same network as kura-web
 ```
 
@@ -162,7 +162,7 @@ From Unraid Terminal:
 ```bash
 docker run --rm \
   -e DATABASE_URL='postgresql://kura:your-password@your-postgres-host:5432/kura?schema=public' \
-  ctudoudou/kura-worker:latest \
+  your-registry/kura-worker:latest \
   npm run prisma:migrate:deploy
 ```
 
@@ -172,7 +172,7 @@ If your database requires network access through a custom Docker network:
 docker run --rm \
   --network your-docker-network \
   -e DATABASE_URL='postgresql://kura:your-password@postgres:5432/kura?schema=public' \
-  ctudoudou/kura-worker:latest \
+  your-registry/kura-worker:latest \
   npm run prisma:migrate:deploy
 ```
 
@@ -236,8 +236,8 @@ Put `/mnt/user/Kura/transcodes` on SSD/cache storage if possible. HLS preparatio
 1. Pull the latest images:
 
 ```bash
-docker pull ctudoudou/kura:latest
-docker pull ctudoudou/kura-worker:latest
+docker pull your-registry/kura:latest
+docker pull your-registry/kura-worker:latest
 ```
 
 2. Run migration:
@@ -245,7 +245,7 @@ docker pull ctudoudou/kura-worker:latest
 ```bash
 docker run --rm \
   -e DATABASE_URL='postgresql://kura:your-password@your-postgres-host:5432/kura?schema=public' \
-  ctudoudou/kura-worker:latest \
+  your-registry/kura-worker:latest \
   npm run prisma:migrate:deploy
 ```
 

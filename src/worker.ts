@@ -5,7 +5,7 @@ import { listJobRuns, runJobWithLog } from "@/lib/job-runs";
 
 const connectionString =
   process.env.DATABASE_URL ??
-  "postgresql://kura:kura@localhost:5432/kura?schema=public";
+  "postgresql://kura:change-me@localhost:5432/kura?schema=public";
 
 const boss = new PgBoss({ connectionString });
 

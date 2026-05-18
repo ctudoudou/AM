@@ -6,7 +6,7 @@ services:
     environment:
       POSTGRES_DB: kura
       POSTGRES_USER: kura
-      POSTGRES_PASSWORD: kura
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-change-me}
     ports:
       - "5432:5432"
     volumes:
@@ -22,7 +22,7 @@ services:
     container_name: kura-aria2
     restart: unless-stopped
     environment:
-      RPC_SECRET: ${ARIA2_RPC_SECRET:-}
+      RPC_SECRET: ${ARIA2_RPC_SECRET:-change-me}
       RPC_PORT: 6800
       LISTEN_PORT: 6888
     ports:
@@ -46,7 +46,7 @@ services:
       migrate:
         condition: service_completed_successfully
     environment:
-      DATABASE_URL: postgresql://kura:kura@postgres:5432/kura?schema=public
+      DATABASE_URL: postgresql://kura:${POSTGRES_PASSWORD:-change-me}@postgres:5432/kura?schema=public
       KURA_AUTO_MIGRATE: "false"
       DATA_ROOT: /data
       IMPORT_ROOT: /data/import
@@ -58,7 +58,7 @@ services:
       METADATA_DIR: /data/metadata
       TRANSCODES_DIR: /data/transcodes
       ARIA2_RPC_URL: http://aria2:6800/jsonrpc
-      ARIA2_RPC_SECRET: ${ARIA2_RPC_SECRET:-}
+      ARIA2_RPC_SECRET: ${ARIA2_RPC_SECRET:-change-me}
       OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
       OPENROUTER_MODEL: ${OPENROUTER_MODEL:-glm5.1}
       NEXT_PUBLIC_DEFAULT_LOCALE: ${NEXT_PUBLIC_DEFAULT_LOCALE:-zh-Hans}
@@ -78,7 +78,7 @@ services:
         condition: service_healthy
     command: ["npm", "run", "prisma:migrate:deploy"]
     environment:
-      DATABASE_URL: postgresql://kura:kura@postgres:5432/kura?schema=public
+      DATABASE_URL: postgresql://kura:${POSTGRES_PASSWORD:-change-me}@postgres:5432/kura?schema=public
       DATA_ROOT: /data
       IMPORT_ROOT: /data/import
       DOWNLOADS_DIR: /data/downloads
@@ -89,7 +89,7 @@ services:
       METADATA_DIR: /data/metadata
       TRANSCODES_DIR: /data/transcodes
       ARIA2_RPC_URL: http://aria2:6800/jsonrpc
-      ARIA2_RPC_SECRET: ${ARIA2_RPC_SECRET:-}
+      ARIA2_RPC_SECRET: ${ARIA2_RPC_SECRET:-change-me}
       OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
       OPENROUTER_MODEL: ${OPENROUTER_MODEL:-glm5.1}
       NEXT_PUBLIC_DEFAULT_LOCALE: ${NEXT_PUBLIC_DEFAULT_LOCALE:-zh-Hans}
@@ -111,7 +111,7 @@ services:
         condition: service_completed_successfully
     command: ["npm", "run", "worker"]
     environment:
-      DATABASE_URL: postgresql://kura:kura@postgres:5432/kura?schema=public
+      DATABASE_URL: postgresql://kura:${POSTGRES_PASSWORD:-change-me}@postgres:5432/kura?schema=public
       DATA_ROOT: /data
       IMPORT_ROOT: /data/import
       DOWNLOADS_DIR: /data/downloads
@@ -122,7 +122,7 @@ services:
       METADATA_DIR: /data/metadata
       TRANSCODES_DIR: /data/transcodes
       ARIA2_RPC_URL: http://aria2:6800/jsonrpc
-      ARIA2_RPC_SECRET: ${ARIA2_RPC_SECRET:-}
+      ARIA2_RPC_SECRET: ${ARIA2_RPC_SECRET:-change-me}
       OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
       OPENROUTER_MODEL: ${OPENROUTER_MODEL:-glm5.1}
       NEXT_PUBLIC_DEFAULT_LOCALE: ${NEXT_PUBLIC_DEFAULT_LOCALE:-zh-Hans}

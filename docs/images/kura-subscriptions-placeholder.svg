@@ -1,0 +1,28 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1440" height="900" viewBox="0 0 1440 900" role="img" aria-labelledby="title desc">
+  <title id="title">Kura subscriptions screenshot placeholder</title>
+  <desc id="desc">Placeholder for the Kura subscriptions and release candidates screenshot.</desc>
+  <rect width="1440" height="900" fill="#050505"/>
+  <rect x="48" y="48" width="230" height="804" rx="18" fill="#121212"/>
+  <text x="318" y="108" fill="#ffffff" font-family="Inter, Arial, sans-serif" font-size="34" font-weight="700">Subscriptions</text>
+  <rect x="318" y="146" width="1010" height="56" rx="12" fill="#181818"/>
+  <rect x="340" y="164" width="280" height="20" rx="5" fill="#303030"/>
+  <rect x="1174" y="158" width="132" height="32" rx="8" fill="#00a878"/>
+  <g fill="#171717" stroke="#2a2a2a">
+    <rect x="318" y="242" width="1010" height="96" rx="12"/>
+    <rect x="318" y="362" width="1010" height="96" rx="12"/>
+    <rect x="318" y="482" width="1010" height="96" rx="12"/>
+    <rect x="318" y="602" width="1010" height="96" rx="12"/>
+  </g>
+  <g fill="#303030">
+    <rect x="348" y="270" width="390" height="18" rx="5"/>
+    <rect x="348" y="306" width="520" height="14" rx="5"/>
+    <rect x="348" y="390" width="330" height="18" rx="5"/>
+    <rect x="348" y="426" width="570" height="14" rx="5"/>
+    <rect x="348" y="510" width="360" height="18" rx="5"/>
+    <rect x="348" y="546" width="500" height="14" rx="5"/>
+    <rect x="348" y="630" width="420" height="18" rx="5"/>
+    <rect x="348" y="666" width="540" height="14" rx="5"/>
+  </g>
+  <text x="318" y="790" fill="#ffffff" font-family="Inter, Arial, sans-serif" font-size="34" font-weight="700">Release Candidates</text>
+  <text x="318" y="830" fill="#a0a0a0" font-family="Inter, Arial, sans-serif" font-size="20">Screenshot placeholder - update docs/images with current captures.</text>
+</svg>

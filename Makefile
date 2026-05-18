@@ -1,4 +1,4 @@
-IMAGE ?= ctudoudou/kura
+IMAGE ?= kura
 TIMESTAMP := $(shell date +%Y%m%d%H%M%S)
 TAG ?= $(TIMESTAMP)
 LATEST_TAG ?= latest
@@ -18,7 +18,7 @@ help:
 	@echo "  make worker-buildx         Build and push multi-arch worker image for $(PLATFORMS) with both tags"
 	@echo ""
 	@echo "Variables:"
-	@echo "  IMAGE=ctudoudou/kura TAG=<timestamp> LATEST_TAG=latest TARGET=runner PLATFORMS=linux/amd64,linux/arm64"
+	@echo "  IMAGE=your-registry/kura TAG=<timestamp> LATEST_TAG=latest TARGET=runner PLATFORMS=linux/amd64,linux/arm64"
 
 build:
 	$(DOCKER) build --target $(TARGET) -t $(IMAGE):$(TAG) -t $(IMAGE):$(LATEST_TAG) .

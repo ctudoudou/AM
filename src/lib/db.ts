@@ -7,7 +7,7 @@ const globalForPrisma = globalThis as unknown as {
 
 const databaseUrl =
   process.env.DATABASE_URL ??
-  "postgresql://kura:kura@localhost:5432/kura?schema=public";
+  "postgresql://kura:change-me@localhost:5432/kura?schema=public";
 
 export const prisma =
   globalForPrisma.prisma ??
