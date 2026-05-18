@@ -24,7 +24,9 @@ ENV HOSTNAME=0.0.0.0
 ENV PORT=3000
 ENV KURA_AUTO_MIGRATE=true
 RUN apk add --no-cache ffmpeg
-COPY --from=deps /app/node_modules ./node_modules
+# Use the builder node_modules so Prisma engines generated/downloaded during
+# the image build are available at container startup without runtime downloads.
+COPY --from=builder /app/node_modules ./node_modules
 COPY package.json package-lock.json* prisma.config.ts ./
 COPY prisma ./prisma
 COPY --from=builder /app/public ./public
