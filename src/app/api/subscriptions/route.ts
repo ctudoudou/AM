@@ -6,6 +6,12 @@ import { enqueueCandidateDownload } from "@/lib/downloads";
 const subscriptionCreateSchema = z.object({
   candidateId: z.string().min(1).optional(),
   candidateGroupId: z.string().min(1).optional(),
+  seasonMode: z.enum(["latest", "specific", "unknown_review"]).optional(),
+  seasonNumber: z.coerce.number().int().positive().optional().nullable(),
+  episodeMode: z.enum(["future_only", "missing_only", "range", "all"]).optional(),
+  episodeStart: z.coerce.number().positive().optional().nullable(),
+  episodeEnd: z.coerce.number().positive().optional().nullable(),
+  batchPolicy: z.enum(["reject", "review", "allow"]).optional(),
   preferredGroup: z.string().optional(),
   preferredResolution: z.string().optional(),
   preferredCodec: z.string().optional(),
@@ -18,6 +24,13 @@ const subscriptionCreateSchema = z.object({
   fallbackPolicy: z.string().default("manual_review"),
 }).refine((input) => input.candidateId || input.candidateGroupId, {
   message: "candidateId or candidateGroupId is required",
+}).refine((input) => {
+  if (input.episodeStart && input.episodeEnd) {
+    return input.episodeEnd >= input.episodeStart;
+  }
+  return true;
+}, {
+  message: "episodeEnd must be greater than or equal to episodeStart",
 });
 
 export const dynamic = "force-dynamic";
@@ -52,14 +65,34 @@ export async function POST(request: Request) {
       (await prisma.releaseCandidateGroup.findUniqueOrThrow({
         where: { id: candidateGroupId },
       }));
+    const seasonNumber = input.seasonNumber ?? selectedCandidate?.season ?? group.season ?? null;
+    const seasonMode = input.seasonMode ?? (seasonNumber ? "specific" : "unknown_review");
+    const episodeStart = input.episodeStart ?? selectedCandidate?.episodeNumber ?? null;
+    const episodeEnd = input.episodeEnd ?? null;
+    const episodeMode = input.episodeMode ?? "future_only";
+    const preferredVariantKey = input.preferredVariantKey ?? selectedCandidate?.variantKey ?? null;
     const existingSubscription = await prisma.subscription.findFirst({
-      where: { candidateGroupId: group.id },
+      where: {
+        candidateGroupId: group.id,
+        seasonMode,
+        seasonNumber,
+        episodeMode,
+        episodeStart,
+        episodeEnd,
+        preferredVariantKey,
+      },
       orderBy: { updatedAt: "desc" },
     });
     const subscriptionData = {
       candidateGroupId: group.id,
       mediaType: group.mediaType,
       title: group.displayTitle,
+      seasonMode,
+      seasonNumber,
+      episodeMode,
+      episodeStart,
+      episodeEnd,
+      batchPolicy: input.batchPolicy ?? "review",
       preferredGroup: input.preferredGroup ?? selectedCandidate?.subtitleGroup,
       preferredResolution: input.preferredResolution ?? selectedCandidate?.resolution,
       preferredCodec: input.preferredCodec ?? selectedCandidate?.codec,
@@ -69,7 +102,7 @@ export async function POST(request: Request) {
       preferredReleaseProfile:
         input.preferredReleaseProfile ?? selectedCandidate?.releaseProfile,
       preferredSourceKind: input.preferredSourceKind ?? selectedCandidate?.sourceKind,
-      preferredVariantKey: input.preferredVariantKey ?? selectedCandidate?.variantKey,
+      preferredVariantKey,
       fallbackPolicy: input.fallbackPolicy,
       autoDownload: input.autoDownload,
       enabled: true,
@@ -82,24 +115,8 @@ export async function POST(request: Request) {
       : await prisma.subscription.create({
           data: subscriptionData,
         });
-    if (existingSubscription) {
-      await prisma.subscription.deleteMany({
-        where: {
-          candidateGroupId: group.id,
-          id: { not: subscription.id },
-        },
-      });
-    }
 
     if (selectedCandidate) {
-      await prisma.releaseCandidate.updateMany({
-        where: {
-          groupId: group.id,
-          status: "SUBSCRIBED",
-          id: { not: selectedCandidate.id },
-        },
-        data: { status: "READY" },
-      });
       await prisma.releaseCandidate.update({
         where: { id: selectedCandidate.id },
         data: { status: "SUBSCRIBED" },

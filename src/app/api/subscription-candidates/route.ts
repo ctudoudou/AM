@@ -48,6 +48,7 @@ export async function GET(request: Request) {
             mediaType: true,
             rawTitle: true,
             episodeNumber: true,
+            season: true,
             subtitleGroup: true,
             resolution: true,
             codec: true,

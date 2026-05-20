@@ -42,6 +42,7 @@ type Candidate = {
   id: string;
   mediaType: MediaType;
   rawTitle: string;
+  season?: number | null;
   episodeNumber?: number | null;
   subtitleGroup?: string | null;
   resolution?: string | null;
@@ -70,6 +71,7 @@ type CandidateGroup = {
   mediaType: MediaType;
   displayTitle: string;
   normalizedTitle: string;
+  season?: number | null;
   confidence: number;
   reviewRequired: boolean;
   aiSummary?: string | null;
@@ -121,6 +123,12 @@ type Subscription = {
   preferredReleaseProfile?: string | null;
   preferredSourceKind?: string | null;
   preferredVariantKey?: string | null;
+  seasonMode?: string | null;
+  seasonNumber?: number | null;
+  episodeMode?: string | null;
+  episodeStart?: number | null;
+  episodeEnd?: number | null;
+  batchPolicy?: string | null;
   autoDownload: boolean;
   enabled: boolean;
   candidateGroup?: {
@@ -132,6 +140,16 @@ type CandidateFilter = "ACTIVE" | "UNSUBSCRIBED" | "SUBSCRIBED" | "EMPTY" | "ALL
 type MediaTypeFilter = MediaType | "ALL";
 type SubscriptionModeFilter = "ALL" | "AUTO" | "MANUAL";
 type CandidateStatusFilter = "ALL" | "ACTIONABLE" | "READY" | "REVIEW" | "SUBSCRIBED" | "EMPTY";
+type SubscriptionStrategyDraft = {
+  title: string;
+  seasonMode: "latest" | "specific" | "unknown_review";
+  seasonNumber: number | null;
+  episodeMode: "future_only" | "missing_only" | "range" | "all";
+  episodeStart: number | null;
+  episodeEnd: number | null;
+  batchPolicy: "reject" | "review" | "allow";
+  autoDownload: boolean;
+};
 
 export function SubscriptionsClient({ locale }: { locale: Locale }) {
   const t = getMessages(locale);
@@ -433,12 +451,22 @@ export function SubscriptionsClient({ locale }: { locale: Locale }) {
   async function createSubscription(group: CandidateGroup, candidate?: Candidate) {
     setStatus("");
     setError("");
+    const strategy = buildSubscriptionStrategy(group, candidate);
+    if (!window.confirm(formatSubscriptionConfirmation(strategy, locale))) {
+      return;
+    }
     const response = await fetch("/api/subscriptions", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         candidateId: candidate?.id,
         candidateGroupId: group.id,
+        seasonMode: strategy.seasonMode,
+        seasonNumber: strategy.seasonNumber,
+        episodeMode: strategy.episodeMode,
+        episodeStart: strategy.episodeStart,
+        episodeEnd: strategy.episodeEnd,
+        batchPolicy: strategy.batchPolicy,
         preferredGroup: candidatePreferredGroup(candidate) ?? undefined,
         preferredResolution: candidate?.resolution ?? undefined,
         preferredCodec: candidate?.codec ?? undefined,
@@ -852,9 +880,12 @@ export function SubscriptionsClient({ locale }: { locale: Locale }) {
             const groupSubscriptions = subscriptions.filter(
               (subscription) => subscription.candidateGroupId === group.id,
             );
-            const hasSubscription = groupSubscriptions.length > 0;
+            const hasAnySubscription = groupSubscriptions.length > 0;
+            const hasFutureOnlySubscription = groupSubscriptions.some((subscription) =>
+              subscriptionMatchesGroupFutureRule(group, subscription),
+            );
             const freshness = summarizeCandidateGroupFreshness(group);
-            const queueStatus = group.queueStatus ?? fallbackQueueStatus(group, hasSubscription);
+            const queueStatus = group.queueStatus ?? fallbackQueueStatus(group, hasAnySubscription);
 
             return (
               <article className="candidate-group" key={group.id}>
@@ -881,10 +912,10 @@ export function SubscriptionsClient({ locale }: { locale: Locale }) {
                     </p>
                   </div>
                   <div className="candidate-heading-actions">
-                    <span className={hasSubscription ? "candidate-policy active" : "candidate-policy"}>
+                    <span className={hasAnySubscription ? "candidate-policy active" : "candidate-policy"}>
                       {formatQueueState(queueStatus.state, t)}
                     </span>
-                    {!hasSubscription ? (
+                    {!hasFutureOnlySubscription ? (
                       <button onClick={() => void createSubscription(group)} type="button">
                         <Plus size={14} />
                         {t.futureOnlySubscribe}
@@ -914,7 +945,7 @@ export function SubscriptionsClient({ locale }: { locale: Locale }) {
                           const isSubscribed = groupSubscriptions.some((subscription) =>
                             candidateMatchesSubscription(candidate, subscription),
                           );
-                          const hasOtherSubscription = hasSubscription && !isSubscribed;
+                          const hasOtherSubscription = hasAnySubscription && !isSubscribed;
 
                           return (
                             <div className="candidate-row" key={candidate.id}>
@@ -1091,6 +1122,8 @@ function candidateMetaLabels(locale: Locale) {
 
 function formatSubscriptionPolicy(subscription: Subscription) {
   return [
+    formatSubscriptionScope(subscription),
+    formatBatchPolicy(subscription.batchPolicy),
     subscription.preferredGroup,
     subscription.preferredReleaseProfile,
     subscription.preferredSubtitleLanguage,
@@ -1104,7 +1137,111 @@ function formatSubscriptionPolicy(subscription: Subscription) {
     .join(" · ");
 }
 
+function buildSubscriptionStrategy(group: CandidateGroup, candidate?: Candidate): SubscriptionStrategyDraft {
+  const seasonNumber = candidate?.season ?? group.season ?? null;
+  return {
+    title: group.displayTitle,
+    seasonMode: seasonNumber ? "specific" : "unknown_review",
+    seasonNumber,
+    episodeMode: "future_only",
+    episodeStart: candidate?.episodeNumber ?? null,
+    episodeEnd: null,
+    batchPolicy: "review",
+    autoDownload: Boolean(candidate),
+  };
+}
+
+function formatSubscriptionConfirmation(strategy: SubscriptionStrategyDraft, locale: Locale) {
+  const lines =
+    locale === "en"
+      ? [
+          "Create subscription strategy?",
+          "",
+          `Title: ${strategy.title}`,
+          `Season: ${formatSeasonScope(strategy)}`,
+          `Episodes: ${formatEpisodeScope(strategy)}`,
+          `Batch releases: ${formatBatchPolicy(strategy.batchPolicy)}`,
+          `Mode: ${strategy.autoDownload ? "auto download selected version" : "match future releases only"}`,
+        ]
+      : [
+          "确认创建订阅策略？",
+          "",
+          `作品：${strategy.title}`,
+          `季度：${formatSeasonScope(strategy)}`,
+          `集数：${formatEpisodeScope(strategy)}`,
+          `合集：${formatBatchPolicy(strategy.batchPolicy)}`,
+          `模式：${strategy.autoDownload ? "自动下载当前选择版本" : "仅匹配后续更新"}`,
+        ];
+  return lines.join("\n");
+}
+
+function formatSubscriptionScope(subscription: Subscription) {
+  const strategy = {
+    title: subscription.title,
+    seasonMode: subscription.seasonMode === "latest" || subscription.seasonMode === "specific"
+      ? subscription.seasonMode
+      : "unknown_review",
+    seasonNumber: subscription.seasonNumber ?? null,
+    episodeMode:
+      subscription.episodeMode === "missing_only" ||
+      subscription.episodeMode === "range" ||
+      subscription.episodeMode === "all"
+        ? subscription.episodeMode
+        : "future_only",
+    episodeStart: subscription.episodeStart ?? null,
+    episodeEnd: subscription.episodeEnd ?? null,
+    batchPolicy:
+      subscription.batchPolicy === "reject" || subscription.batchPolicy === "allow"
+        ? subscription.batchPolicy
+        : "review",
+    autoDownload: subscription.autoDownload,
+  } satisfies SubscriptionStrategyDraft;
+  return `${formatSeasonScope(strategy)} · ${formatEpisodeScope(strategy)}`;
+}
+
+function formatSeasonScope(strategy: Pick<SubscriptionStrategyDraft, "seasonMode" | "seasonNumber">) {
+  if (strategy.seasonMode === "latest") {
+    return "Latest season";
+  }
+  if (strategy.seasonMode === "specific" && strategy.seasonNumber) {
+    return `Season ${String(strategy.seasonNumber).padStart(2, "0")}`;
+  }
+  return "Unknown season requires review";
+}
+
+function formatEpisodeScope(
+  strategy: Pick<SubscriptionStrategyDraft, "episodeMode" | "episodeStart" | "episodeEnd">,
+) {
+  if (strategy.episodeMode === "all") {
+    return "All episodes";
+  }
+  if (strategy.episodeMode === "missing_only") {
+    return "Missing episodes only";
+  }
+  if (strategy.episodeMode === "range") {
+    return `Episodes ${strategy.episodeStart ?? "?"}-${strategy.episodeEnd ?? "?"}`;
+  }
+  if (strategy.episodeStart) {
+    return `Future episodes from ${strategy.episodeStart}`;
+  }
+  return "Future episodes";
+}
+
+function formatBatchPolicy(policy?: string | null) {
+  if (policy === "reject") {
+    return "Reject batches";
+  }
+  if (policy === "allow") {
+    return "Allow batches";
+  }
+  return "Review batches";
+}
+
 function candidateMatchesSubscription(candidate: Candidate, subscription: Subscription) {
+  if (!candidateEligibleForSubscription(candidate, subscription)) {
+    return false;
+  }
+
   if (subscription.preferredVariantKey) {
     return candidate.variantKey === subscription.preferredVariantKey;
   }
@@ -1124,6 +1261,47 @@ function candidateMatchesSubscription(candidate: Candidate, subscription: Subscr
   }
 
   return checks.every(([preferred, actual]) => !preferred || preferred === actual);
+}
+
+function subscriptionMatchesGroupFutureRule(group: CandidateGroup, subscription: Subscription) {
+  return (
+    !subscription.preferredVariantKey &&
+    (subscription.episodeMode ?? "future_only") === "future_only" &&
+    (subscription.seasonNumber ?? null) === (group.season ?? null)
+  );
+}
+
+function candidateEligibleForSubscription(candidate: Candidate, subscription: Subscription) {
+  if (candidateIsBatch(candidate) && (subscription.batchPolicy ?? "review") === "reject") {
+    return false;
+  }
+  if (
+    (subscription.seasonMode ?? "unknown_review") === "specific" &&
+    subscription.seasonNumber &&
+    candidate.season &&
+    candidate.season !== subscription.seasonNumber
+  ) {
+    return false;
+  }
+  const episode = candidate.episodeNumber;
+  if (episode !== null && episode !== undefined) {
+    if (subscription.episodeStart && episode < subscription.episodeStart) {
+      return false;
+    }
+    if (subscription.episodeEnd && episode > subscription.episodeEnd) {
+      return false;
+    }
+  }
+  return true;
+}
+
+function candidateIsBatch(candidate: Candidate) {
+  if (candidate.episodeNumber === null || candidate.episodeNumber === undefined) {
+    return true;
+  }
+  return /(?:^|[\s[\]()【】_-])\d{1,3}\s*[-~～]\s*\d{1,3}(?:\s*(?:fin|end|complete|合集|全集|全|完|完结|完結))?(?=$|[\s[\]()【】_-])/i.test(
+    candidate.rawTitle,
+  );
 }
 
 function matchesSubscriptionQuery(subscription: Subscription, needle: string) {

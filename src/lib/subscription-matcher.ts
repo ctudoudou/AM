@@ -3,7 +3,10 @@ import { enqueueCandidateDownload } from "@/lib/downloads";
 
 type MatchCandidate = {
   id: string;
+  mediaType?: string | null;
+  rawTitle?: string | null;
   episodeNumber: number | null;
+  season?: number | null;
   subtitleGroup: string | null;
   resolution: string | null;
   codec: string | null;
@@ -16,6 +19,12 @@ type MatchCandidate = {
 };
 
 type MatchSubscription = {
+  seasonMode?: string | null;
+  seasonNumber?: number | null;
+  episodeMode?: string | null;
+  episodeStart?: number | null;
+  episodeEnd?: number | null;
+  batchPolicy?: string | null;
   preferredGroup: string | null;
   preferredResolution: string | null;
   preferredCodec: string | null;
@@ -180,6 +189,7 @@ export function selectSubscriptionCandidate(
 
   const second = scored[1];
   const needsReview =
+    candidateNeedsStrategyReview(best.candidate, subscription) ||
     (subscription.fallbackPolicy === "manual_review" &&
       Boolean(subscription.preferredVariantKey) &&
       best.candidate.variantKey !== subscription.preferredVariantKey) ||
@@ -194,6 +204,10 @@ export function scoreCandidate(
   candidate: MatchCandidate,
   subscription: MatchSubscription,
 ) {
+  if (!candidateEligibleForSubscription(candidate, subscription)) {
+    return 0;
+  }
+
   const requiredChecks = [
     [subscription.preferredGroup, candidate.subtitleGroup],
     [subscription.preferredResolution, candidate.resolution],
@@ -224,6 +238,86 @@ export function scoreCandidate(
   }
 
   return score;
+}
+
+export function candidateEligibleForSubscription(
+  candidate: MatchCandidate,
+  subscription: MatchSubscription,
+) {
+  const batchPolicy = subscription.batchPolicy ?? "review";
+  if (candidateIsBatch(candidate) && batchPolicy === "reject") {
+    return false;
+  }
+
+  const seasonMode = subscription.seasonMode ?? "unknown_review";
+  if (seasonMode === "specific" && subscription.seasonNumber) {
+    if (candidate.season !== null && candidate.season !== undefined && candidate.season !== subscription.seasonNumber) {
+      return false;
+    }
+  }
+
+  const episode = candidate.episodeNumber;
+  if (episode !== null && episode !== undefined) {
+    const start = subscription.episodeStart;
+    const end = subscription.episodeEnd;
+    if (
+      (subscription.episodeMode === "range" || (start !== null && start !== undefined)) &&
+      start &&
+      episode < start
+    ) {
+      return false;
+    }
+    if (
+      (subscription.episodeMode === "range" || (end !== null && end !== undefined)) &&
+      end &&
+      episode > end
+    ) {
+      return false;
+    }
+  }
+
+  return true;
+}
+
+function candidateNeedsStrategyReview(
+  candidate: MatchCandidate,
+  subscription: MatchSubscription,
+) {
+  if (candidateIsBatch(candidate) && (subscription.batchPolicy ?? "review") === "review") {
+    return true;
+  }
+  if (
+    (subscription.seasonMode ?? "unknown_review") === "specific" &&
+    subscription.seasonNumber &&
+    (candidate.season === null || candidate.season === undefined)
+  ) {
+    return true;
+  }
+  return false;
+}
+
+function candidateIsBatch(candidate: MatchCandidate) {
+  if (candidate.mediaType === "MOVIE") {
+    return false;
+  }
+  if (candidate.episodeNumber === null || candidate.episodeNumber === undefined) {
+    return true;
+  }
+  return Boolean(candidate.rawTitle && extractEpisodeRange(candidate.rawTitle));
+}
+
+function extractEpisodeRange(value: string) {
+  const match = value.match(
+    /(?:^|[\s[\]()【】_-])(?<start>\d{1,3})\s*[-~～]\s*(?<end>\d{1,3})(?:\s*(?:fin|end|complete|合集|全集|全|完|完结|完結))?(?=$|[\s[\]()【】_-])/i,
+  );
+  const start = positiveInteger(match?.groups?.start);
+  const end = positiveInteger(match?.groups?.end);
+  return start && end && end > start ? { start, end } : null;
+}
+
+function positiveInteger(value: unknown) {
+  const number = typeof value === "number" ? Math.floor(value) : Number(value);
+  return Number.isInteger(number) && number > 0 ? number : null;
 }
 
 function groupCandidatesByEpisode(candidates: MatchCandidate[]) {

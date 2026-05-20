@@ -79,6 +79,7 @@ metadata repair should be inspectable.
 
 - [Deployment and local development](docs/deployment.md)
 - [Unraid deployment guide](docs/unraid-deployment.md)
+- [Subscription strategy roadmap](docs/subscription-strategy-roadmap.md)
 - [Historical backfill design](docs/history-backfill-plan.md)
 - [Product baseline](docs/kura-product-baseline.md)
 

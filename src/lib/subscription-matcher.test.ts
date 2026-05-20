@@ -3,6 +3,9 @@ import { scoreCandidate, selectSubscriptionCandidate } from "./subscription-matc
 
 const baseCandidate = {
   id: "candidate-1",
+  mediaType: "ANIME",
+  rawTitle: "[ANi] Example Anime - 01 [1080P][CHT]",
+  season: 1,
   episodeNumber: 1,
   subtitleGroup: "ANi",
   resolution: "1080p",
@@ -16,6 +19,12 @@ const baseCandidate = {
 };
 
 const baseSubscription = {
+  seasonMode: "specific",
+  seasonNumber: 1,
+  episodeMode: "future_only",
+  episodeStart: null,
+  episodeEnd: null,
+  batchPolicy: "review",
   preferredGroup: "ANi",
   preferredResolution: "1080p",
   preferredCodec: "HEVC",
@@ -131,5 +140,87 @@ describe("subscription matching", () => {
 
     expect(selected.candidate?.variantKey).toBe("ani|abema|1080p|hevc|aac");
     expect(selected.needsReview).toBe(true);
+  });
+
+  it("rejects candidates from a different explicit season", () => {
+    expect(
+      scoreCandidate(
+        {
+          ...baseCandidate,
+          season: 2,
+        },
+        baseSubscription,
+      ),
+    ).toBe(0);
+  });
+
+  it("rejects candidates outside the configured episode range", () => {
+    expect(
+      scoreCandidate(
+        {
+          ...baseCandidate,
+          episodeNumber: 2,
+        },
+        {
+          ...baseSubscription,
+          episodeMode: "range",
+          episodeStart: 3,
+          episodeEnd: 6,
+        },
+      ),
+    ).toBe(0);
+  });
+
+  it("marks batch releases for review by default", () => {
+    const selected = selectSubscriptionCandidate(
+      [
+        {
+          ...baseCandidate,
+          rawTitle: "[ANi] Example Anime - 01-12 [1080P][CHT]",
+        },
+      ],
+      {
+        ...baseSubscription,
+        preferredVariantKey: null,
+      },
+    );
+
+    expect(selected.candidate?.id).toBe("candidate-1");
+    expect(selected.needsReview).toBe(true);
+  });
+
+  it("rejects batch releases when the strategy forbids batches", () => {
+    expect(
+      scoreCandidate(
+        {
+          ...baseCandidate,
+          rawTitle: "[ANi] Example Anime - 01-12 [1080P][CHT]",
+        },
+        {
+          ...baseSubscription,
+          batchPolicy: "reject",
+        },
+      ),
+    ).toBe(0);
+  });
+
+  it("does not treat movie candidates without episode numbers as batches", () => {
+    const selected = selectSubscriptionCandidate(
+      [
+        {
+          ...baseCandidate,
+          mediaType: "MOVIE",
+          episodeNumber: null,
+          rawTitle: "Example Movie 2026 1080p",
+        },
+      ],
+      {
+        ...baseSubscription,
+        batchPolicy: "review",
+      },
+    );
+
+    expect(selected.candidate?.id).toBe("candidate-1");
+    expect(selected.needsReview).toBe(false);
   });
 });

@@ -231,6 +231,12 @@ model Subscription {
   preferredReleaseProfile String?
   preferredSourceKind String?
   preferredVariantKey String?
+  seasonMode          String   @default("unknown_review")
+  seasonNumber        Int?
+  episodeMode         String   @default("future_only")
+  episodeStart        Float?
+  episodeEnd          Float?
+  batchPolicy         String   @default("review")
   fallbackPolicy      String   @default("manual_review")
   frequencyMinutes    Int      @default(30)
   autoDownload         Boolean  @default(false)
@@ -239,6 +245,7 @@ model Subscription {
   updatedAt           DateTime @updatedAt
 
   @@index([candidateGroupId])
+  @@index([candidateGroupId, seasonNumber])
 }
 
 model Download {
