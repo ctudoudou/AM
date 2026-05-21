@@ -58,6 +58,7 @@ Kura 是一个以动画内容为核心的 NAS 媒体应用，面向希望在一�
 - [订阅策略路线图](docs/subscription-strategy-roadmap.md)
 - [历史补番设计](docs/history-backfill-plan.md)
 - [产品基线](docs/kura-product-baseline.md)
+- [开发规范与项目宪章](docs/development-charter.zh-CN.md)
 
 ## 状态
 
