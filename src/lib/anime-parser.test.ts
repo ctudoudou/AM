@@ -195,6 +195,17 @@ describe("parseAnimeReleaseTitle", () => {
     expect(parsed.sourceKind).toBe("ABEMA");
   });
 
+  it("treats age-restricted edition markers as release metadata, not title text", () => {
+    const parsed = parseAnimeReleaseTitle(
+      "[黒ネズミたち] 淫獄團地 [年齡限制版] / Ingoku Danchi - 07 (Baha 1920x1080 AVC AAC MP4)",
+    );
+
+    expect(parsed.parsedTitle).toBe("淫獄團地 / Ingoku Danchi");
+    expect(parsed.normalizedTitle).toBe("淫狱团地");
+    expect(parsed.episodeNumber).toBe(7);
+    expect(parsed.releaseProfile).not.toContain("年齡限制版");
+  });
+
   it("skips chained release prefixes before leading titles", () => {
     const parsed = parseAnimeReleaseTitle(
       "[搬運][ANi] A Hundred Scenes of AWAJIMA / 淡島百景 - 04 [1080P][Baha][WEB-DL][AAC AVC][CHT][MP4]",
