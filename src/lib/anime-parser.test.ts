@@ -206,6 +206,28 @@ describe("parseAnimeReleaseTitle", () => {
     expect(parsed.releaseProfile).not.toContain("年齡限制版");
   });
 
+  it("treats uncut edition markers as release metadata, not title text", () => {
+    const parsed = parseAnimeReleaseTitle(
+      "[LoliHouse] 淫狱团地(无修版) / Ingoku Danchi - 04 [WebRip 1080p HEVC-10bit AAC][简繁内封字幕]",
+    );
+
+    expect(parsed.parsedTitle).toBe("淫狱团地 / Ingoku Danchi");
+    expect(parsed.normalizedTitle).toBe("淫狱团地");
+    expect(parsed.episodeNumber).toBe(4);
+    expect(parsed.releaseProfile).not.toContain("无修版");
+  });
+
+  it("extracts titles before dash-prefixed EP numbers and ignores subtitle language brackets", () => {
+    const parsed = parseAnimeReleaseTitle(
+      "[TV版&完全无修版] 淫狱团地 - EP05 [简／繁] (1080p H.264 AAC SRTx2) {インゴクダンチ | Ingoku Danchi：Deviant's Apartment Complex}",
+    );
+
+    expect(parsed.parsedTitle).toBe("淫狱团地");
+    expect(parsed.normalizedTitle).toBe("淫狱团地");
+    expect(parsed.episodeNumber).toBe(5);
+    expect(parsed.parsedTitle).not.toBe("简／繁");
+  });
+
   it("skips chained release prefixes before leading titles", () => {
     const parsed = parseAnimeReleaseTitle(
       "[搬運][ANi] A Hundred Scenes of AWAJIMA / 淡島百景 - 04 [1080P][Baha][WEB-DL][AAC AVC][CHT][MP4]",

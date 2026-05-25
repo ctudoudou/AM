@@ -26,7 +26,7 @@ const sourcePattern = /\b(web-?dl|webrip|web|baha|cr|crunchyroll|abema|b-global|
 const cantoneseAudioPattern = /(?:粵語|粤语|廣東話|广东话|\byue\b|cantonese)/i;
 const videoExtensionPattern = /\.(mkv|mp4|avi|mov|webm|m4v|ts)$/i;
 const releaseEditionPattern =
-  /(?:^|[\s（(【\[])(?:年[齡龄]限制版|成人版|限制版|放送版|オンエア版|先行放送版|先行版|無修正版|无修正版|修正版|on[\s-]?air\s+version|broadcast\s+version|age[\s-]?restricted(?:\s+version)?|adult\s+version|uncensored|censored)(?:$|[\s）)】\]])/i;
+  /(?:^|[\s（(【\[])(?:年[齡龄]限制版|成人版|限制版|放送版|オンエア版|先行放送版|先行版|[無无]修正?版|修正版|on[\s-]?air\s+version|broadcast\s+version|age[\s-]?restricted(?:\s+version)?|adult\s+version|uncensored|censored)(?:$|[\s）)】\]])/i;
 const episodePatterns = [
   /\bS(?<season>\d{1,2})E(?<episode>\d{1,4}(?:\.\d)?)\b/i,
   /★\s*(?<episode>\d{1,4}(?:\.\d)?)\s*★/i,
@@ -284,6 +284,7 @@ function extractLeadingTitle(rawTitle: string) {
     .replace(/^\s+/, "");
   const match =
     cleaned.match(/^(?<title>.+?)\s+-\s*(?<episode>\d{1,4}(?:\.\d+)?)(?:\s|\[|\(|v\d|$)/) ??
+    cleaned.match(/^(?<title>.+?)\s+-\s*EP?\s*(?<episode>\d{1,4}(?:\.\d+)?)(?:\s|\[|\(|v\d|$)/i) ??
     cleaned.match(/^(?<title>.+?)\s+第(?<episode>\d{1,4}(?:\.\d+)?)话(?:\s|\[|\(|$)/) ??
     cleaned.match(/^(?<title>.+?)\s*(?:\[|【)(?<episode>\d{1,4}(?:\.\d+)?(?:\s*[-~～]\s*\d{1,4}(?:\.\d+)?)?\s*(?:fin|final|end|完|完结|完結|全集|全)?)(?:\]|】)/i);
   const title = match?.groups?.title?.trim();

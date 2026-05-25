@@ -6,6 +6,7 @@ import {
   Home,
   Search,
   Settings,
+  ShieldCheck,
   Sparkles,
   Tv,
   WandSparkles,
@@ -24,6 +25,7 @@ type SidebarKey =
   | "downloads"
   | "organizer"
   | "files"
+  | "dataHealth"
   | "settings";
 
 const navGroups = [
@@ -48,6 +50,7 @@ const navGroups = [
     labelKey: "system",
     items: [
       { key: "files", icon: Folder, href: "/files" },
+      { key: "dataHealth", icon: ShieldCheck, href: "/data-health" },
       { key: "settings", icon: Settings, href: "/settings" },
     ],
   },

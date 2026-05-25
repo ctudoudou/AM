@@ -831,6 +831,166 @@ a {
   grid-column: 1 / -1;
 }
 
+.data-health-grid {
+  align-items: stretch;
+}
+
+.data-health-hero {
+  gap: 18px;
+}
+
+.data-health-score-row {
+  display: grid;
+  grid-template-columns: minmax(180px, 0.8fr) repeat(3, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.data-health-score,
+.data-health-metric,
+.data-health-stat,
+.data-health-empty {
+  border: 1px solid var(--border-subtle);
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.035);
+}
+
+.data-health-score {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 2px 10px;
+  align-items: center;
+  padding: 14px;
+}
+
+.data-health-score svg {
+  grid-row: 1 / span 2;
+}
+
+.data-health-score strong {
+  font-size: 30px;
+  line-height: 34px;
+}
+
+.data-health-score span,
+.data-health-metric span,
+.data-health-stat span {
+  color: var(--text-muted);
+  font-size: 12px;
+  line-height: 16px;
+}
+
+.data-health-score.ready svg,
+.data-health-score.ready span {
+  color: var(--accent-success);
+}
+
+.data-health-score.review svg,
+.data-health-score.review span {
+  color: var(--accent-rating);
+}
+
+.data-health-score.danger svg,
+.data-health-score.danger span {
+  color: rgba(248, 113, 113, 0.95);
+}
+
+.data-health-metric {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  justify-content: center;
+  gap: 6px;
+  padding: 14px;
+}
+
+.data-health-metric strong,
+.data-health-stat strong {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text-primary);
+  font-size: 18px;
+  line-height: 24px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.data-health-stat {
+  gap: 6px;
+}
+
+.data-health-issue-list {
+  display: grid;
+  gap: 10px;
+}
+
+.data-health-issue {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  gap: 8px 12px;
+  align-items: start;
+  border: 1px solid var(--border-subtle);
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.035);
+  padding: 12px;
+}
+
+.data-health-issue.danger {
+  border-color: rgba(248, 113, 113, 0.3);
+}
+
+.data-health-issue.warning {
+  border-color: rgba(253, 199, 0, 0.22);
+}
+
+.data-health-issue strong {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  line-height: 18px;
+}
+
+.data-health-issue p {
+  margin: 4px 0 0;
+  color: var(--text-muted);
+  font-size: 12px;
+  line-height: 18px;
+}
+
+.data-health-issue > span,
+.data-health-issue > small {
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.06);
+  color: var(--text-muted);
+  font-size: 12px;
+  line-height: 20px;
+  padding: 0 8px;
+}
+
+.data-health-issue pre {
+  grid-column: 1 / -1;
+  max-height: 180px;
+  overflow: auto;
+  border: 1px solid var(--border-subtle);
+  border-radius: 10px;
+  background: rgba(0, 0, 0, 0.24);
+  color: var(--text-muted);
+  font-size: 11px;
+  line-height: 16px;
+  margin: 0;
+  padding: 10px;
+}
+
+.data-health-empty {
+  display: flex;
+  min-height: 72px;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  color: var(--accent-success);
+  font-size: 13px;
+}
+
 .settings-panel button,
 .rss-draft button,
 .icon-button,
@@ -3392,11 +3552,21 @@ a {
     justify-content: flex-start;
   }
 
+  .data-health-issue {
+    grid-template-columns: 1fr;
+  }
+
+  .data-health-issue > span,
+  .data-health-issue > small {
+    width: fit-content;
+  }
+
   .watch-content {
     padding: 16px 16px calc(92px + env(safe-area-inset-bottom));
   }
 
   .settings-grid,
+  .data-health-score-row,
   .field-grid,
   .rss-draft,
   .subscription-controls,
