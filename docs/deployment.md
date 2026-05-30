@@ -57,6 +57,50 @@ same container. Inside Docker, `localhost` is the current container.
 
 For Unraid-style deployments, see [unraid-deployment.md](unraid-deployment.md).
 
+## GitHub Actions Image Publishing
+
+The repository includes `.github/workflows/docker-image.yml` for automated
+multi-arch image publishing to Docker Hub. On every branch push, GitHub Actions
+builds and pushes both images with three tags: `latest`, the branch name, and a
+Shanghai-time date tag in `YYYYMMDDHHMMSS` format:
+
+```text
+<dockerhub-namespace>/kura:latest
+<dockerhub-namespace>/kura:<branch>
+<dockerhub-namespace>/kura:<YYYYMMDDHHMMSS>
+<dockerhub-namespace>/kura-worker:latest
+<dockerhub-namespace>/kura-worker:<branch>
+<dockerhub-namespace>/kura-worker:<YYYYMMDDHHMMSS>
+```
+
+The workflow builds `linux/amd64` and `linux/arm64` images from the existing
+Dockerfile targets:
+
+```text
+runner  -> Kura web app
+worker  -> Kura background worker
+```
+
+Before the first run, configure the GitHub repository:
+
+1. Create a Docker Hub access token from Docker Hub account settings.
+2. Add repository secret `DOCKERHUB_USERNAME`.
+3. Add repository secret `DOCKERHUB_TOKEN`.
+4. Add repository variable `DOCKERHUB_IMAGE`, for example
+   `<dockerhub-namespace>/kura`.
+
+If the Docker Hub repository is private, the NAS host must log in before
+pulling:
+
+```bash
+docker login
+docker pull <dockerhub-namespace>/kura:latest
+docker pull <dockerhub-namespace>/kura-worker:latest
+```
+
+Do not commit Docker Hub credentials or private registry names. Keep real
+account names in GitHub repository variables and secrets.
+
 ## Environment Variables
 
 Do not commit real API keys, aria2 secrets, NAS hostnames, NAS IPs, or private
