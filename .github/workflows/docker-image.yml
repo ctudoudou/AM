@@ -9,6 +9,10 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: docker-images-${{ github.ref }}
+  cancel-in-progress: true
+
 env:
   PLATFORMS: linux/amd64,linux/arm64
 

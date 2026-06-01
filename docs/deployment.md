@@ -73,6 +73,10 @@ Shanghai-time date tag in `YYYYMMDDHHMMSS` format:
 <dockerhub-namespace>/kura-worker:<YYYYMMDDHHMMSS>
 ```
 
+If several commits are pushed to the same branch quickly, the workflow cancels
+the older in-progress run for that branch so stale builds do not overwrite the
+newer branch or `latest` tags.
+
 The workflow builds `linux/amd64` and `linux/arm64` images from the existing
 Dockerfile targets:
 
