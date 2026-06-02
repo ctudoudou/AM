@@ -399,12 +399,51 @@ describe("buildWantedEpisodeCoverage", () => {
     });
     expect(coverage.episodes.some((episode) => episode.episodeNumber === 52)).toBe(false);
   });
+
+  it("does not let unqualified absolute-number candidates expand season one", () => {
+    const coverage = buildWantedEpisodeCoverage(
+      {
+        ...baseMedia,
+        primaryTitle: "葬送的芙莉蓮",
+        originalTitle: "葬送のフリーレン",
+        aliases: [{ title: "葬送的芙莉莲" }, { title: "Sousou no Frieren" }],
+        seasons: [],
+      },
+      [
+        wantedCandidate({
+          id: "frieren-s1-38",
+          rawTitle: "[北宇治字幕组] 葬送的芙莉莲 / Sousou no Frieren [38][WebRip][HEVC_AAC][简繁日内封]",
+          season: null,
+          episodeNumber: 38,
+        }),
+        wantedCandidate({
+          id: "frieren-s2-8",
+          rawTitle:
+            "[jibaketa合成][代理商粵語]葬送的芙莉蓮 第二季 / Sousou no Frieren 2nd Season - 08 [WEB 1920x1080 AVC AAC]",
+          season: 2,
+          episodeNumber: 8,
+        }),
+      ],
+      [],
+    );
+
+    expect(coverage.seasons).toEqual([2]);
+    expect(coverage.episodes.some((episode) => episode.seasonNumber === 1)).toBe(false);
+    expect(coverage.episodes).toContainEqual(
+      expect.objectContaining({
+        seasonNumber: 2,
+        episodeNumber: 8,
+        status: "CANDIDATE_FOUND",
+        candidateId: "frieren-s2-8",
+      }),
+    );
+  });
 });
 
 function wantedCandidate(input: {
   id: string;
   rawTitle: string;
-  season: number;
+  season: number | null;
   episodeNumber: number;
 }) {
   return {

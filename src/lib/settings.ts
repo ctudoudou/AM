@@ -58,6 +58,20 @@ export const aiSettingsSchema = z.object({
   model: z.string().trim().min(1),
 });
 
+export const metadataProviderSettingsSchema = z.object({
+  theTvdbApiKey: z.string(),
+  anidbUsername: z.string(),
+  anidbPassword: z.string(),
+  anidbClientName: z
+    .string()
+    .trim()
+    .refine(
+      (value) => value.length === 0 || /^[a-z]{4,16}$/.test(value),
+      "AniDB client name must be 4-16 lowercase letters",
+    ),
+  anidbClientVersion: z.coerce.number().int().positive().max(9999),
+});
+
 export const generalSettingsSchema = z.object({
   defaultLocale: localeSchema,
   subscriptionFrequencyMinutes: z.coerce.number().int().min(5).max(10_080),
@@ -71,6 +85,7 @@ export const appSettingsSchema = z.object({
   directories: directorySettingsSchema,
   aria2: aria2SettingsSchema,
   ai: aiSettingsSchema,
+  metadataProviders: metadataProviderSettingsSchema,
   general: generalSettingsSchema,
 });
 
@@ -85,6 +100,13 @@ export const aria2SettingsPatchSchema = z.object({
 export const aiSettingsPatchSchema = z.object({
   openRouterApiKey: z.string().optional(),
   model: z.string().trim().min(1).optional(),
+});
+export const metadataProviderSettingsPatchSchema = z.object({
+  theTvdbApiKey: z.string().optional(),
+  anidbUsername: z.string().optional(),
+  anidbPassword: z.string().optional(),
+  anidbClientName: z.string().trim().optional(),
+  anidbClientVersion: z.coerce.number().int().positive().max(9999).optional(),
 });
 export const generalSettingsPatchSchema = generalSettingsSchema.partial();
 
@@ -115,6 +137,13 @@ export const defaultAppSettings: AppSettings = appSettingsSchema.parse({
     openRouterApiKey: serverEnv.OPENROUTER_API_KEY,
     model: serverEnv.OPENROUTER_MODEL || "glm5.1",
   },
+  metadataProviders: {
+    theTvdbApiKey: serverEnv.THETVDB_API_KEY,
+    anidbUsername: serverEnv.ANIDB_USERNAME,
+    anidbPassword: serverEnv.ANIDB_PASSWORD,
+    anidbClientName: serverEnv.ANIDB_CLIENT_NAME,
+    anidbClientVersion: serverEnv.ANIDB_CLIENT_VERSION,
+  },
   general: {
     defaultLocale: defaultSettingsLocale,
     subscriptionFrequencyMinutes: 30,
@@ -134,6 +163,13 @@ export function redactAppSettings(settings: AppSettings) {
       model: settings.ai.model,
       openRouterApiKeyConfigured: settings.ai.openRouterApiKey.length > 0,
     },
+    metadataProviders: {
+      theTvdbApiKeyConfigured: settings.metadataProviders.theTvdbApiKey.length > 0,
+      anidbUsernameConfigured: settings.metadataProviders.anidbUsername.length > 0,
+      anidbPasswordConfigured: settings.metadataProviders.anidbPassword.length > 0,
+      anidbClientName: settings.metadataProviders.anidbClientName,
+      anidbClientVersion: settings.metadataProviders.anidbClientVersion,
+    },
     general: settings.general,
   };
 }
@@ -147,7 +183,11 @@ export async function getAppSettings(): Promise<AppSettings> {
     return defaultAppSettings;
   }
 
-  const parsed = appSettingsSchema.safeParse(row.value);
+  const saved = isRecord(row.value) ? row.value : {};
+  const parsed = appSettingsSchema.safeParse({
+    ...defaultAppSettings,
+    ...saved,
+  });
   return parsed.success ? parsed.data : defaultAppSettings;
 }
 
@@ -211,6 +251,19 @@ export async function updateAiSettings(input: unknown) {
   });
 }
 
+export async function updateMetadataProviderSettings(input: unknown) {
+  const current = await getAppSettings();
+  const patch = metadataProviderSettingsPatchSchema.parse(input);
+
+  return saveAppSettings({
+    ...current,
+    metadataProviders: metadataProviderSettingsSchema.parse({
+      ...current.metadataProviders,
+      ...patch,
+    }),
+  });
+}
+
 export async function updateGeneralSettings(input: unknown) {
   const current = await getAppSettings();
   const patch = generalSettingsPatchSchema.parse(input);
@@ -222,4 +275,8 @@ export async function updateGeneralSettings(input: unknown) {
       ...patch,
     }),
   });
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
 }

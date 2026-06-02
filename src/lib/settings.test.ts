@@ -55,6 +55,13 @@ describe("redactAppSettings", () => {
         ...defaultAppSettings.ai,
         openRouterApiKey: "key",
       },
+      metadataProviders: {
+        ...defaultAppSettings.metadataProviders,
+        theTvdbApiKey: "tvdb-secret",
+        anidbUsername: "anidb-user",
+        anidbPassword: "anidb-password",
+        anidbClientName: "kura",
+      },
     });
 
     expect(publicSettings.aria2).toEqual({
@@ -62,7 +69,15 @@ describe("redactAppSettings", () => {
       rpcSecretConfigured: true,
     });
     expect(publicSettings.ai.openRouterApiKeyConfigured).toBe(true);
+    expect(publicSettings.metadataProviders).toMatchObject({
+      theTvdbApiKeyConfigured: true,
+      anidbUsernameConfigured: true,
+      anidbPasswordConfigured: true,
+      anidbClientName: "kura",
+    });
     expect(JSON.stringify(publicSettings)).not.toContain("secret");
     expect(JSON.stringify(publicSettings)).not.toContain("key");
+    expect(JSON.stringify(publicSettings)).not.toContain("anidb-user");
+    expect(JSON.stringify(publicSettings)).not.toContain("anidb-password");
   });
 });
