@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import { XMLParser } from "fast-xml-parser";
+import * as OpenCC from "opencc-js";
 import { Prisma, type MediaTitle, type TitleAlias, type WantedEpisode } from "@prisma/client";
 import { prisma } from "@/lib/db";
 import { normalizeTitleAliases } from "@/lib/anime-parser";
@@ -69,6 +70,10 @@ const builtinSearchSources = [
 const wantedReleaseEditionPattern =
   /(?:^|[\s（(【\[])(?:放送版|オンエア版|先行放送版|先行版|無修正版|修正版|on[\s-]?air\s+version|broadcast\s+version|uncensored|censored)(?:$|[\s）)】\]])/gi;
 const wantedVideoExtensionPattern = /\.(mkv|mp4|avi|mov|webm|m4v|ts)$/i;
+const wantedSeasonTitlePattern =
+  /(?:第\s*[一二三四五六七八九十\d]+\s*(?:季|期|シリーズ|クール)|\bS\d{1,2}\b(?!\s*E\d)|\b\d{1,2}(?:st|nd|rd|th)\s+Season\b|\bSeason\s*\d{1,2}\b)/gi;
+const toSimplifiedChinese = OpenCC.Converter({ from: "tw", to: "cn" });
+const toTraditionalChinese = OpenCC.Converter({ from: "cn", to: "tw" });
 
 export async function searchWantedEpisodeSources(wantedEpisodeId: string) {
   const wanted = await loadWanted(wantedEpisodeId);
@@ -101,7 +106,7 @@ export async function searchWantedEpisodeSources(wantedEpisodeId: string) {
   ];
 
   for (const source of sources) {
-    for (const query of queries.slice(0, 8)) {
+    for (const query of queries.slice(0, 12)) {
       const url = renderSearchUrl(source.url, query);
       try {
         const response = await fetch(url, {
@@ -298,26 +303,30 @@ export function parseWantedSearchFeed(
 export function buildWantedEpisodeSearchQueries(wanted: WantedWithMedia) {
   const episode = wanted.episodeNumber;
   const paddedEpisode = String(episode).padStart(2, "0");
-  const titles = [
+  const baseTitles = [
     wanted.mediaTitle.primaryTitle,
     wanted.mediaTitle.originalTitle,
     ...wanted.mediaTitle.aliases.map((alias) => alias.title),
   ]
-    .flatMap((title) => wantedSearchTitleCandidates(title))
+    .flatMap((title) => wantedSearchBaseTitleCandidates(title))
     .filter(uniqueByNormalized);
+  const titles = [
+    ...baseTitles,
+    ...baseTitles.flatMap(wantedSearchChineseVariants),
+  ].filter(uniqueBySearchText);
   const queries: string[] = [];
 
-  for (const title of titles.slice(0, 4)) {
+  for (const title of titles.slice(0, 8)) {
+    if (wanted.seasonNumber > 1) {
+      queries.push(`${title} S${String(wanted.seasonNumber).padStart(2, "0")}E${paddedEpisode}`);
+    }
     queries.push(`${title} ${paddedEpisode}`);
     if (paddedEpisode !== String(episode)) {
       queries.push(`${title} ${episode}`);
     }
-    if (wanted.seasonNumber > 1) {
-      queries.push(`${title} S${String(wanted.seasonNumber).padStart(2, "0")}E${paddedEpisode}`);
-    }
   }
 
-  return queries.filter(uniqueString).slice(0, 10);
+  return queries.filter(uniqueString).slice(0, 16);
 }
 
 async function searchCachedConfiguredSources(
@@ -325,13 +334,17 @@ async function searchCachedConfiguredSources(
   mediaAliasSet: Set<string>,
   seen: Set<string>,
 ) {
-  const aliases = [
+  const baseAliases = [
     wanted.mediaTitle.primaryTitle,
     wanted.mediaTitle.originalTitle,
     ...wanted.mediaTitle.aliases.map((alias) => alias.title),
   ]
-    .flatMap(wantedSearchTitleCandidates)
+    .flatMap(wantedSearchBaseTitleCandidates)
     .filter(uniqueByNormalized);
+  const aliases = [
+    ...baseAliases,
+    ...baseAliases.flatMap(wantedSearchChineseVariants),
+  ].filter(uniqueBySearchText);
   if (aliases.length === 0) {
     return [];
   }
@@ -495,24 +508,46 @@ function mediaAliases(media: WantedWithMedia["mediaTitle"]) {
       media.primaryTitle,
       media.originalTitle,
       ...media.aliases.map((alias) => alias.title),
-    ].flatMap((value) =>
-      wantedSearchTitleCandidates(value).flatMap((title) => normalizeTitleAliases(title)),
-    ),
+    ]
+      .flatMap((value) =>
+        wantedSearchBaseTitleCandidates(value)
+          .flatMap((title) => [title, ...wantedSearchChineseVariants(title)])
+          .flatMap((title) => normalizeTitleAliases(title)),
+      ),
   );
 }
 
-function wantedSearchTitleCandidates(value: string | null | undefined) {
+function wantedSearchBaseTitleCandidates(value: string | null | undefined) {
   const raw = value?.trim();
   if (!raw) {
     return [];
   }
   const base = cleanWantedSearchTitle(raw);
   const candidates: string[] = [];
-  for (const part of base.split(/\s+\/\s+|｜|\|/)) {
-    candidates.push(cleanWantedSearchTitle(part));
+  const parts = base
+    .split(/\s+\/\s+|｜|\|/)
+    .map((part) => cleanWantedSearchTitle(part))
+    .filter(Boolean);
+  for (const part of parts) {
+    const seasonless = stripWantedSearchSeasonTitle(part);
+    if (seasonless && seasonless !== part) {
+      candidates.push(seasonless);
+    }
+    candidates.push(part);
   }
-  candidates.push(base);
+  if (parts.length <= 1) {
+    candidates.push(base);
+  }
   return candidates.filter((title) => title.length >= 2 && !looksLikeReleaseFileTitle(title));
+}
+
+function wantedSearchChineseVariants(value: string) {
+  if (!/[\u3400-\u9fff]/.test(value)) {
+    return [];
+  }
+  return [toSimplifiedChinese(value), toTraditionalChinese(value)]
+    .map((title) => title.trim())
+    .filter((title) => title && title !== value);
 }
 
 function cleanWantedSearchTitle(value: string) {
@@ -524,6 +559,10 @@ function cleanWantedSearchTitle(value: string) {
     .replace(wantedReleaseEditionPattern, " ")
     .replace(/\s+/g, " ")
     .trim();
+}
+
+function stripWantedSearchSeasonTitle(value: string) {
+  return value.replace(wantedSeasonTitlePattern, " ").replace(/\s+/g, " ").trim();
 }
 
 function looksLikeReleaseFileTitle(value: string) {
@@ -639,4 +678,9 @@ function uniqueString(value: string, index: number, values: string[]) {
 function uniqueByNormalized(value: string, index: number, values: string[]) {
   const normalized = normalizeTitleAliases(value)[0] ?? value.toLowerCase();
   return values.findIndex((candidate) => (normalizeTitleAliases(candidate)[0] ?? candidate.toLowerCase()) === normalized) === index;
+}
+
+function uniqueBySearchText(value: string, index: number, values: string[]) {
+  const normalized = value.toLowerCase().replace(/\s+/g, " ").trim();
+  return values.findIndex((candidate) => candidate.toLowerCase().replace(/\s+/g, " ").trim() === normalized) === index;
 }

@@ -119,6 +119,44 @@ describe("wanted RSS search", () => {
     expect(queries).toContain("Himekishi wa Barbaroi no Yome 01");
   });
 
+  it("adds Chinese script variants for wanted searches without polluting primary alias order", () => {
+    const queries = buildWantedEpisodeSearchQueries({
+      ...wanted,
+      episodeNumber: 2,
+      mediaTitle: {
+        ...wanted.mediaTitle,
+        primaryTitle: "我和班上第二可愛的女生成為朋友",
+        originalTitle: "クラスで２番目に可愛い女の子と友だちになった",
+        aliases: [],
+      },
+    });
+
+    expect(queries).toContain("我和班上第二可愛的女生成為朋友 02");
+    expect(queries).toContain("我和班上第二可爱的女生成为朋友 02");
+    expect(queries.indexOf("クラスで２番目に可愛い女の子と友だちになった 02")).toBeLessThan(
+      queries.indexOf("我和班上第二可爱的女生成为朋友 02"),
+    );
+  });
+
+  it("prioritizes season-aware queries and strips season suffixes for later seasons", () => {
+    const queries = buildWantedEpisodeSearchQueries({
+      ...wanted,
+      seasonNumber: 5,
+      episodeNumber: 3,
+      mediaTitle: {
+        ...wanted.mediaTitle,
+        primaryTitle: "出租女友 第五季",
+        originalTitle: "彼女、お借りします 第5期",
+        aliases: [],
+      },
+    });
+
+    expect(queries[0]).toBe("出租女友 S05E03");
+    expect(queries).toContain("彼女、お借りします S05E03");
+    expect(queries).not.toContain("出租女友 第五季 S05E03");
+    expect(queries).not.toContain("彼女、お借りします 第5期 S05E03");
+  });
+
   it("parses RSS results with magnet and torrent links", () => {
     const results = parseWantedSearchFeed(
       `<?xml version="1.0" encoding="UTF-8" ?>
