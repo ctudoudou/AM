@@ -16,6 +16,11 @@ const envSchema = z.object({
   OPENROUTER_API_KEY: z.string().default(""),
   OPENROUTER_MODEL: z.string().default("glm5.1"),
   OMDB_API_KEY: z.string().default(""),
+  THETVDB_API_KEY: z.string().default(""),
+  ANIDB_USERNAME: z.string().default(""),
+  ANIDB_PASSWORD: z.string().default(""),
+  ANIDB_CLIENT_NAME: z.string().default(""),
+  ANIDB_CLIENT_VERSION: z.coerce.number().int().positive().default(1),
 });
 
 const parsedEnv = envSchema.parse(process.env);

@@ -25,6 +25,8 @@ type MediaWithEpisodes = MediaTitle & {
   }>;
 };
 
+const maxUnqualifiedCandidateEpisode = 28;
+
 export type EpisodeCoverageItem = {
   seasonNumber: number;
   episodeNumber: number;
@@ -325,7 +327,9 @@ export function buildWantedEpisodeCoverage(
   );
   const seasonNumbers = new Set([
     ...media.seasons.map((season) => season.number),
-    ...effectiveCandidates.map((item) => item.normalized.season),
+    ...effectiveCandidates
+      .filter(candidateCanDefineCoverageRange)
+      .map((item) => item.normalized.season),
     ...wantedRows
       .filter((row) => row.ignored)
       .map((row) => row.seasonNumber),
@@ -346,7 +350,9 @@ export function buildWantedEpisodeCoverage(
     const maxEpisode = Math.max(
       0,
       ...seasonEpisodes.map((episode) => episode.number),
-      ...seasonCandidates.map(candidateKnownMaxEpisode),
+      ...seasonCandidates
+        .filter(candidateCanDefineCoverageRange)
+        .map(candidateKnownMaxEpisode),
       ...wantedRows
         .filter((row) => row.seasonNumber === seasonNumber && row.ignored)
         .map((row) => row.episodeNumber),
@@ -455,6 +461,17 @@ function candidateKnownMaxEpisode(input: {
     return input.normalized.episodeNumber;
   }
   return extractBatchEpisodeEnd(input.candidate.rawTitle) ?? 0;
+}
+
+function candidateCanDefineCoverageRange(input: {
+  candidate: CandidateWithState;
+  normalized: { episodeNumber: number | null };
+}) {
+  if (input.candidate.season !== null && input.candidate.season !== undefined) {
+    return true;
+  }
+  const maxEpisode = input.normalized.episodeNumber ?? extractBatchEpisodeEnd(input.candidate.rawTitle);
+  return maxEpisode !== null && maxEpisode > 0 && maxEpisode <= maxUnqualifiedCandidateEpisode;
 }
 
 function extractBatchEpisodeEnd(value: string) {

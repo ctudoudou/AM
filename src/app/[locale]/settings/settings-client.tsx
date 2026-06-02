@@ -16,6 +16,13 @@ type PublicSettings = {
     model: string;
     openRouterApiKeyConfigured: boolean;
   };
+  metadataProviders: {
+    theTvdbApiKeyConfigured: boolean;
+    anidbUsernameConfigured: boolean;
+    anidbPasswordConfigured: boolean;
+    anidbClientName: string;
+    anidbClientVersion: number;
+  };
   general: {
     defaultLocale: Locale;
     subscriptionFrequencyMinutes: number;
@@ -91,6 +98,9 @@ export function SettingsClient({ locale }: { locale: Locale }) {
   const [rssDraft, setRssDraft] = useState({ name: "", url: "" });
   const [aria2Secret, setAria2Secret] = useState("");
   const [openRouterApiKey, setOpenRouterApiKey] = useState("");
+  const [theTvdbApiKey, setTheTvdbApiKey] = useState("");
+  const [anidbUsername, setAnidbUsername] = useState("");
+  const [anidbPassword, setAnidbPassword] = useState("");
   const [aria2Debug, setAria2Debug] = useState<Aria2DebugResult | null>(null);
   const [aria2DebugLoading, setAria2DebugLoading] = useState(false);
   const [aiDebug, setAiDebug] = useState<AiDebugResult | null>(null);
@@ -106,7 +116,12 @@ export function SettingsClient({ locale }: { locale: Locale }) {
 
     const ai = settings.ai.openRouterApiKeyConfigured ? t.configured : t.notConfigured;
     const aria2 = settings.aria2.rpcSecretConfigured ? t.configured : t.notConfigured;
-    return `OpenRouter: ${ai} · aria2: ${aria2}`;
+    const metadata =
+      settings.metadataProviders.theTvdbApiKeyConfigured ||
+      settings.metadataProviders.anidbUsernameConfigured
+        ? t.configured
+        : t.notConfigured;
+    return `OpenRouter: ${ai} · aria2: ${aria2} · Metadata: ${metadata}`;
   }, [settings, t]);
 
   const load = useCallback(async () => {
@@ -245,6 +260,27 @@ export function SettingsClient({ locale }: { locale: Locale }) {
           : {}),
       });
       setOpenRouterApiKey("");
+    } catch (saveError) {
+      setError(saveError instanceof Error ? saveError.message : t.settingsSaveError);
+    }
+  }
+
+  async function saveMetadataProviders() {
+    if (!settings) {
+      return;
+    }
+
+    try {
+      await patchSettings("metadata-providers", {
+        ...(theTvdbApiKey.length > 0 ? { theTvdbApiKey } : {}),
+        ...(anidbUsername.length > 0 ? { anidbUsername } : {}),
+        ...(anidbPassword.length > 0 ? { anidbPassword } : {}),
+        anidbClientName: settings.metadataProviders.anidbClientName,
+        anidbClientVersion: settings.metadataProviders.anidbClientVersion,
+      });
+      setTheTvdbApiKey("");
+      setAnidbUsername("");
+      setAnidbPassword("");
     } catch (saveError) {
       setError(saveError instanceof Error ? saveError.message : t.settingsSaveError);
     }
@@ -491,6 +527,90 @@ export function SettingsClient({ locale }: { locale: Locale }) {
             {aria2Debug.hint ? <small>{aria2Debug.hint}</small> : null}
           </div>
         ) : null}
+      </section>
+
+      <section className="settings-panel">
+        <div className="settings-panel-heading">
+          <div>
+            <h2>{t.metadataProviderSettings}</h2>
+            <p>{t.metadataProviderSettingsDescription}</p>
+          </div>
+          <button onClick={saveMetadataProviders} type="button">
+            <Save size={14} />
+            {t.save}
+          </button>
+        </div>
+        <label>
+          <span>TheTVDB API Key</span>
+          <input
+            onChange={(event) => setTheTvdbApiKey(event.target.value)}
+            placeholder={
+              settings.metadataProviders.theTvdbApiKeyConfigured
+                ? t.secretConfigured
+                : t.secretEmpty
+            }
+            type="password"
+            value={theTvdbApiKey}
+          />
+        </label>
+        <label>
+          <span>AniDB Username</span>
+          <input
+            onChange={(event) => setAnidbUsername(event.target.value)}
+            placeholder={
+              settings.metadataProviders.anidbUsernameConfigured
+                ? t.secretConfigured
+                : t.secretEmpty
+            }
+            value={anidbUsername}
+          />
+        </label>
+        <label>
+          <span>AniDB Password</span>
+          <input
+            onChange={(event) => setAnidbPassword(event.target.value)}
+            placeholder={
+              settings.metadataProviders.anidbPasswordConfigured
+                ? t.secretConfigured
+                : t.secretEmpty
+            }
+            type="password"
+            value={anidbPassword}
+          />
+        </label>
+        <label>
+          <span>AniDB Client Name</span>
+          <input
+            onChange={(event) =>
+              setSettings({
+                ...settings,
+                metadataProviders: {
+                  ...settings.metadataProviders,
+                  anidbClientName: event.target.value,
+                },
+              })
+            }
+            placeholder="kura"
+            value={settings.metadataProviders.anidbClientName}
+          />
+        </label>
+        <label>
+          <span>AniDB Client Version</span>
+          <input
+            min={1}
+            onChange={(event) =>
+              setSettings({
+                ...settings,
+                metadataProviders: {
+                  ...settings.metadataProviders,
+                  anidbClientVersion: Number(event.target.value),
+                },
+              })
+            }
+            type="number"
+            value={settings.metadataProviders.anidbClientVersion}
+          />
+        </label>
       </section>
 
       <section className="settings-panel">

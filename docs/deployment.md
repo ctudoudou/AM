@@ -129,6 +129,11 @@ or your container platform secrets.
 | `OPENROUTER_MODEL` | Optional | OpenRouter model name. | `glm5.1` |
 | `TMDB_API_KEY` | Optional | Optional movie/TV metadata provider. | empty or secret |
 | `OMDB_API_KEY` | Optional | Optional metadata compatibility source for movies and TV. | empty or secret |
+| `THETVDB_API_KEY` | Optional | TheTVDB API key for future season catalog and absolute episode mapping sync. | empty or secret |
+| `ANIDB_USERNAME` | Optional | AniDB username for future anime catalog lookups. | empty or secret |
+| `ANIDB_PASSWORD` | Optional | AniDB password for future UDP API catalog lookups. | empty or secret |
+| `ANIDB_CLIENT_NAME` | Optional | Registered AniDB client name, 4-16 lowercase letters. | empty |
+| `ANIDB_CLIENT_VERSION` | Optional | Registered AniDB client version number. | `1` |
 | `ARIA2_RPC_URL` | Yes | aria2 JSON-RPC endpoint reachable from Kura. | `http://aria2:6800/jsonrpc` |
 | `ARIA2_RPC_SECRET` | Recommended | aria2 RPC secret; must match aria2. Use a strong value outside local development. | `change-me` |
 | `KURA_AUTO_MIGRATE` | Container | When `true`, the web image runs `prisma:migrate:deploy` at startup. | `true` |
@@ -136,6 +141,10 @@ or your container platform secrets.
 
 All configured file roots should stay under `DATA_ROOT` for predictable NAS
 safety checks.
+
+RSS candidates are resource evidence only. Season and episode ranges should come
+from confirmed library files, subscriptions, manual catalog entries, or trusted
+metadata providers such as TheTVDB/AniDB once configured.
 
 ## Common Tasks
 

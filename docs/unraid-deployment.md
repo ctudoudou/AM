@@ -75,7 +75,16 @@ Optional metadata sources:
 ```env
 TMDB_API_KEY=your-tmdb-key
 OMDB_API_KEY=your-omdb-key
+THETVDB_API_KEY=your-thetvdb-key
+ANIDB_USERNAME=your-anidb-username
+ANIDB_PASSWORD=your-anidb-password
+ANIDB_CLIENT_NAME=yourregisteredclient
+ANIDB_CLIENT_VERSION=1
 ```
+
+TheTVDB and AniDB credentials are reserved for season catalog and absolute
+episode mapping sync. RSS candidates should not define a season's episode range
+by themselves.
 
 Do not use `localhost` for PostgreSQL or aria2 unless they run inside the same container. Inside Docker, `localhost` points to the current container.
 
