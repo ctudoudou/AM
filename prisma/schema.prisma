@@ -100,6 +100,7 @@ model MediaTitle {
   seasons      Season[]
   aliases      TitleAlias[]
   metadata     MetadataLink[]
+  seasonCatalogs SeasonCatalog[]
   organizerPlans OrganizerPlan[]
   wantedEpisodes WantedEpisode[]
 }
@@ -143,6 +144,25 @@ model Episode {
   updatedAt   DateTime        @updatedAt
 
   @@unique([seasonId, number])
+}
+
+model SeasonCatalog {
+  id            String     @id @default(cuid())
+  mediaTitleId  String
+  mediaTitle    MediaTitle @relation(fields: [mediaTitleId], references: [id], onDelete: Cascade)
+  seasonNumber  Int
+  episodeCount  Int
+  absoluteStart Int?
+  absoluteEnd   Int?
+  provider      String     @default("manual")
+  sourceUrl     String?
+  confidence    Float      @default(1)
+  createdAt     DateTime   @default(now())
+  updatedAt     DateTime   @updatedAt
+
+  @@unique([mediaTitleId, seasonNumber, provider])
+  @@index([mediaTitleId])
+  @@index([provider])
 }
 
 model MediaFile {

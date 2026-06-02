@@ -438,6 +438,58 @@ describe("buildWantedEpisodeCoverage", () => {
       }),
     );
   });
+
+  it("maps absolute episode candidates through the season catalog", () => {
+    const coverage = buildWantedEpisodeCoverage(
+      {
+        ...baseMedia,
+        primaryTitle: "葬送的芙莉蓮",
+        originalTitle: "葬送のフリーレン",
+        aliases: [{ title: "葬送的芙莉莲" }, { title: "Sousou no Frieren" }],
+        seasonCatalogs: [
+          seasonCatalog({ seasonNumber: 1, episodeCount: 28, absoluteStart: 1, absoluteEnd: 28 }),
+          seasonCatalog({ seasonNumber: 2, episodeCount: 10, absoluteStart: 29, absoluteEnd: 38 }),
+        ],
+        seasons: [],
+      },
+      [
+        wantedCandidate({
+          id: "frieren-absolute-38",
+          rawTitle: "[北宇治字幕组] 葬送的芙莉莲 / Sousou no Frieren [38][WebRip][HEVC_AAC][简繁日内封]",
+          season: null,
+          episodeNumber: 38,
+        }),
+        wantedCandidate({
+          id: "frieren-s2-36",
+          rawTitle: "[绿茶字幕组] 葬送的芙莉莲 第二季 / Sousou no Frieren S2 [36][WebRip][1080p][简繁日内封]",
+          season: 2,
+          episodeNumber: 36,
+        }),
+      ],
+      [],
+    );
+
+    expect(coverage.seasons).toEqual([1, 2]);
+    expect(coverage.episodes.filter((episode) => episode.seasonNumber === 1)).toHaveLength(28);
+    expect(coverage.episodes.filter((episode) => episode.seasonNumber === 2)).toHaveLength(10);
+    expect(coverage.episodes).toContainEqual(
+      expect.objectContaining({
+        seasonNumber: 2,
+        episodeNumber: 8,
+        candidateId: "frieren-s2-36",
+      }),
+    );
+    expect(coverage.episodes).toContainEqual(
+      expect.objectContaining({
+        seasonNumber: 2,
+        episodeNumber: 10,
+        candidateId: "frieren-absolute-38",
+      }),
+    );
+    expect(
+      coverage.episodes.some((episode) => episode.seasonNumber === 1 && episode.episodeNumber === 38),
+    ).toBe(false);
+  });
 });
 
 function wantedCandidate(input: {
@@ -476,5 +528,21 @@ function wantedCandidate(input: {
     downloads: [],
     organizerPlans: [],
     group: { displayTitle: "出租女友 第五季", normalizedTitle: "出租女友", aliases: [] },
+  };
+}
+
+function seasonCatalog(input: {
+  seasonNumber: number;
+  episodeCount: number;
+  absoluteStart?: number;
+  absoluteEnd?: number;
+}) {
+  return {
+    seasonNumber: input.seasonNumber,
+    episodeCount: input.episodeCount,
+    absoluteStart: input.absoluteStart ?? null,
+    absoluteEnd: input.absoluteEnd ?? null,
+    provider: "manual",
+    confidence: 1,
   };
 }

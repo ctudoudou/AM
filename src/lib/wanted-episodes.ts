@@ -2,7 +2,7 @@ import type { MediaTitle, ReleaseCandidate, WantedEpisodeStatus } from "@prisma/
 import { prisma } from "@/lib/db";
 import { normalizeTitleAliases } from "@/lib/anime-parser";
 import { enqueueCandidateDownload } from "@/lib/downloads";
-import { normalizeCandidateEpisodeNumber } from "@/lib/episode-normalizer";
+import { normalizeCandidateEpisodeNumber, type EpisodeNumberCandidate } from "@/lib/episode-normalizer";
 
 type CandidateWithState = ReleaseCandidate & {
   downloads: Array<{ status: string }>;
@@ -12,6 +12,14 @@ type CandidateWithState = ReleaseCandidate & {
 
 type MediaWithEpisodes = MediaTitle & {
   aliases: Array<{ title: string }>;
+  seasonCatalogs?: Array<{
+    seasonNumber: number;
+    episodeCount: number;
+    absoluteStart: number | null;
+    absoluteEnd: number | null;
+    provider: string;
+    confidence: number;
+  }>;
   seasons: Array<{
     number: number;
     episodes: Array<{
@@ -280,6 +288,9 @@ async function loadMedia(mediaTitleId: string) {
           },
         },
       },
+      seasonCatalogs: {
+        orderBy: [{ seasonNumber: "asc" }, { confidence: "desc" }],
+      },
     },
   });
 }
@@ -318,15 +329,17 @@ export function buildWantedEpisodeCoverage(
   }>,
 ) {
   const relevantCandidates = candidates.filter((candidate) => candidateMatchesMediaSeason(candidate, media));
+  const catalogEntries = selectSeasonCatalogEntries(media.seasonCatalogs ?? []);
   const effectiveCandidates = relevantCandidates.map((candidate) => ({
     candidate,
-    normalized: normalizeCandidateEpisodeNumber(candidate, relevantCandidates),
+    normalized: normalizeCandidateWithSeasonCatalog(candidate, relevantCandidates, catalogEntries),
   }));
   const wantedMap = new Map(
     wantedRows.map((row) => [`${row.seasonNumber}:${row.episodeNumber}`, row]),
   );
   const seasonNumbers = new Set([
     ...media.seasons.map((season) => season.number),
+    ...catalogEntries.map((catalog) => catalog.seasonNumber),
     ...effectiveCandidates
       .filter(candidateCanDefineCoverageRange)
       .map((item) => item.normalized.season),
@@ -338,17 +351,20 @@ export function buildWantedEpisodeCoverage(
 
   for (const seasonNumber of [...seasonNumbers].sort((a, b) => a - b)) {
     const season = media.seasons.find((item) => item.number === seasonNumber);
+    const seasonCatalog = catalogEntries.find((item) => item.seasonNumber === seasonNumber);
     const seasonEpisodes = normalizeSeasonEpisodes(
       season?.episodes ?? [],
       seasonNumber,
       relevantCandidates,
       [media.primaryTitle, media.originalTitle].filter(Boolean).join(" "),
+      catalogEntries,
     );
     const seasonCandidates = effectiveCandidates.filter(
       (item) => item.normalized.season === seasonNumber,
     );
     const maxEpisode = Math.max(
       0,
+      seasonCatalog?.episodeCount ?? 0,
       ...seasonEpisodes.map((episode) => episode.number),
       ...seasonCandidates
         .filter(candidateCanDefineCoverageRange)
@@ -428,11 +444,12 @@ function normalizeSeasonEpisodes(
   seasonNumber: number,
   candidates: CandidateWithState[],
   mediaTitleContext = "",
+  catalogEntries: SeasonCatalogEntry[] = [],
 ) {
   const byEpisodeNumber = new Map<number, MediaWithEpisodes["seasons"][number]["episodes"][number]>();
   for (const episode of episodes) {
     const rawTitle = episode.files[0]?.originalName ?? episode.title ?? "";
-    const normalized = normalizeCandidateEpisodeNumber(
+    const normalized = normalizeCandidateWithSeasonCatalog(
       {
         rawTitle,
         parsedTitle: [episode.title, mediaTitleContext].filter(Boolean).join(" "),
@@ -441,6 +458,7 @@ function normalizeSeasonEpisodes(
         episodeNumber: episode.number,
       },
       candidates,
+      catalogEntries,
     );
     const number = normalized.episodeNumber ?? episode.number;
     const existing = byEpisodeNumber.get(number);
@@ -451,6 +469,93 @@ function normalizeSeasonEpisodes(
     byEpisodeNumber.set(number, { ...episode, number, files: [...episode.files] });
   }
   return [...byEpisodeNumber.values()].sort((a, b) => a.number - b.number);
+}
+
+type SeasonCatalogEntry = {
+  seasonNumber: number;
+  episodeCount: number;
+  absoluteStart: number | null;
+  absoluteEnd: number | null;
+  provider: string;
+  confidence: number;
+};
+
+function selectSeasonCatalogEntries(entries: SeasonCatalogEntry[]) {
+  const bySeason = new Map<number, SeasonCatalogEntry>();
+  for (const entry of entries) {
+    const existing = bySeason.get(entry.seasonNumber);
+    if (!existing || catalogPriority(entry) > catalogPriority(existing)) {
+      bySeason.set(entry.seasonNumber, entry);
+    }
+  }
+  return [...bySeason.values()].sort((a, b) => a.seasonNumber - b.seasonNumber);
+}
+
+function catalogPriority(entry: SeasonCatalogEntry) {
+  const providerScore =
+    {
+      manual: 100,
+      official: 95,
+      tvdb: 90,
+      anidb: 85,
+      imdb: 75,
+      tmdb: 70,
+      anilist: 60,
+      kitsu: 55,
+      bangumi: 55,
+    }[entry.provider.toLowerCase()] ?? 50;
+  return providerScore + entry.confidence;
+}
+
+function normalizeCandidateWithSeasonCatalog(
+  candidate: EpisodeNumberCandidate,
+  candidates: EpisodeNumberCandidate[],
+  catalogEntries: SeasonCatalogEntry[],
+) {
+  const normalized = normalizeCandidateEpisodeNumber(candidate, candidates);
+  const rawEpisodeNumber = positiveInteger(candidate.episodeNumber) ?? normalized.rawEpisodeNumber;
+  const explicitSeason = positiveInteger(candidate.season);
+
+  if (rawEpisodeNumber !== null) {
+    if (explicitSeason) {
+      const catalog = catalogEntries.find((entry) => entry.seasonNumber === explicitSeason);
+      const mappedEpisode = mapAbsoluteEpisodeToCatalog(rawEpisodeNumber, catalog);
+      if (mappedEpisode !== null) {
+        return {
+          ...normalized,
+          season: explicitSeason,
+          episodeNumber: mappedEpisode,
+          offset: rawEpisodeNumber - mappedEpisode,
+        };
+      }
+    } else {
+      const catalogMatches = catalogEntries
+        .map((catalog) => ({ catalog, episodeNumber: mapAbsoluteEpisodeToCatalog(rawEpisodeNumber, catalog) }))
+        .filter((item): item is { catalog: SeasonCatalogEntry; episodeNumber: number } => item.episodeNumber !== null);
+      if (catalogMatches.length === 1) {
+        const [{ catalog, episodeNumber }] = catalogMatches;
+        return {
+          ...normalized,
+          season: catalog.seasonNumber,
+          episodeNumber,
+          offset: rawEpisodeNumber - episodeNumber,
+        };
+      }
+    }
+  }
+
+  return normalized;
+}
+
+function mapAbsoluteEpisodeToCatalog(episodeNumber: number, catalog: SeasonCatalogEntry | undefined) {
+  if (!catalog?.absoluteStart || !catalog.absoluteEnd) {
+    return null;
+  }
+  if (episodeNumber < catalog.absoluteStart || episodeNumber > catalog.absoluteEnd) {
+    return null;
+  }
+  const relative = episodeNumber - catalog.absoluteStart + 1;
+  return relative >= 1 && relative <= catalog.episodeCount ? relative : null;
 }
 
 function candidateKnownMaxEpisode(input: {
@@ -553,15 +658,21 @@ function candidateMatchesMedia(candidate: CandidateWithState, mediaAliasSet: Set
 }
 
 function candidateMatchesMediaSeason(candidate: CandidateWithState, media: MediaWithEpisodes) {
-  const mediaSeasons = new Set(media.seasons.map((season) => season.number));
+  const mediaSeasons = new Set([
+    ...media.seasons.map((season) => season.number),
+    ...(media.seasonCatalogs ?? []).map((season) => season.seasonNumber),
+  ]);
   if (mediaSeasons.size === 0) {
     return true;
   }
-  const candidateSeason = candidate.season ?? 1;
+  if (candidate.season === null || candidate.season === undefined) {
+    return true;
+  }
+  const candidateSeason = candidate.season;
   if (mediaSeasons.has(candidateSeason)) {
     return true;
   }
-  return !(candidateSeason === 1 && !mediaSeasons.has(1));
+  return false;
 }
 
 function mediaAliases(media: MediaWithEpisodes) {
@@ -590,4 +701,9 @@ function groupAliases(value: unknown) {
     return [];
   }
   return value.filter((item): item is string => typeof item === "string");
+}
+
+function positiveInteger(value: unknown) {
+  const number = typeof value === "number" ? Math.floor(value) : Number(value);
+  return Number.isInteger(number) && number > 0 ? number : null;
 }
