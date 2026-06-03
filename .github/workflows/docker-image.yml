@@ -86,6 +86,8 @@ jobs:
           target: runner
           platforms: ${{ env.PLATFORMS }}
           push: true
+          provenance: false
+          sbom: false
           tags: ${{ steps.meta-web.outputs.tags }}
           labels: ${{ steps.meta-web.outputs.labels }}
           cache-from: type=gha,scope=kura-web
@@ -99,6 +101,8 @@ jobs:
           target: worker
           platforms: ${{ env.PLATFORMS }}
           push: true
+          provenance: false
+          sbom: false
           tags: ${{ steps.meta-worker.outputs.tags }}
           labels: ${{ steps.meta-worker.outputs.labels }}
           cache-from: type=gha,scope=kura-worker

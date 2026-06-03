@@ -400,6 +400,7 @@ model ReleaseCandidate {
   sourceKind        String?
   variantKey        String?
   releaseTags       Json?
+  episodeIdentity   Json?
   magnetUrl         String?
   torrentUrl        String?
   torrentFilePath   String?

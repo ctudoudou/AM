@@ -27,6 +27,11 @@ When a user subscribes, Kura stores:
 
 The matcher then scores future candidates by exact preferred-field matches.
 
+Implementation note: the first P0 slice now has a shared strategy evaluator and
+`POST /api/subscriptions/:id/test-match`. The endpoint returns eligibility,
+ranking score, review flags, matched preferences, and rejection reasons for the
+subscription's candidate group. Worker matching uses the same evaluator.
+
 This is useful for a first version, but the user-facing intent is still
 underspecified. A subscription should answer more than "which candidate group is
 selected"; it should answer "what exactly should Kura download for this title?"

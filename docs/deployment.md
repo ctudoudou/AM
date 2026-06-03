@@ -151,6 +151,30 @@ absolute episode numbering, fill `episodeCount`, `absoluteStart`, and
 `absoluteEnd`; for example S1 `1-28` and S2 `29-38`. The same catalog can also
 be replaced through `PUT /api/library/anime/:id/season-catalog`.
 
+Provider-backed catalog sync starts with TheTVDB:
+
+```bash
+curl -X POST http://localhost:3000/api/library/anime/<title-id>/season-catalog/sync \
+  -H 'Content-Type: application/json' \
+  -d '{"provider":"tvdb","externalId":"<thetvdb-series-id>","dryRun":true}'
+```
+
+Use `dryRun: false` to replace the `tvdb` catalog entries after reviewing the
+returned seasons. AniDB credentials are stored now, but AniDB catalog sync needs
+the dedicated UDP adapter and rate-limit/cache layer before it is enabled.
+
+Subscription strategies can be previewed without downloading anything:
+
+```bash
+curl -X POST http://localhost:3000/api/subscriptions/<subscription-id>/test-match \
+  -H 'Content-Type: application/json' \
+  -d '{"limit":80,"includeRejected":true}'
+```
+
+The response explains eligibility, score, review requirements, matched
+preferences, and rejection reasons for recent candidates in the subscription's
+candidate group.
+
 ## Common Tasks
 
 Run database migrations:
