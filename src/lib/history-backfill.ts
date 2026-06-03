@@ -141,6 +141,7 @@ export async function selectHistoryBackfillDownload(input: {
     where: { id: output.candidate.id },
     data: {
       confidence: Math.max(output.candidate.confidence, 0.92),
+      episodeIdentity: assessed.identity as unknown as Prisma.InputJsonValue,
       status: "SUBSCRIBED",
     },
   });

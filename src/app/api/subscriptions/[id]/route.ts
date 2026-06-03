@@ -4,6 +4,12 @@ import { jsonError, jsonResponse } from "@/lib/api";
 import { prisma } from "@/lib/db";
 
 const subscriptionPatchSchema = z.object({
+  seasonMode: z.enum(["latest", "specific", "unknown_review"]).optional(),
+  seasonNumber: z.coerce.number().int().positive().nullable().optional(),
+  episodeMode: z.enum(["future_only", "missing_only", "range", "all"]).optional(),
+  episodeStart: z.coerce.number().positive().nullable().optional(),
+  episodeEnd: z.coerce.number().positive().nullable().optional(),
+  batchPolicy: z.enum(["reject", "review", "allow"]).optional(),
   preferredGroup: z.string().nullable().optional(),
   preferredResolution: z.string().nullable().optional(),
   preferredCodec: z.string().nullable().optional(),
@@ -15,6 +21,13 @@ const subscriptionPatchSchema = z.object({
   autoDownload: z.boolean().optional(),
   enabled: z.boolean().optional(),
   fallbackPolicy: z.string().optional(),
+}).refine((input) => {
+  if (input.episodeStart && input.episodeEnd) {
+    return input.episodeEnd >= input.episodeStart;
+  }
+  return true;
+}, {
+  message: "episodeEnd must be greater than or equal to episodeStart",
 });
 
 export const dynamic = "force-dynamic";
