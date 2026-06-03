@@ -146,6 +146,11 @@ RSS candidates are resource evidence only. Season and episode ranges should come
 from confirmed library files, subscriptions, manual catalog entries, or trusted
 metadata providers such as TheTVDB/AniDB once configured.
 
+Anime title pages include a manual season catalog editor. For titles that use
+absolute episode numbering, fill `episodeCount`, `absoluteStart`, and
+`absoluteEnd`; for example S1 `1-28` and S2 `29-38`. The same catalog can also
+be replaced through `PUT /api/library/anime/:id/season-catalog`.
+
 ## Common Tasks
 
 Run database migrations:

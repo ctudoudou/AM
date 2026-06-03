@@ -28,4 +28,11 @@ Object.assign(zhHant, {
   animeLibrary: "動漫庫",
   animeLibraryDescription: "已歸檔動畫會出現在這裡，可直接播放或準備保真 HLS。",
   filesDescription: "唯讀瀏覽已設定的資料、下載、媒體庫、元資料和轉碼目錄。",
+  seasonCatalog: "季集目錄",
+  seasonCatalogDescription: "人工確認每季集數和絕對編號範圍，缺集與候選匹配會優先使用這裡的目錄。",
+  seasonCatalogEpisodeCount: "集數",
+  seasonCatalogAbsoluteStart: "絕對起始",
+  seasonCatalogAbsoluteEnd: "絕對結束",
+  seasonCatalogSourceUrl: "來源 URL",
+  addSeasonCatalog: "新增季",
 });

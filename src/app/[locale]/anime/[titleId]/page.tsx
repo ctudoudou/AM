@@ -9,6 +9,7 @@ import { getAnimeEpisodeCoverage } from "@/lib/wanted-episodes";
 import { getMessages } from "@/messages";
 import { AnimeTitleActions } from "./anime-title-actions";
 import { MissingEpisodesPanel } from "./missing-episodes-panel";
+import { SeasonCatalogPanel } from "./season-catalog-panel";
 
 const directPlayExtensions = new Set([".mp4", ".m4v", ".webm", ".mov"]);
 
@@ -38,6 +39,9 @@ export default async function AnimeTitlePage({
             },
           },
         },
+      },
+      seasonCatalogs: {
+        orderBy: [{ seasonNumber: "asc" }, { confidence: "desc" }],
       },
     },
   });
@@ -122,6 +126,12 @@ export default async function AnimeTitlePage({
 
         <MissingEpisodesPanel
           initialCoverage={missingCoverage}
+          locale={locale}
+          mediaTitleId={media.id}
+        />
+
+        <SeasonCatalogPanel
+          initialEntries={media.seasonCatalogs}
           locale={locale}
           mediaTitleId={media.id}
         />
