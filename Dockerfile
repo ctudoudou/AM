@@ -5,17 +5,27 @@ WORKDIR /app
 COPY package.json package-lock.json* ./
 RUN --mount=type=cache,target=/root/.npm npm ci
 
-FROM node:24-alpine AS builder
+FROM node:24-alpine AS source
+WORKDIR /app
+COPY . .
+
+FROM node:24-alpine AS prisma
 WORKDIR /app
 COPY --from=deps /app/node_modules ./node_modules
-COPY . .
+COPY --from=source /app/package.json /app/package-lock.json* /app/prisma.config.ts ./
+COPY --from=source /app/prisma ./prisma
 RUN --mount=type=cache,target=/root/.cache/prisma \
     for attempt in 1 2 3 4 5; do \
       npm run prisma:generate && break; \
       if [ "$attempt" = "5" ]; then exit 1; fi; \
       sleep $((attempt * 5)); \
     done
-RUN npm run build
+
+FROM node:24-alpine AS builder
+WORKDIR /app
+COPY --from=prisma /app/node_modules ./node_modules
+COPY --from=source /app ./
+RUN --mount=type=cache,target=/app/.next/cache npm run build
 
 FROM node:24-alpine AS runner
 WORKDIR /app
@@ -42,12 +52,8 @@ FROM node:24-alpine AS worker
 WORKDIR /app
 ENV NODE_ENV=production
 RUN apk add --no-cache ffmpeg
-COPY --from=deps /app/node_modules ./node_modules
-COPY . .
-RUN --mount=type=cache,target=/root/.cache/prisma \
-    for attempt in 1 2 3 4 5; do \
-      npm run prisma:generate && break; \
-      if [ "$attempt" = "5" ]; then exit 1; fi; \
-      sleep $((attempt * 5)); \
-    done
+COPY --from=prisma /app/node_modules ./node_modules
+COPY --from=source /app/package.json /app/package-lock.json* /app/prisma.config.ts /app/tsconfig.json ./
+COPY --from=source /app/prisma ./prisma
+COPY --from=source /app/src ./src
 CMD ["npm", "run", "worker"]
