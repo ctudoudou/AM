@@ -2,6 +2,7 @@ import { XMLParser } from "fast-xml-parser";
 import { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/db";
 import { parseMediaReleaseTitle } from "@/lib/media-parser";
+import { classifyReleaseResource, nonVideoReleaseParseError } from "@/lib/release-resource";
 
 type FeedItem = {
   title: unknown;
@@ -110,9 +111,23 @@ export async function parseNewRssItems(limit = 100, options: { ids?: string[] } 
     take: limit,
   });
   let parsedCount = 0;
+  let skippedNonVideo = 0;
 
   for (const item of items) {
     try {
+      const resource = classifyReleaseResource(item.title);
+      if (resource.kind === "NON_VIDEO") {
+        await prisma.rssItem.update({
+          where: { id: item.id },
+          data: {
+            status: "FAILED",
+            parseError: nonVideoReleaseParseError(resource),
+          },
+        });
+        skippedNonVideo += 1;
+        continue;
+      }
+
       const parsed = parseMediaReleaseTitle(item.title, item.mediaType);
       await prisma.releaseCandidate.upsert({
         where: { rssItemId: item.id },
@@ -176,7 +191,7 @@ export async function parseNewRssItems(limit = 100, options: { ids?: string[] } 
     }
   }
 
-  return { parsed: parsedCount };
+  return { parsed: parsedCount, skippedNonVideo };
 }
 
 function normalizeFeedItems(parsed: unknown): FeedItem[] {

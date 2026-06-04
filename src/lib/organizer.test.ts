@@ -2,8 +2,10 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { prisma } from "@/lib/db";
 import {
   assessOrganizerPlanAutomation,
+  buildOrganizerEpisodeTitleSegment,
   hasBlockingOrganizerPlan,
   isAutoExecutableOrganizerPlan,
+  organizerTargetPathLooksPolluted,
   regenerateRejectedOrganizerPlan,
   resolveOrganizerItemIdentity,
 } from "./organizer";
@@ -75,6 +77,58 @@ describe("resolveOrganizerItemIdentity", () => {
 
     expect(identity.season).toBe(2);
     expect(identity.episodeNumber).toBe(4);
+  });
+});
+
+describe("buildOrganizerEpisodeTitleSegment", () => {
+  it("drops episode titles that only repeat the series title", () => {
+    expect(
+      buildOrganizerEpisodeTitleSegment({
+        title: "Some Anime",
+        episodeTitle: "Some Anime",
+        episodeCode: "S01E04",
+      }),
+    ).toBeNull();
+  });
+
+  it("drops noisy release-title fragments that only repeat known title aliases", () => {
+    expect(
+      buildOrganizerEpisodeTitleSegment({
+        title: "Ichijyoma Mankitsu Gurashi!",
+        titleAliases: ["一叠间漫画咖啡屋生活"],
+        episodeTitle:
+          "Ichijyoma Mankitsu Gurashi! - S01E06 - 一叠间漫画咖啡屋生活 - S01E06 - [三明治摆烂组][1080p][AVC]",
+        episodeCode: "S01E06",
+      }),
+    ).toBeNull();
+  });
+
+  it("keeps real episode titles after removing release metadata", () => {
+    expect(
+      buildOrganizerEpisodeTitleSegment({
+        title: "Some Anime",
+        episodeTitle: "A New Day [1080p][AVC AAC].mkv",
+        episodeCode: "S01E04",
+      }),
+    ).toBe("A New Day");
+  });
+});
+
+describe("organizerTargetPathLooksPolluted", () => {
+  it("flags target paths with duplicate episode codes in the file name", () => {
+    expect(
+      organizerTargetPathLooksPolluted(
+        "/data/library/anime/Ichijyoma Mankitsu Gurashi!/Season 01/Ichijyoma Mankitsu Gurashi! - S01E06 - 一叠间漫画咖啡屋生活 - S01E06 [1080p].mkv",
+      ),
+    ).toBe(true);
+  });
+
+  it("allows normal target paths with one episode code", () => {
+    expect(
+      organizerTargetPathLooksPolluted(
+        "/data/library/anime/Some Anime/Season 01/Some Anime - S01E06 [1080p].mkv",
+      ),
+    ).toBe(false);
   });
 });
 

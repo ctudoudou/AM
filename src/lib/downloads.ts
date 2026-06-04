@@ -1,10 +1,12 @@
+import fs from "node:fs/promises";
 import { prisma } from "@/lib/db";
-import { Prisma } from "@prisma/client";
+import { Prisma, type Download } from "@prisma/client";
 import {
   addMagnetToAria2,
   addTorrentToAria2,
   addTorrentUrlToAria2,
   type Aria2Status,
+  listKnownDownloads,
   mapAria2Status,
   pauseAria2Download,
   removeAria2Download,
@@ -24,28 +26,40 @@ export async function enqueueCandidateDownload(candidateId: string) {
   const settings = await getAppSettings();
   const downloadDir = settings.directories.downloadsDir;
 
-  const gid = candidate.magnetUrl
-    ? await addMagnetToAria2(candidate.magnetUrl, downloadDir)
-    : candidate.torrentFilePath
-      ? await addTorrentToAria2(candidate.torrentFilePath, downloadDir)
-      : candidate.torrentUrl
-        ? await addTorrentUrlToAria2(candidate.torrentUrl, downloadDir)
-      : undefined;
+  const sourceUrl =
+    candidate.magnetUrl ??
+    candidate.torrentUrl ??
+    candidate.sourceUrl ??
+    candidate.torrentFilePath ??
+    "";
+  const gid = await addCandidateToAria2({
+    magnetUrl: candidate.magnetUrl,
+    torrentFilePath: candidate.torrentFilePath,
+    torrentUrl: candidate.torrentUrl,
+    sourceUrl,
+    downloadDir,
+  });
 
   if (!gid) {
     throw new Error("Candidate has no magnet URL, torrent URL, or torrent file");
+  }
+
+  const existingDownload = await prisma.download.findUnique({
+    where: { aria2Gid: gid },
+  });
+  if (existingDownload) {
+    await prisma.releaseCandidate.update({
+      where: { id: candidate.id },
+      data: { status: "SUBSCRIBED" },
+    });
+    return existingDownload;
   }
 
   const download = await prisma.download.create({
     data: {
       candidateId: candidate.id,
       aria2Gid: gid,
-      sourceUrl:
-        candidate.magnetUrl ??
-        candidate.torrentUrl ??
-        candidate.sourceUrl ??
-        candidate.torrentFilePath ??
-        "",
+      sourceUrl,
       title: candidate.parsedTitle,
       downloadDir,
       status: "WAITING",
@@ -60,6 +74,37 @@ export async function enqueueCandidateDownload(candidateId: string) {
   return download;
 }
 
+async function addCandidateToAria2(input: {
+  magnetUrl?: string | null;
+  torrentFilePath?: string | null;
+  torrentUrl?: string | null;
+  sourceUrl: string;
+  downloadDir: string;
+}) {
+  try {
+    if (input.magnetUrl) {
+      return await addMagnetToAria2(input.magnetUrl, input.downloadDir);
+    }
+    if (input.torrentFilePath) {
+      return await addTorrentToAria2(input.torrentFilePath, input.downloadDir);
+    }
+    if (input.torrentUrl) {
+      return await addTorrentUrlToAria2(input.torrentUrl, input.downloadDir);
+    }
+    return undefined;
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "";
+    const replacement = await findReplacementAria2Status({
+      sourceUrl: input.sourceUrl,
+      errorMessage: message,
+    });
+    if (replacement) {
+      return replacement.gid;
+    }
+    throw error;
+  }
+}
+
 export async function syncAria2Downloads() {
   const downloads = await prisma.download.findMany({
     where: {
@@ -67,6 +112,10 @@ export async function syncAria2Downloads() {
       OR: [
         { status: { in: ["WAITING", "ACTIVE", "PAUSED"] } },
         { status: "COMPLETED", targetPath: null },
+        { status: "FAILED", errorMessage: { startsWith: "aria2 task is not available" } },
+        { status: "FAILED", errorMessage: { contains: "InfoHash" } },
+        { status: "FAILED", errorMessage: { contains: "already registered" } },
+        { status: "FAILED", errorMessage: { contains: "control file" } },
       ],
     },
   });
@@ -117,26 +166,52 @@ export async function syncSingleAria2Download(downloadId: string) {
     status = await tellKnownDownload(download.aria2Gid);
     status = await resolveFollowedAria2Status(status);
   } catch (error) {
-    return prisma.download.update({
-      where: { id: download.id },
-      data: {
-        status: "FAILED",
-        downloadSpeed: BigInt(0),
-        errorMessage: `aria2 task is not available: ${
-          error instanceof Error ? error.message : "Unknown aria2 error"
-        }`,
-        lastSyncedAt: new Date(),
-      },
+    const message = error instanceof Error ? error.message : "Unknown aria2 error";
+    const replacement = await findReplacementAria2Status({
+      sourceUrl: download.sourceUrl,
+      targetPath: download.targetPath,
+      errorMessage: `${download.errorMessage ?? ""} ${message}`,
+      ignoredGid: download.aria2Gid,
     });
+    if (replacement) {
+      status = await resolveFollowedAria2Status(replacement);
+    } else {
+      const completed = await completeFromExistingTargetIfPossible(download, download.targetPath);
+      if (completed) {
+        return completed;
+      }
+      return prisma.download.update({
+        where: { id: download.id },
+        data: {
+          status: "FAILED",
+          downloadSpeed: BigInt(0),
+          errorMessage: `aria2 task is not available: ${message}`,
+          lastSyncedAt: new Date(),
+        },
+      });
+    }
+  }
+
+  const duplicateReplacement = await findReplacementForDuplicateStatus(download, status);
+  if (duplicateReplacement) {
+    status = await resolveFollowedAria2Status(duplicateReplacement);
   }
 
   const totalBytes = BigInt(status.totalLength ?? 0);
   const completedBytes = BigInt(status.completedLength ?? 0);
   const downloadSpeed = BigInt(status.downloadSpeed ?? 0);
+  const targetPath = selectTargetPath(status.files) ?? download.targetPath;
+  const nextStatus = mapAria2Status(status.status);
+
+  if (nextStatus === "FAILED") {
+    const completed = await completeFromExistingTargetIfPossible(download, targetPath, totalBytes);
+    if (completed) {
+      return completed;
+    }
+  }
+
   const progress =
     totalBytes > 0 ? Number(completedBytes) / Number(totalBytes) : download.progress;
-  const nextStatus = mapAria2Status(status.status);
-  const targetPath = selectTargetPath(status.files) ?? download.targetPath;
   const etaSeconds =
     downloadSpeed > 0 && totalBytes > completedBytes
       ? Number((totalBytes - completedBytes) / downloadSpeed)
@@ -158,29 +233,106 @@ export async function syncSingleAria2Download(downloadId: string) {
     },
   });
   if (nextStatus === "COMPLETED") {
-    if (download.candidateId) {
-      await prisma.releaseCandidate.update({
-        where: { id: download.candidateId },
-        data: { status: "DOWNLOADED" },
-      });
-    }
-    const organizerPlans = await prisma.organizerPlan.findMany({
-      where: { downloadId: download.id },
-      select: { items: { select: { id: true } } },
-    });
-    if (!organizerPlans.some((plan) => plan.items.length > 0)) {
-      await createOrganizerPlanForDownload(download.id).catch(async (error) => {
-        await prisma.download.update({
-          where: { id: download.id },
-          data: {
-            archiveStatus: "organizer_failed",
-            errorMessage: error instanceof Error ? error.message : "Organizer failed",
-          },
-        });
-      });
-    }
+    await finalizeCompletedDownload(updated);
   }
   return updated;
+}
+
+async function findReplacementForDuplicateStatus(download: Download, status: Aria2Status) {
+  if (status.status !== "error" || !isRecoverableDownloadError(status.errorMessage)) {
+    return null;
+  }
+  return findReplacementAria2Status({
+    sourceUrl: download.sourceUrl,
+    targetPath: download.targetPath,
+    errorMessage: status.errorMessage,
+    ignoredGid: status.gid,
+  });
+}
+
+async function completeFromExistingTargetIfPossible(
+  download: Download,
+  targetPath?: string | null,
+  expectedBytes: bigint = BigInt(0),
+) {
+  if (!targetPath || !videoExtensions.has(extname(targetPath))) {
+    return null;
+  }
+
+  const stat = await fs.stat(targetPath).catch(() => null);
+  if (!stat?.isFile() || stat.size <= 0) {
+    return null;
+  }
+  const size = BigInt(stat.size);
+  if (expectedBytes > 0 && size < expectedBytes) {
+    return null;
+  }
+
+  const updated = await prisma.download.update({
+    where: { id: download.id },
+    data: {
+      status: "COMPLETED",
+      progress: 1,
+      targetPath,
+      totalBytes: size,
+      completedBytes: size,
+      downloadSpeed: BigInt(0),
+      etaSeconds: null,
+      errorMessage: null,
+      lastSyncedAt: new Date(),
+    },
+  });
+  await finalizeCompletedDownload(updated);
+  return updated;
+}
+
+async function finalizeCompletedDownload(download: Pick<Download, "id" | "candidateId">) {
+  if (download.candidateId) {
+    await prisma.releaseCandidate.update({
+      where: { id: download.candidateId },
+      data: { status: "DOWNLOADED" },
+    });
+  }
+  const organizerPlans = await prisma.organizerPlan.findMany({
+    where: { downloadId: download.id },
+    select: { items: { select: { id: true } } },
+  });
+  if (!organizerPlans.some((plan) => plan.items.length > 0)) {
+    await createOrganizerPlanForDownload(download.id).catch(async (error) => {
+      return prisma.download.update({
+        where: { id: download.id },
+        data: {
+          archiveStatus: "organizer_failed",
+          errorMessage: error instanceof Error ? error.message : "Organizer failed",
+        },
+      });
+    });
+  }
+}
+
+async function findReplacementAria2Status(input: {
+  sourceUrl?: string | null;
+  targetPath?: string | null;
+  errorMessage?: string | null;
+  ignoredGid?: string | null;
+}) {
+  const infoHash =
+    extractBtInfoHash(input.errorMessage ?? "") ??
+    extractBtInfoHash(input.sourceUrl ?? "");
+  const statuses = await listKnownDownloads().catch(() => []);
+  const replacement = statuses.find((status) => {
+    if (input.ignoredGid && status.gid === input.ignoredGid) {
+      return false;
+    }
+    if (infoHash && normalizeBtInfoHash(status.infoHash ?? "") === infoHash) {
+      return true;
+    }
+    if (input.targetPath && status.files?.some((file) => file.path === input.targetPath)) {
+      return true;
+    }
+    return false;
+  });
+  return replacement ?? null;
 }
 
 async function resolveFollowedAria2Status(status: Aria2Status) {
@@ -302,6 +454,60 @@ function inferDownloadReason(
     return "no_peers";
   }
   return "none";
+}
+
+export function isRecoverableDownloadError(value: string | null | undefined) {
+  const message = value ?? "";
+  return (
+    message.startsWith("aria2 task is not available") ||
+    /InfoHash\s+[a-z0-9]{32,40}\s+is already registered/i.test(message) ||
+    /already registered/i.test(message) ||
+    /control file\(\*\.aria2\) does not exist/i.test(message)
+  );
+}
+
+export function extractBtInfoHash(value: string) {
+  const decoded = safeDecodeURIComponent(value);
+  const match =
+    decoded.match(/InfoHash\s+(?<hash>[a-z2-7\d]{32,40})\s+is already registered/i) ??
+    decoded.match(/(?:xt=urn:btih:|btih:)(?<hash>[a-z2-7\d]{32,40})/i);
+  return normalizeBtInfoHash(match?.groups?.hash ?? "");
+}
+
+export function normalizeBtInfoHash(value: string) {
+  const hash = value.trim().toLowerCase();
+  if (/^[a-f0-9]{40}$/.test(hash)) {
+    return hash;
+  }
+  if (/^[a-z2-7]{32}$/.test(hash)) {
+    return base32ToHex(hash);
+  }
+  return null;
+}
+
+function base32ToHex(value: string) {
+  const alphabet = "abcdefghijklmnopqrstuvwxyz234567";
+  let bits = "";
+  for (const char of value.toLowerCase()) {
+    const index = alphabet.indexOf(char);
+    if (index < 0) {
+      return null;
+    }
+    bits += index.toString(2).padStart(5, "0");
+  }
+  const bytes = bits.match(/.{8}/g) ?? [];
+  return bytes
+    .slice(0, 20)
+    .map((byte) => Number.parseInt(byte, 2).toString(16).padStart(2, "0"))
+    .join("");
+}
+
+function safeDecodeURIComponent(value: string) {
+  try {
+    return decodeURIComponent(value);
+  } catch {
+    return value;
+  }
 }
 
 function normalizeAria2Files(value: unknown): Array<{

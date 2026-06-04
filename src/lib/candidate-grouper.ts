@@ -1,8 +1,9 @@
-import { Prisma, type MediaType } from "@prisma/client";
+import { CandidateStatus, Prisma, RssItemStatus, type MediaType } from "@prisma/client";
 import { prisma } from "@/lib/db";
 import { groupCandidatesWithOpenRouter } from "@/lib/openrouter";
 import { parseMediaReleaseTitle } from "@/lib/media-parser";
 import { normalizeTitleAliases } from "@/lib/anime-parser";
+import { classifyReleaseResource, nonVideoReleaseParseError } from "@/lib/release-resource";
 
 type CandidateGroupProposal = {
   normalizedTitle: string;
@@ -30,6 +31,7 @@ type RepairCandidate = {
   id: string;
   groupId: string | null;
   mediaType: MediaType;
+  status: CandidateStatus;
   rawTitle: string;
   parsedTitle: string;
   normalizedTitle: string;
@@ -59,11 +61,17 @@ export async function groupUngroupedCandidates(
   });
 
   if (candidates.length === 0) {
-    return { grouped: 0 };
+    return { grouped: 0, ignored: 0 };
   }
 
   const normalizedCandidates = [];
+  let ignored = 0;
   for (const candidate of candidates) {
+    if (await ignoreNonVideoCandidate(candidate)) {
+      ignored += 1;
+      continue;
+    }
+
     const parsed = parseMediaReleaseTitle(candidate.rawTitle, candidate.mediaType);
     const updated = await prisma.releaseCandidate.update({
       where: { id: candidate.id },
@@ -181,7 +189,7 @@ export async function groupUngroupedCandidates(
     });
   }
 
-  return { grouped };
+  return { grouped, ignored };
 }
 
 export async function repairCandidateGroups(batchSize = 200) {
@@ -201,11 +209,18 @@ export async function repairCandidateGroups(batchSize = 200) {
       deletedEmptyGroups: 0,
       remainingUngrouped: 0,
       emptyGroups: await countEmptyCandidateGroups(),
+      ignored: 0,
     };
   }
 
   const normalizedCandidates = [];
+  let ignored = 0;
   for (const candidate of candidates) {
+    if (await ignoreNonVideoCandidate(candidate)) {
+      ignored += 1;
+      continue;
+    }
+
     const parsed = parseMediaReleaseTitle(candidate.rawTitle, candidate.mediaType);
     const updated = await prisma.releaseCandidate.update({
       where: { id: candidate.id },
@@ -308,7 +323,48 @@ export async function repairCandidateGroups(batchSize = 200) {
     deletedEmptyGroups: deleted.count,
     remainingUngrouped,
     emptyGroups,
+    ignored,
   };
+}
+
+const autoIgnorableCandidateStatuses = new Set<CandidateStatus>([
+  CandidateStatus.NEW,
+  CandidateStatus.READY,
+  CandidateStatus.REVIEW,
+]);
+
+async function ignoreNonVideoCandidate(candidate: {
+  id: string;
+  rawTitle: string;
+  status: CandidateStatus;
+}) {
+  if (!autoIgnorableCandidateStatuses.has(candidate.status)) {
+    return false;
+  }
+
+  const resource = classifyReleaseResource(candidate.rawTitle);
+  if (resource.kind !== "NON_VIDEO") {
+    return false;
+  }
+
+  await prisma.$transaction([
+    prisma.releaseCandidate.update({
+      where: { id: candidate.id },
+      data: {
+        groupId: null,
+        status: CandidateStatus.IGNORED,
+        confidence: 0,
+      },
+    }),
+    prisma.rssItem.updateMany({
+      where: { candidate: { id: candidate.id } },
+      data: {
+        status: RssItemStatus.FAILED,
+        parseError: nonVideoReleaseParseError(resource),
+      },
+    }),
+  ]);
+  return true;
 }
 
 async function resolveRepairTargetGroup(
@@ -321,6 +377,7 @@ async function resolveRepairTargetGroup(
       id: true,
       groupId: true,
       mediaType: true,
+      status: true,
       rawTitle: true,
       parsedTitle: true,
       normalizedTitle: true,
