@@ -226,6 +226,14 @@ export async function createOrganizerPlanForCandidateSource(input: {
         resolution: organizerCandidate.resolution,
         codec: organizerCandidate.codec,
         sourcePath,
+        titleAliases: [
+          planMetadata.title,
+          organizerCandidate.group?.displayTitle,
+          organizerCandidate.group?.normalizedTitle,
+          organizerCandidate.parsedTitle,
+          organizerCandidate.normalizedTitle,
+          ...groupAliases(organizerCandidate.group?.aliases),
+        ].filter((value): value is string => Boolean(value)),
       });
       const conflict = await exists(targetPath);
       return {
@@ -826,11 +834,18 @@ function isPollutedOrganizerPlan(plan: {
 
   const targetPaths = plan.items.map((item) => item.targetPath).filter(Boolean);
   const hasDuplicateTargets = targetPaths.length > 1 && new Set(targetPaths).size < targetPaths.length;
+  const hasPollutedTargets = plan.items.some((item) => organizerTargetPathLooksPolluted(item.targetPath));
   const mismatchedItems = plan.items.filter(
     (item) => !sourcePathMatchesCandidate(item.sourcePath, candidate),
   );
 
-  return hasDuplicateTargets || mismatchedItems.length === plan.items.length;
+  return hasDuplicateTargets || hasPollutedTargets || mismatchedItems.length === plan.items.length;
+}
+
+export function organizerTargetPathLooksPolluted(targetPath: string) {
+  const filename = path.basename(targetPath, path.extname(targetPath));
+  const episodeCodes = filename.match(/\bS\d{1,2}E\d{1,4}\b/gi) ?? [];
+  return new Set(episodeCodes.map((code) => code.toUpperCase())).size < episodeCodes.length;
 }
 
 function sourcePathMatchesCandidate(
@@ -941,6 +956,7 @@ function buildTargetPath(input: {
   resolution?: string | null;
   codec?: string | null;
   sourcePath: string;
+  titleAliases?: string[];
 }) {
   const title = sanitizeSegment(input.title);
   const seriesDir = input.year ? `${title} (${input.year})` : title;
@@ -960,8 +976,73 @@ function buildTargetPath(input: {
   }
   const root =
     input.mediaType === "TV" ? input.roots.tvLibraryDir : input.roots.animeLibraryDir;
-  const filename = `${title} - ${episode} - ${sanitizeSegment(input.episodeTitle)} ${tags}${ext}`;
-  return path.join(root, seriesDir, seasonDir, filename);
+  const episodeTitle = buildOrganizerEpisodeTitleSegment({
+    title,
+    titleAliases: input.titleAliases,
+    episodeTitle: input.episodeTitle,
+    episodeCode: episode,
+  });
+  const filename = [
+    title,
+    episode,
+    episodeTitle,
+  ]
+    .filter(Boolean)
+    .join(" - ");
+  const taggedFilename = [filename, tags].filter(Boolean).join(" ");
+  return path.join(root, seriesDir, seasonDir, `${taggedFilename}${ext}`);
+}
+
+export function buildOrganizerEpisodeTitleSegment(input: {
+  title: string;
+  episodeTitle?: string | null;
+  episodeCode: string;
+  titleAliases?: string[];
+}) {
+  const titleAliasKeys = new Set(
+    [input.title, ...(input.titleAliases ?? [])]
+      .flatMap((value) => normalizeTitleAliases(value))
+      .filter(Boolean),
+  );
+  const cleanedParts = splitEpisodeTitleParts(input.episodeTitle ?? "")
+    .map((part) => cleanEpisodeTitlePart(part, input.episodeCode))
+    .filter(Boolean)
+    .filter((part) => {
+      const aliases = normalizeTitleAliases(part);
+      return aliases.length > 0 && aliases.every((alias) => !titleAliasKeys.has(alias));
+    });
+  const uniqueParts = [...new Set(cleanedParts)];
+  if (uniqueParts.length === 0) {
+    return null;
+  }
+
+  const segment = sanitizeSegment(uniqueParts.join(" / "));
+  return segment || null;
+}
+
+function splitEpisodeTitleParts(value: string) {
+  return value
+    .replace(/\.[a-z0-9]{2,5}$/i, " ")
+    .replace(/\[[^\]]+\]|【[^】]+】|\([^)]+\)/g, " - ")
+    .split(/\s+-\s+|[|｜]/)
+    .map((part) => part.trim())
+    .filter(Boolean);
+}
+
+function cleanEpisodeTitlePart(value: string, episodeCode: string) {
+  const escapedEpisodeCode = escapeRegExp(episodeCode);
+  const withoutNoise = value
+    .replace(new RegExp(`\\b${escapedEpisodeCode}\\b`, "gi"), " ")
+    .replace(/\bS\d{1,2}E\d{1,4}\b/gi, " ")
+    .replace(/\b(?:EP?)\s?\d{1,4}\b/gi, " ")
+    .replace(/\b(?:2160p|4k|1080p|720p|480p|1920x1080|1280x720)\b/gi, " ")
+    .replace(/\b(?:x265|x264|h\.?265|h\.?264|hevc|avc|av1|aac|flac|opus|mp3)\b/gi, " ")
+    .replace(/\b(?:mkv|mp4|webm|avi|mov|baha|b-global|web\s?-?dl|webrip)\b/gi, " ");
+  return sanitizeSegment(withoutNoise);
+}
+
+function escapeRegExp(value: string) {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
 async function upsertMediaRecords(plan: {

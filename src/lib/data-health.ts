@@ -8,6 +8,7 @@ import { repairCandidateGroups } from "@/lib/candidate-grouper";
 import {
   cleanupPollutedOrganizerPlans,
   cleanupStaleOrganizerPlans,
+  organizerTargetPathLooksPolluted,
 } from "@/lib/organizer";
 import { repairAnimeEpisodeNumbering } from "@/lib/wanted-episodes";
 
@@ -523,5 +524,5 @@ function pollutedMediaPathWhere() {
 }
 
 function pathContainsSuspiciousToken(value: string) {
-  return suspiciousTitleTokens.some((token) => value.includes(token));
+  return suspiciousTitleTokens.some((token) => value.includes(token)) || organizerTargetPathLooksPolluted(value);
 }
