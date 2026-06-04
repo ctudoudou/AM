@@ -210,6 +210,11 @@ export async function syncSingleAria2Download(downloadId: string) {
     }
   }
 
+  const trackedDuplicate = await findTrackedDownloadForAria2Gid(download.id, status.gid);
+  if (trackedDuplicate) {
+    return syncFromTrackedDuplicate(download, trackedDuplicate);
+  }
+
   const progress =
     totalBytes > 0 ? Number(completedBytes) / Number(totalBytes) : download.progress;
   const etaSeconds =
@@ -236,6 +241,39 @@ export async function syncSingleAria2Download(downloadId: string) {
     await finalizeCompletedDownload(updated);
   }
   return updated;
+}
+
+async function findTrackedDownloadForAria2Gid(downloadId: string, aria2Gid: string) {
+  const tracked = await prisma.download.findUnique({
+    where: { aria2Gid },
+  });
+  return tracked && tracked.id !== downloadId ? tracked : null;
+}
+
+async function syncFromTrackedDuplicate(
+  download: Download,
+  tracked: Pick<Download, "id" | "status" | "targetPath" | "totalBytes">,
+) {
+  if (tracked.status === "COMPLETED" && tracked.targetPath) {
+    const completed = await completeFromExistingTargetIfPossible(
+      download,
+      tracked.targetPath,
+      tracked.totalBytes ?? BigInt(0),
+    );
+    if (completed) {
+      return completed;
+    }
+  }
+
+  return prisma.download.update({
+    where: { id: download.id },
+    data: {
+      status: "FAILED",
+      downloadSpeed: BigInt(0),
+      errorMessage: `Duplicate aria2 task is already tracked by download ${tracked.id}.`,
+      lastSyncedAt: new Date(),
+    },
+  });
 }
 
 async function findReplacementForDuplicateStatus(download: Download, status: Aria2Status) {
