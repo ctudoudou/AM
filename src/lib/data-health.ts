@@ -1,8 +1,9 @@
 import path from "node:path";
-import type { MediaType } from "@prisma/client";
+import type { CandidateStatus, MediaType } from "@prisma/client";
 import { prisma } from "@/lib/db";
 import { normalizeTitleAliases } from "@/lib/anime-parser";
 import { parseMediaReleaseTitle, type ParsedMediaRelease } from "@/lib/media-parser";
+import { classifyReleaseResource } from "@/lib/release-resource";
 import { repairCandidateGroups } from "@/lib/candidate-grouper";
 import {
   cleanupPollutedOrganizerPlans,
@@ -33,6 +34,7 @@ const suspiciousTitleTokens = [
 export type DataHealthIssueSeverity = "info" | "warning" | "danger";
 export type DataHealthIssueType =
   | "parser_replay"
+  | "non_video_candidate"
   | "polluted_group"
   | "split_group"
   | "organizer_plan"
@@ -78,6 +80,7 @@ type CandidateSnapshot = {
   id: string;
   groupId: string | null;
   mediaType: MediaType;
+  status: CandidateStatus;
   rawTitle: string;
   parsedTitle: string;
   normalizedTitle: string;
@@ -149,11 +152,13 @@ export async function scanDataHealth(): Promise<DataHealthScan> {
     ]);
 
   const replay = collectReplayIssues(candidates);
+  const nonVideoCandidates = collectNonVideoCandidateIssues(candidates);
   const pollutedGroups = collectPollutedGroups(groups, candidates);
   const splitGroups = collectSplitGroups(candidates);
   const organizerIssues = collectOrganizerIssues(activePlans);
   const issues: DataHealthIssue[] = [
     ...replay.issues,
+    ...nonVideoCandidates,
     ...pollutedGroups,
     ...splitGroups,
     ...organizerIssues,
@@ -287,6 +292,39 @@ function collectReplayIssues(candidates: CandidateSnapshot[]) {
           ]
         : [],
   };
+}
+
+function collectNonVideoCandidateIssues(candidates: CandidateSnapshot[]) {
+  const samples = candidates
+    .map((candidate) => ({
+      candidate,
+      resource: classifyReleaseResource(candidate.rawTitle),
+    }))
+    .filter((item) => item.resource.kind === "NON_VIDEO");
+
+  if (samples.length === 0) {
+    return [];
+  }
+
+  return [
+    {
+      id: "non-video-candidates",
+      type: "non_video_candidate" as const,
+      severity: "danger" as const,
+      title: "Non-video RSS candidates",
+      description:
+        "RSS intake contains music, album, or audio-only releases that should not enter anime candidate grouping.",
+      count: samples.length,
+      autoFixable: true,
+      samples: samples.slice(0, maxIssueSamples).map(({ candidate, resource }) => ({
+        id: candidate.id,
+        rawTitle: candidate.rawTitle,
+        parsedTitle: candidate.parsedTitle,
+        groupTitle: candidate.group?.displayTitle ?? null,
+        reason: resource.reason ?? null,
+      })),
+    },
+  ];
 }
 
 function collectPollutedGroups(
