@@ -4,6 +4,7 @@ import { getAppSettings } from "@/lib/settings";
 export type Aria2Status = {
   gid: string;
   status: "active" | "waiting" | "paused" | "complete" | "error" | "removed";
+  infoHash?: string;
   totalLength?: string;
   completedLength?: string;
   downloadSpeed?: string;
@@ -22,6 +23,20 @@ export type Aria2Status = {
     selected?: string;
   }>;
 };
+
+const statusKeys = [
+  "gid",
+  "status",
+  "infoHash",
+  "totalLength",
+  "completedLength",
+  "downloadSpeed",
+  "errorMessage",
+  "followedBy",
+  "following",
+  "bittorrent",
+  "files",
+];
 
 export async function aria2Request<T>(method: string, params: unknown[] = []) {
   const settings = await getAppSettings();
@@ -50,8 +65,18 @@ export async function aria2Request<T>(method: string, params: unknown[] = []) {
   return payload.result as T;
 }
 
+function buildDownloadOptions(dir?: string) {
+  return {
+    ...(dir ? { dir } : {}),
+    continue: "true",
+    "check-integrity": "true",
+    "allow-overwrite": "false",
+    "auto-file-renaming": "true",
+  };
+}
+
 export async function addMagnetToAria2(magnetUrl: string, dir?: string) {
-  return aria2Request<string>("addUri", [[magnetUrl], dir ? { dir } : {}]);
+  return aria2Request<string>("addUri", [[magnetUrl], buildDownloadOptions(dir)]);
 }
 
 export async function addTorrentToAria2(torrentFilePath: string, dir?: string) {
@@ -74,26 +99,33 @@ function addTorrentBytesToAria2(torrent: Buffer, dir?: string) {
   return aria2Request<string>("addTorrent", [
     torrent.toString("base64"),
     [],
-    dir ? { dir } : {},
+    buildDownloadOptions(dir),
   ]);
 }
 
 export async function tellKnownDownload(gid: string) {
-  return aria2Request<Aria2Status>("tellStatus", [
-    gid,
-    [
-      "gid",
-      "status",
-      "totalLength",
-      "completedLength",
-      "downloadSpeed",
-      "errorMessage",
-      "followedBy",
-      "following",
-      "bittorrent",
-      "files",
-    ],
+  return aria2Request<Aria2Status>("tellStatus", [gid, statusKeys]);
+}
+
+export async function tellActiveDownloads() {
+  return aria2Request<Aria2Status[]>("tellActive", [statusKeys]);
+}
+
+export async function tellWaitingDownloads(offset = 0, num = 1000) {
+  return aria2Request<Aria2Status[]>("tellWaiting", [offset, num, statusKeys]);
+}
+
+export async function tellStoppedDownloads(offset = 0, num = 1000) {
+  return aria2Request<Aria2Status[]>("tellStopped", [offset, num, statusKeys]);
+}
+
+export async function listKnownDownloads() {
+  const [active, waiting, stopped] = await Promise.all([
+    tellActiveDownloads(),
+    tellWaitingDownloads(),
+    tellStoppedDownloads(),
   ]);
+  return [...active, ...waiting, ...stopped];
 }
 
 export async function pauseAria2Download(gid: string) {

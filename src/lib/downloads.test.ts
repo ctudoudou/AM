@@ -1,5 +1,12 @@
 import { describe, expect, it } from "vitest";
-import { buildDownloadDiagnostics, isMetadataOnlyAria2Status, selectTargetPath } from "./downloads";
+import {
+  buildDownloadDiagnostics,
+  extractBtInfoHash,
+  isMetadataOnlyAria2Status,
+  isRecoverableDownloadError,
+  normalizeBtInfoHash,
+  selectTargetPath,
+} from "./downloads";
 
 describe("aria2 download helpers", () => {
   it("selects the largest video file and ignores metadata", () => {
@@ -68,5 +75,35 @@ describe("aria2 download helpers", () => {
         downloadSpeed: BigInt(50),
       }).etaSeconds,
     ).toBe(15);
+  });
+
+  it("extracts and normalizes info hashes from aria2 duplicate errors and magnets", () => {
+    expect(
+      extractBtInfoHash(
+        "InfoHash 2a6dd0d0939addcb075c3b55e55e180c05301b03 is already registered.",
+      ),
+    ).toBe("2a6dd0d0939addcb075c3b55e55e180c05301b03");
+    expect(
+      extractBtInfoHash("magnet:?xt=urn:btih:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"),
+    ).toBe("0000000000000000000000000000000000000000");
+    expect(
+      extractBtInfoHash("magnet:?xt=urn%3Abtih%3AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"),
+    ).toBe("0000000000000000000000000000000000000000");
+    expect(normalizeBtInfoHash("not-a-hash")).toBeNull();
+  });
+
+  it("recognizes download errors that can be recovered by aria2 or existing files", () => {
+    expect(isRecoverableDownloadError("aria2 task is not available: fetch failed")).toBe(true);
+    expect(
+      isRecoverableDownloadError(
+        "InfoHash 2a6dd0d0939addcb075c3b55e55e180c05301b03 is already registered.",
+      ),
+    ).toBe(true);
+    expect(
+      isRecoverableDownloadError(
+        "File /data/downloads/episode.mkv exists, but a control file(*.aria2) does not exist.",
+      ),
+    ).toBe(true);
+    expect(isRecoverableDownloadError("Failed to make the directory /data/downloads")).toBe(false);
   });
 });
