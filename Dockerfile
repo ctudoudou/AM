@@ -1,11 +1,16 @@
 # syntax=docker/dockerfile:1.7
 
+FROM --platform=$BUILDPLATFORM node:24-alpine AS build-deps
+WORKDIR /app
+COPY package.json package-lock.json* ./
+RUN --mount=type=cache,target=/root/.npm npm ci
+
 FROM node:24-alpine AS deps
 WORKDIR /app
 COPY package.json package-lock.json* ./
 RUN --mount=type=cache,target=/root/.npm npm ci
 
-FROM node:24-alpine AS source
+FROM --platform=$BUILDPLATFORM node:24-alpine AS source
 WORKDIR /app
 COPY . .
 
@@ -21,9 +26,9 @@ RUN --mount=type=cache,target=/root/.cache/prisma \
       sleep $((attempt * 5)); \
     done
 
-FROM node:24-alpine AS builder
+FROM --platform=$BUILDPLATFORM node:24-alpine AS builder
 WORKDIR /app
-COPY --from=prisma /app/node_modules ./node_modules
+COPY --from=build-deps /app/node_modules ./node_modules
 COPY --from=source /app ./
 RUN --mount=type=cache,target=/app/.next/cache npm run build
 
@@ -34,14 +39,14 @@ ENV HOSTNAME=0.0.0.0
 ENV PORT=3000
 ENV KURA_AUTO_MIGRATE=true
 RUN apk add --no-cache ffmpeg
-# Use the builder node_modules so Prisma engines generated/downloaded during
-# the image build are available at container startup without runtime downloads.
-COPY --from=builder /app/node_modules ./node_modules
 COPY package.json package-lock.json* prisma.config.ts ./
 COPY prisma ./prisma
 COPY --from=builder /app/public ./public
 COPY --from=builder /app/.next/standalone ./
 COPY --from=builder /app/.next/static ./.next/static
+# Use target-platform node_modules so Prisma engines generated/downloaded during
+# the image build match the runtime architecture without runtime downloads.
+COPY --from=prisma /app/node_modules ./node_modules
 COPY docker-entrypoint.sh ./docker-entrypoint.sh
 RUN chmod +x ./docker-entrypoint.sh
 EXPOSE 3000
