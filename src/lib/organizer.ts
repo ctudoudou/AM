@@ -202,37 +202,48 @@ export async function createOrganizerPlanForCandidateSource(input: {
       },
     });
   }
+  const mediaType = resolveOrganizerMediaType({
+    candidate: organizerCandidate,
+    sourceRoot: input.sourceRoot,
+    files,
+  });
+  const effectiveCandidate = {
+    ...organizerCandidate,
+    mediaType,
+    episodeNumber: mediaType === "MOVIE" ? 1 : organizerCandidate.episodeNumber,
+    season: mediaType === "MOVIE" ? 1 : organizerCandidate.season,
+  };
 
   const confidence = Math.min(candidate.confidence, planMetadata.score);
   const plannedItems = await Promise.all(
     files.map(async (sourcePath) => {
       const stat = await fs.stat(sourcePath);
       const identity = resolveOrganizerItemIdentity({
-        candidate: organizerCandidate,
+        candidate: effectiveCandidate,
         sourcePath,
       });
       const targetPath = buildTargetPath({
-        mediaType: organizerCandidate.mediaType,
+        mediaType: effectiveCandidate.mediaType,
         roots: settings.directories,
         title:
           planMetadata.title ||
-          organizerCandidate.group?.displayTitle ||
-          organizerCandidate.parsedTitle,
+          effectiveCandidate.group?.displayTitle ||
+          effectiveCandidate.parsedTitle,
         year: planMetadata.year,
         season: identity.season,
         episode: identity.episodeNumber,
         episodeTitle: identity.episodeTitle,
-        group: organizerCandidate.subtitleGroup,
-        resolution: organizerCandidate.resolution,
-        codec: organizerCandidate.codec,
+        group: effectiveCandidate.subtitleGroup,
+        resolution: effectiveCandidate.resolution,
+        codec: effectiveCandidate.codec,
         sourcePath,
         titleAliases: [
           planMetadata.title,
-          organizerCandidate.group?.displayTitle,
-          organizerCandidate.group?.normalizedTitle,
-          organizerCandidate.parsedTitle,
-          organizerCandidate.normalizedTitle,
-          ...groupAliases(organizerCandidate.group?.aliases),
+          effectiveCandidate.group?.displayTitle,
+          effectiveCandidate.group?.normalizedTitle,
+          effectiveCandidate.parsedTitle,
+          effectiveCandidate.normalizedTitle,
+          ...groupAliases(effectiveCandidate.group?.aliases),
         ].filter((value): value is string => Boolean(value)),
       });
       const conflict = await exists(targetPath);
@@ -255,7 +266,7 @@ export async function createOrganizerPlanForCandidateSource(input: {
 
   const hasConflict = itemInputs.some((item) => item.conflict);
   const hasPlayableIdentity =
-    organizerCandidate.mediaType === "MOVIE" ||
+    effectiveCandidate.mediaType === "MOVIE" ||
     plannedItems.every((item) => item.hasPlayableIdentity);
   const readyForConfirmation =
     metadataReliable && confidence >= 0.82 && hasPlayableIdentity && !hasConflict;
@@ -278,7 +289,7 @@ export async function createOrganizerPlanForCandidateSource(input: {
     data: {
       downloadId: input.downloadId,
       candidateId: candidate.id,
-      mediaType: organizerCandidate.mediaType,
+      mediaType: effectiveCandidate.mediaType,
       status,
       confidence,
       autoExecutable: readyForAutoExecution,
@@ -940,6 +951,36 @@ export function resolveOrganizerItemIdentity(input: {
   };
 }
 
+export function resolveOrganizerMediaType(input: {
+  candidate: OrganizerCandidateIdentity;
+  sourceRoot: string;
+  files: string[];
+}): MediaType {
+  if (input.candidate.mediaType !== "ANIME") {
+    return input.candidate.mediaType;
+  }
+
+  const sourceText = [
+    input.sourceRoot,
+    ...input.files,
+  ].join(" ");
+  if (!looksTheatricalMoviePackage(sourceText)) {
+    return input.candidate.mediaType;
+  }
+
+  const parsedFiles = input.files.map((file) =>
+    parseMediaReleaseTitle(path.basename(file, path.extname(file)), "ANIME"),
+  );
+  const hasEpisodeNumber = parsedFiles.some((parsed) => parsed.episodeNumber !== undefined);
+  return hasEpisodeNumber ? input.candidate.mediaType : "MOVIE";
+}
+
+function looksTheatricalMoviePackage(value: string) {
+  return /(?:劇場版|剧场版|映画|the\s+movie|\bmovie\b|\bfilm\b|\btheatrical\b|\bbdrip\b|\bbdremux\b|\bblu\s?-?ray\b|\bbluray\b)/i.test(
+    value,
+  );
+}
+
 function buildTargetPath(input: {
   mediaType: MediaType;
   roots: {
@@ -1046,6 +1087,7 @@ function escapeRegExp(value: string) {
 }
 
 async function upsertMediaRecords(plan: {
+  mediaType: MediaType;
   mediaTitleId: string | null;
   metadata: unknown;
   items: Array<{
@@ -1074,7 +1116,7 @@ async function upsertMediaRecords(plan: {
     backdropUrl?: string;
   } | null;
   const candidate = plan.candidate;
-  const mediaType = candidate?.mediaType ?? "ANIME";
+  const mediaType = plan.mediaType ?? candidate?.mediaType ?? "ANIME";
   const title = cleanMediaTitle(
     metadata?.title || candidate?.group?.displayTitle || candidate?.parsedTitle || "Unknown",
   );

@@ -8,6 +8,7 @@ import {
   organizerTargetPathLooksPolluted,
   regenerateRejectedOrganizerPlan,
   resolveOrganizerItemIdentity,
+  resolveOrganizerMediaType,
 } from "./organizer";
 
 vi.mock("@/lib/db", () => ({
@@ -111,6 +112,45 @@ describe("buildOrganizerEpisodeTitleSegment", () => {
         episodeCode: "S01E04",
       }),
     ).toBe("A New Day");
+  });
+});
+
+describe("resolveOrganizerMediaType", () => {
+  it("treats no-episode BD theatrical packages as movies", () => {
+    expect(
+      resolveOrganizerMediaType({
+        sourceRoot:
+          "/data/downloads/[H-Enc] Zombie Land Saga Yumeginga Paradise (BDRip 1080p HEVC FLAC)/Zombie Land Saga Yumeginga Paradise.mkv",
+        files: [
+          "/data/downloads/[H-Enc] Zombie Land Saga Yumeginga Paradise (BDRip 1080p HEVC FLAC)/Zombie Land Saga Yumeginga Paradise.mkv",
+        ],
+        candidate: {
+          mediaType: "ANIME",
+          parsedTitle: "佐贺偶像是传奇 梦想银河乐园",
+          normalizedTitle: "佐贺偶像是传奇 梦想银河乐园",
+          episodeNumber: 1,
+          season: 1,
+          group: null,
+        },
+      }),
+    ).toBe("MOVIE");
+  });
+
+  it("keeps normal numbered anime releases as anime", () => {
+    expect(
+      resolveOrganizerMediaType({
+        sourceRoot: "/data/downloads/Some Anime - 01 [BDRip 1080p].mkv",
+        files: ["/data/downloads/Some Anime - 01 [BDRip 1080p].mkv"],
+        candidate: {
+          mediaType: "ANIME",
+          parsedTitle: "Some Anime",
+          normalizedTitle: "some anime",
+          episodeNumber: 1,
+          season: 1,
+          group: null,
+        },
+      }),
+    ).toBe("ANIME");
   });
 });
 
