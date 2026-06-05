@@ -15,8 +15,18 @@ concurrency:
 
 jobs:
   docker:
-    name: Build and publish Docker images
+    name: Build and publish ${{ matrix.name }} image
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: web
+            target: runner
+            cache-scope: kura-web
+          - name: worker
+            target: worker
+            cache-scope: kura-worker
 
     steps:
       - name: Check out repository
@@ -38,6 +48,16 @@ jobs:
           echo "web=${image_name}" >> "$GITHUB_OUTPUT"
           echo "worker=${image_name}-worker" >> "$GITHUB_OUTPUT"
 
+      - name: Select image
+        id: selected-image
+        shell: bash
+        run: |
+          if [ "${{ matrix.name }}" = "web" ]; then
+            echo "name=${{ steps.image.outputs.web }}" >> "$GITHUB_OUTPUT"
+          else
+            echo "name=${{ steps.image.outputs.worker }}" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Generate date tag
         id: tag
         shell: bash
@@ -55,144 +75,27 @@ jobs:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
-      - name: Extract web image metadata
-        id: meta-web
+      - name: Extract image metadata
+        id: meta
         uses: docker/metadata-action@v5
         with:
-          images: ${{ steps.image.outputs.web }}
+          images: ${{ steps.selected-image.outputs.name }}
           tags: |
             type=raw,value=latest
             type=ref,event=branch
             type=raw,value=${{ steps.tag.outputs.date }}
 
-      - name: Extract worker image metadata
-        id: meta-worker
-        uses: docker/metadata-action@v5
-        with:
-          images: ${{ steps.image.outputs.worker }}
-          tags: |
-            type=raw,value=latest
-            type=ref,event=branch
-            type=raw,value=${{ steps.tag.outputs.date }}
-
-      - name: Build and push web image digest (amd64)
-        id: build-web-amd64
+      - name: Build and push image
         uses: docker/build-push-action@v6
         with:
           context: .
           file: ./Dockerfile
-          target: runner
-          platforms: linux/amd64
+          target: ${{ matrix.target }}
+          platforms: linux/amd64,linux/arm64
           provenance: false
           sbom: false
-          outputs: type=image,push-by-digest=true,name-canonical=true,push=true
-          tags: ${{ steps.image.outputs.web }}
-          labels: ${{ steps.meta-web.outputs.labels }}
-          cache-from: type=gha,scope=kura-web-amd64
-          cache-to: type=gha,mode=max,scope=kura-web-amd64
-
-      - name: Build and push web image digest (arm64)
-        id: build-web-arm64
-        uses: docker/build-push-action@v6
-        with:
-          context: .
-          file: ./Dockerfile
-          target: runner
-          platforms: linux/arm64
-          provenance: false
-          sbom: false
-          outputs: type=image,push-by-digest=true,name-canonical=true,push=true
-          tags: ${{ steps.image.outputs.web }}
-          labels: ${{ steps.meta-web.outputs.labels }}
-          cache-from: type=gha,scope=kura-web-arm64
-          cache-to: type=gha,mode=max,scope=kura-web-arm64
-
-      - name: Publish web multi-arch manifest
-        shell: bash
-        env:
-          IMAGE: ${{ steps.image.outputs.web }}
-          TAGS: ${{ steps.meta-web.outputs.tags }}
-          AMD64_DIGEST: ${{ steps.build-web-amd64.outputs.digest }}
-          ARM64_DIGEST: ${{ steps.build-web-arm64.outputs.digest }}
-        run: |
-          set -euo pipefail
-
-          tag_args=()
-          while IFS= read -r tag; do
-            if [ -n "$tag" ]; then
-              tag_args+=("-t" "$tag")
-            fi
-          done <<< "$TAGS"
-
-          for attempt in 1 2 3 4 5; do
-            if docker buildx imagetools create \
-              "${tag_args[@]}" \
-              "$IMAGE@$AMD64_DIGEST" \
-              "$IMAGE@$ARM64_DIGEST"; then
-              exit 0
-            fi
-            sleep $((attempt * 10))
-          done
-
-          exit 1
-
-      - name: Build and push worker image digest (amd64)
-        id: build-worker-amd64
-        uses: docker/build-push-action@v6
-        with:
-          context: .
-          file: ./Dockerfile
-          target: worker
-          platforms: linux/amd64
-          provenance: false
-          sbom: false
-          outputs: type=image,push-by-digest=true,name-canonical=true,push=true
-          tags: ${{ steps.image.outputs.worker }}
-          labels: ${{ steps.meta-worker.outputs.labels }}
-          cache-from: type=gha,scope=kura-worker-amd64
-          cache-to: type=gha,mode=max,scope=kura-worker-amd64
-
-      - name: Build and push worker image digest (arm64)
-        id: build-worker-arm64
-        uses: docker/build-push-action@v6
-        with:
-          context: .
-          file: ./Dockerfile
-          target: worker
-          platforms: linux/arm64
-          provenance: false
-          sbom: false
-          outputs: type=image,push-by-digest=true,name-canonical=true,push=true
-          tags: ${{ steps.image.outputs.worker }}
-          labels: ${{ steps.meta-worker.outputs.labels }}
-          cache-from: type=gha,scope=kura-worker-arm64
-          cache-to: type=gha,mode=max,scope=kura-worker-arm64
-
-      - name: Publish worker multi-arch manifest
-        shell: bash
-        env:
-          IMAGE: ${{ steps.image.outputs.worker }}
-          TAGS: ${{ steps.meta-worker.outputs.tags }}
-          AMD64_DIGEST: ${{ steps.build-worker-amd64.outputs.digest }}
-          ARM64_DIGEST: ${{ steps.build-worker-arm64.outputs.digest }}
-        run: |
-          set -euo pipefail
-
-          tag_args=()
-          while IFS= read -r tag; do
-            if [ -n "$tag" ]; then
-              tag_args+=("-t" "$tag")
-            fi
-          done <<< "$TAGS"
-
-          for attempt in 1 2 3 4 5; do
-            if docker buildx imagetools create \
-              "${tag_args[@]}" \
-              "$IMAGE@$AMD64_DIGEST" \
-              "$IMAGE@$ARM64_DIGEST"; then
-              exit 0
-            fi
-            sleep $((attempt * 10))
-          done
-
-          exit 1
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha,scope=${{ matrix.cache-scope }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.cache-scope }}
