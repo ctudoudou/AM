@@ -28,10 +28,13 @@ const resolutionPattern = /\b(2160p|4k|1080p|720p|480p)\b/i;
 const codecPattern = /\b(x265|x264|h\.?265|h\.?264|hevc|avc|av1)\b/i;
 const audioPattern = /\b(aac|flac|opus|mp3|truehd|dts|ddp?5\.1|ddp?7\.1)\b/i;
 const sourcePattern = /\b(web\s?-?dl|webrip|hdtv|bdrip|bdremux|blu\s?-?ray|bluray|netflix|amazon|disney\+|hulu)\b/i;
+const animeMoviePattern = /(?:劇場版|剧场版|映画|the\s+movie|\bmovie\b|\bfilm\b|\btheatrical\b)/i;
 const tvPatterns = [
   /\bS(?<season>\d{1,2})E(?<episode>\d{1,4})(?:\b|[^\d])/i,
   /\b(?<season>\d{1,2})x(?<episode>\d{1,4})\b/i,
 ];
+const animeEpisodeSignalPattern =
+  /(?:\bS\d{1,2}E\d{1,4}\b|\bEP?\s?\d{1,4}\b|第\s?\d{1,4}\s?[话話集]|(?:^|[\s_\-[({])\d{1,3}(?:v\d)?(?:$|[\s_\-\])}]))/i;
 
 export function normalizeIntakeMediaType(value: unknown): IntakeMediaType {
   if (value === "AUTO") {
@@ -44,6 +47,9 @@ export function normalizeIntakeMediaType(value: unknown): IntakeMediaType {
 }
 
 export function resolveMediaType(rawTitle: string, requested: IntakeMediaType): MediaType {
+  if (requested === "ANIME" && looksAnimeMovie(rawTitle)) {
+    return "MOVIE";
+  }
   if (requested !== "AUTO") {
     return requested;
   }
@@ -53,6 +59,9 @@ export function resolveMediaType(rawTitle: string, requested: IntakeMediaType): 
 export function detectMediaType(rawTitle: string): MediaType {
   if (tvPatterns.some((pattern) => pattern.test(rawTitle))) {
     return "TV";
+  }
+  if (looksAnimeMovie(rawTitle)) {
+    return "MOVIE";
   }
   if (/\b(19\d{2}|20\d{2})\b/.test(rawTitle) && !looksAnime(rawTitle)) {
     return "MOVIE";
@@ -217,6 +226,10 @@ function normalizeSourceKind(value: string | undefined) {
 
 function looksAnime(value: string) {
   return /简体|繁体|简繁|内嵌|外挂|番组|字幕组|mikan|baha|b-global|bilibili/i.test(value);
+}
+
+function looksAnimeMovie(value: string) {
+  return animeMoviePattern.test(value) && !animeEpisodeSignalPattern.test(value);
 }
 
 function isTechnicalTag(value: string) {

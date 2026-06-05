@@ -34,4 +34,14 @@ describe("parseMediaReleaseTitle", () => {
     expect(detectMediaType("The.Studio.S01E03.1080p.WEB-DL")).toBe("TV");
     expect(detectMediaType("Oppenheimer.2023.2160p.BluRay.x265")).toBe("MOVIE");
   });
+
+  it("treats explicit anime theatrical releases as movies even from anime intake", () => {
+    const parsed = parseMediaReleaseTitle(
+      "劇場版 ゾンビランドサガ ゆめぎんがパラダイス",
+      "ANIME",
+    );
+
+    expect(parsed.mediaType).toBe("MOVIE");
+    expect(detectMediaType("Zombie Land Saga The Movie 2026 1080p BDRip")).toBe("MOVIE");
+  });
 });

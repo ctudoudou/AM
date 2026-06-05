@@ -28,7 +28,38 @@ const videoExtensions = new Set([
   ".m4v",
   ".ts",
 ]);
+const audioExtensions = new Set([
+  ".flac",
+  ".mp3",
+  ".m4a",
+  ".aac",
+  ".wav",
+  ".ape",
+  ".opus",
+]);
+const imageExtensions = new Set([
+  ".jpg",
+  ".jpeg",
+  ".png",
+  ".webp",
+  ".avif",
+]);
+const metadataFileExtensions = new Set([
+  ".cue",
+  ".log",
+  ".nfo",
+  ".txt",
+  ".m3u",
+  ".m3u8",
+]);
 const minAutoOrganizerConfidence = 0.9;
+
+type OrganizerFileType = "video" | "audio" | "image" | "metadata";
+
+type OrganizerSourceFile = {
+  sourcePath: string;
+  fileType: OrganizerFileType;
+};
 
 type OrganizerAutomationAssessment = {
   executable: boolean;
@@ -121,6 +152,7 @@ export async function createOrganizerPlanForDownload(downloadId: string) {
     candidateId: download.candidate.id,
     downloadId,
     sourceRoot,
+    sourcePaths: selectedAria2SourcePaths(download.aria2Files),
   });
 
   await prisma.download.update({
@@ -137,6 +169,7 @@ export async function createOrganizerPlanForCandidateSource(input: {
   candidateId: string;
   sourceRoot: string;
   downloadId?: string;
+  sourcePaths?: string[];
 }) {
   const settings = await getAppSettings();
   const candidate = await prisma.releaseCandidate.findUniqueOrThrow({
@@ -188,8 +221,26 @@ export async function createOrganizerPlanForCandidateSource(input: {
         metadata,
       });
   const allowedRoots = allowedOrganizerRoots(settings.directories);
-  const files = await findVideoFiles(input.sourceRoot, allowedRoots);
+  const files = await findOrganizerFiles({
+    sourceRoot: input.sourceRoot,
+    allowedRoots,
+    sourcePaths: input.sourcePaths,
+  });
   if (files.length === 0) {
+    return prisma.organizerPlan.create({
+      data: {
+        downloadId: input.downloadId,
+        candidateId: candidate.id,
+        mediaType: candidate.mediaType,
+        status: "NEEDS_REVIEW",
+        confidence: 0.2,
+        reason: "No supported media or extra file found",
+        metadata: planMetadata as Prisma.InputJsonValue,
+      },
+    });
+  }
+  const videoFiles = files.filter((file) => file.fileType === "video").map((file) => file.sourcePath);
+  if (videoFiles.length === 0) {
     return prisma.organizerPlan.create({
       data: {
         downloadId: input.downloadId,
@@ -202,48 +253,77 @@ export async function createOrganizerPlanForCandidateSource(input: {
       },
     });
   }
+  const mediaType = resolveOrganizerMediaType({
+    candidate: organizerCandidate,
+    sourceRoot: input.sourceRoot,
+    files: videoFiles,
+  });
+  const effectiveCandidate = {
+    ...organizerCandidate,
+    mediaType,
+    episodeNumber: mediaType === "MOVIE" ? 1 : organizerCandidate.episodeNumber,
+    season: mediaType === "MOVIE" ? 1 : organizerCandidate.season,
+  };
 
   const confidence = Math.min(candidate.confidence, planMetadata.score);
+  const mainSourcePath = path.resolve(input.sourceRoot);
+  const sourcePackageRoot = resolveOrganizerSourcePackageRoot({
+    sourceRoot: input.sourceRoot,
+    sourcePaths: files.map((file) => file.sourcePath),
+  });
   const plannedItems = await Promise.all(
-    files.map(async (sourcePath) => {
+    files.map(async (file) => {
+      const sourcePath = file.sourcePath;
       const stat = await fs.stat(sourcePath);
+      const isMainVideo = file.fileType === "video" && path.resolve(sourcePath) === mainSourcePath;
       const identity = resolveOrganizerItemIdentity({
-        candidate: organizerCandidate,
+        candidate: effectiveCandidate,
         sourcePath,
       });
-      const targetPath = buildTargetPath({
-        mediaType: organizerCandidate.mediaType,
-        roots: settings.directories,
-        title:
-          planMetadata.title ||
-          organizerCandidate.group?.displayTitle ||
-          organizerCandidate.parsedTitle,
-        year: planMetadata.year,
-        season: identity.season,
-        episode: identity.episodeNumber,
-        episodeTitle: identity.episodeTitle,
-        group: organizerCandidate.subtitleGroup,
-        resolution: organizerCandidate.resolution,
-        codec: organizerCandidate.codec,
-        sourcePath,
-        titleAliases: [
-          planMetadata.title,
-          organizerCandidate.group?.displayTitle,
-          organizerCandidate.group?.normalizedTitle,
-          organizerCandidate.parsedTitle,
-          organizerCandidate.normalizedTitle,
-          ...groupAliases(organizerCandidate.group?.aliases),
-        ].filter((value): value is string => Boolean(value)),
-      });
+      const title =
+        planMetadata.title ||
+        effectiveCandidate.group?.displayTitle ||
+        effectiveCandidate.parsedTitle;
+      const targetPath = isMainVideo
+        ? buildTargetPath({
+            mediaType: effectiveCandidate.mediaType,
+            roots: settings.directories,
+            title,
+            year: planMetadata.year,
+            season: identity.season,
+            episode: identity.episodeNumber,
+            episodeTitle: identity.episodeTitle,
+            group: effectiveCandidate.subtitleGroup,
+            resolution: effectiveCandidate.resolution,
+            codec: effectiveCandidate.codec,
+            sourcePath,
+            titleAliases: [
+              planMetadata.title,
+              effectiveCandidate.group?.displayTitle,
+              effectiveCandidate.group?.normalizedTitle,
+              effectiveCandidate.parsedTitle,
+              effectiveCandidate.normalizedTitle,
+              ...groupAliases(effectiveCandidate.group?.aliases),
+            ].filter((value): value is string => Boolean(value)),
+          })
+        : buildOrganizerExtraTargetPath({
+            mediaType: effectiveCandidate.mediaType,
+            roots: settings.directories,
+            title,
+            year: planMetadata.year,
+            season: identity.season,
+            sourcePath,
+            sourcePackageRoot,
+          });
       const conflict = await exists(targetPath);
       return {
-        hasPlayableIdentity: identity.episodeNumber !== null,
-        sourceMatchesCandidate: sourcePathMatchesCandidate(sourcePath, candidate),
+        hasPlayableIdentity: isMainVideo ? identity.episodeNumber !== null : true,
+        sourceMatchesCandidate: isMainVideo ? sourcePathMatchesCandidate(sourcePath, candidate) : true,
         item: {
           sourcePath,
           targetPath,
           originalName: path.basename(sourcePath),
-          fileType: "video",
+          fileType: isMainVideo ? "video" : `extra_${file.fileType}`,
           sizeBytes: BigInt(stat.size),
           conflict,
           conflictReason: conflict ? "Target path already exists" : undefined,
@@ -255,7 +335,7 @@ export async function createOrganizerPlanForCandidateSource(input: {
 
   const hasConflict = itemInputs.some((item) => item.conflict);
   const hasPlayableIdentity =
-    organizerCandidate.mediaType === "MOVIE" ||
+    effectiveCandidate.mediaType === "MOVIE" ||
     plannedItems.every((item) => item.hasPlayableIdentity);
   const readyForConfirmation =
     metadataReliable && confidence >= 0.82 && hasPlayableIdentity && !hasConflict;
@@ -278,7 +358,7 @@ export async function createOrganizerPlanForCandidateSource(input: {
     data: {
       downloadId: input.downloadId,
       candidateId: candidate.id,
-      mediaType: organizerCandidate.mediaType,
+      mediaType: effectiveCandidate.mediaType,
       status,
       confidence,
       autoExecutable: readyForAutoExecution,
@@ -705,23 +785,98 @@ export async function reviewOrganizerPlansWithAi(limit = 30) {
   return { inspected: plans.length, reviewed, filteredItems, flagged, skipped };
 }
 
-async function findVideoFiles(sourceRoot: string, allowedRoots: string[]) {
-  const root = assertInsideConfiguredRoots(sourceRoot, allowedRoots);
+function selectedAria2SourcePaths(value: unknown) {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  return value
+    .filter((file): file is { path?: unknown; selected?: unknown } => {
+      return typeof file === "object" && file !== null;
+    })
+    .filter((file) => file.selected !== "false")
+    .map((file) => file.path)
+    .filter((filePath): filePath is string => {
+      return typeof filePath === "string" && filePath.length > 0 && filePath !== "[METADATA]";
+    });
+}
+
+async function findOrganizerFiles(input: {
+  sourceRoot: string;
+  allowedRoots: string[];
+  sourcePaths?: string[];
+}): Promise<OrganizerSourceFile[]> {
+  const root = assertInsideConfiguredRoots(input.sourceRoot, input.allowedRoots);
+  if (input.sourcePaths && input.sourcePaths.length > 0) {
+    const seen = new Set<string>();
+    const files: OrganizerSourceFile[] = [];
+    for (const sourcePath of [input.sourceRoot, ...input.sourcePaths]) {
+      const resolvedPath = assertInsideConfiguredRoots(sourcePath, input.allowedRoots);
+      if (seen.has(resolvedPath)) {
+        continue;
+      }
+      seen.add(resolvedPath);
+      const fileType = classifyOrganizerFile(resolvedPath);
+      if (!fileType) {
+        continue;
+      }
+      files.push({ sourcePath: resolvedPath, fileType });
+    }
+    return sortOrganizerSourceFiles(files, root);
+  }
+
   const stat = await fs.stat(root);
   if (stat.isFile()) {
-    return videoExtensions.has(path.extname(root).toLowerCase()) ? [root] : [];
+    const fileType = classifyOrganizerFile(root);
+    return fileType ? [{ sourcePath: root, fileType }] : [];
   }
-  const results: string[] = [];
+  const results: OrganizerSourceFile[] = [];
   const entries = await fs.readdir(root, { withFileTypes: true });
   for (const entry of entries) {
     const fullPath = path.join(root, entry.name);
     if (entry.isDirectory()) {
-      results.push(...(await findVideoFiles(fullPath, allowedRoots)));
-    } else if (videoExtensions.has(path.extname(entry.name).toLowerCase())) {
-      results.push(fullPath);
+      results.push(
+        ...(await findOrganizerFiles({
+          sourceRoot: fullPath,
+          allowedRoots: input.allowedRoots,
+        })),
+      );
+      continue;
+    }
+    const fileType = classifyOrganizerFile(entry.name);
+    if (fileType) {
+      results.push({ sourcePath: fullPath, fileType });
     }
   }
-  return results;
+  return sortOrganizerSourceFiles(results, root);
+}
+
+function sortOrganizerSourceFiles(files: OrganizerSourceFile[], mainSourcePath: string) {
+  const mainPath = path.resolve(mainSourcePath);
+  return [...files].sort((a, b) => {
+    const aMain = a.fileType === "video" && path.resolve(a.sourcePath) === mainPath;
+    const bMain = b.fileType === "video" && path.resolve(b.sourcePath) === mainPath;
+    if (aMain !== bMain) {
+      return aMain ? -1 : 1;
+    }
+    return a.sourcePath.localeCompare(b.sourcePath);
+  });
+}
+
+export function classifyOrganizerFile(filePath: string): OrganizerFileType | null {
+  const ext = path.extname(filePath).toLowerCase();
+  if (videoExtensions.has(ext)) {
+    return "video";
+  }
+  if (audioExtensions.has(ext)) {
+    return "audio";
+  }
+  if (imageExtensions.has(ext)) {
+    return "image";
+  }
+  if (metadataFileExtensions.has(ext)) {
+    return "metadata";
+  }
+  return null;
 }
 
 function buildOrganizerReviewInput(plan: {
@@ -940,6 +1095,36 @@ export function resolveOrganizerItemIdentity(input: {
   };
 }
 
+export function resolveOrganizerMediaType(input: {
+  candidate: OrganizerCandidateIdentity;
+  sourceRoot: string;
+  files: string[];
+}): MediaType {
+  if (input.candidate.mediaType !== "ANIME") {
+    return input.candidate.mediaType;
+  }
+
+  const sourceText = [
+    input.sourceRoot,
+    ...input.files,
+  ].join(" ");
+  if (!looksTheatricalMoviePackage(sourceText)) {
+    return input.candidate.mediaType;
+  }
+
+  const parsedFiles = input.files.map((file) =>
+    parseMediaReleaseTitle(path.basename(file, path.extname(file)), "ANIME"),
+  );
+  const hasEpisodeNumber = parsedFiles.some((parsed) => parsed.episodeNumber !== undefined);
+  return hasEpisodeNumber ? input.candidate.mediaType : "MOVIE";
+}
+
+function looksTheatricalMoviePackage(value: string) {
+  return /(?:劇場版|剧场版|映画|the\s+movie|\bmovie\b|\bfilm\b|\btheatrical\b|\bbdrip\b|\bbdremux\b|\bblu\s?-?ray\b|\bbluray\b)/i.test(
+    value,
+  );
+}
+
 function buildTargetPath(input: {
   mediaType: MediaType;
   roots: {
@@ -991,6 +1176,88 @@ function buildTargetPath(input: {
     .join(" - ");
   const taggedFilename = [filename, tags].filter(Boolean).join(" ");
   return path.join(root, seriesDir, seasonDir, `${taggedFilename}${ext}`);
+}
+
+export function buildOrganizerExtraTargetPath(input: {
+  mediaType: MediaType;
+  roots: {
+    animeLibraryDir: string;
+    moviesLibraryDir: string;
+    tvLibraryDir: string;
+  };
+  title: string;
+  year?: number;
+  season: number;
+  sourcePath: string;
+  sourcePackageRoot: string;
+}) {
+  const title = sanitizeSegment(input.title);
+  const mediaDir = input.year ? `${title} (${input.year})` : title;
+  const baseDir =
+    input.mediaType === "MOVIE"
+      ? path.join(input.roots.moviesLibraryDir, mediaDir, "Extras")
+      : path.join(
+          input.mediaType === "TV" ? input.roots.tvLibraryDir : input.roots.animeLibraryDir,
+          mediaDir,
+          `Season ${String(input.season).padStart(2, "0")}`,
+          "Extras",
+        );
+  return path.join(baseDir, relativeOrganizerExtraPath(input.sourcePath, input.sourcePackageRoot));
+}
+
+function resolveOrganizerSourcePackageRoot(input: {
+  sourceRoot: string;
+  sourcePaths: string[];
+}) {
+  const sourceRoot = path.resolve(input.sourceRoot);
+  const paths = input.sourcePaths.map((sourcePath) => path.resolve(sourcePath));
+  const parents = paths.map((sourcePath) => path.dirname(sourcePath));
+  const common = commonDirectoryPath(parents);
+  if (!common) {
+    return path.dirname(sourceRoot);
+  }
+  return common === sourceRoot ? path.dirname(sourceRoot) : common;
+}
+
+function relativeOrganizerExtraPath(sourcePath: string, sourcePackageRoot: string) {
+  const resolvedSource = path.resolve(sourcePath);
+  const resolvedRoot = path.resolve(sourcePackageRoot);
+  let relativePath = path.relative(resolvedRoot, resolvedSource);
+  if (!relativePath || relativePath.startsWith("..") || path.isAbsolute(relativePath)) {
+    relativePath = path.basename(resolvedSource);
+  }
+  const segments = relativePath
+    .split(path.sep)
+    .filter(Boolean)
+    .map(sanitizeSegment)
+    .filter(Boolean);
+  if (segments.length > 1 && /^extras?$/i.test(segments[0])) {
+    segments.shift();
+  }
+  return path.join(...(segments.length > 0 ? segments : [sanitizeSegment(path.basename(resolvedSource))]));
+}
+
+function commonDirectoryPath(paths: string[]) {
+  if (paths.length === 0) {
+    return null;
+  }
+  const [first, ...rest] = paths.map((candidatePath) => path.resolve(candidatePath).split(path.sep));
+  const commonSegments = [...first];
+  for (const candidateSegments of rest) {
+    let index = 0;
+    while (
+      index < commonSegments.length &&
+      index < candidateSegments.length &&
+      commonSegments[index] === candidateSegments[index]
+    ) {
+      index += 1;
+    }
+    commonSegments.length = index;
+  }
+  if (commonSegments.length === 0) {
+    return path.parse(paths[0]).root;
+  }
+  return commonSegments.join(path.sep) || path.sep;
 }
 
 export function buildOrganizerEpisodeTitleSegment(input: {
@@ -1046,11 +1313,13 @@ function escapeRegExp(value: string) {
 }
 
 async function upsertMediaRecords(plan: {
+  mediaType: MediaType;
   mediaTitleId: string | null;
   metadata: unknown;
   items: Array<{
     targetPath: string;
     originalName: string;
+    fileType: string;
     sizeBytes: bigint | null;
   }>;
   candidate: {
@@ -1074,7 +1343,7 @@ async function upsertMediaRecords(plan: {
     backdropUrl?: string;
   } | null;
   const candidate = plan.candidate;
-  const mediaType = candidate?.mediaType ?? "ANIME";
+  const mediaType = plan.mediaType ?? candidate?.mediaType ?? "ANIME";
   const title = cleanMediaTitle(
     metadata?.title || candidate?.group?.displayTitle || candidate?.parsedTitle || "Unknown",
   );
@@ -1145,6 +1414,36 @@ async function upsertMediaRecords(plan: {
     },
   });
   for (const item of plan.items) {
+    if (isOrganizerExtraItem(item)) {
+      const existing = await prisma.mediaFile.findFirst({
+        where: { absolutePath: item.targetPath },
+        select: { id: true },
+      });
+      const data = {
+        episodeId: null,
+        relativePath: item.targetPath,
+        absolutePath: item.targetPath,
+        originalName: item.originalName,
+        sizeBytes: item.sizeBytes,
+        videoCodec: item.fileType === "extra_video" ? candidate?.codec : null,
+        audioCodec: null,
+        resolution: null,
+        sourceResolution: null,
+        playbackMode: null,
+        transcodeStatus: "NOT_REQUIRED" as const,
+        subtitleGroup: candidate?.subtitleGroup,
+      };
+      if (existing) {
+        await prisma.mediaFile.update({
+          where: { id: existing.id },
+          data,
+        });
+        continue;
+      }
+      await prisma.mediaFile.create({ data });
+      continue;
+    }
+
     const targetIdentity = parseTargetPathEpisodeIdentity(item.targetPath);
     const identity =
       targetIdentity && candidate
@@ -1211,6 +1510,13 @@ async function upsertMediaRecords(plan: {
     });
   }
   return media;
+}
+
+function isOrganizerExtraItem(item: { targetPath: string; fileType?: string | null }) {
+  if (item.fileType?.startsWith("extra_")) {
+    return true;
+  }
+  return item.targetPath.split(path.sep).some((segment) => segment.toLowerCase() === "extras");
 }
 
 function cleanMediaTitle(value: string) {
