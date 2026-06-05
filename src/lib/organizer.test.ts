@@ -2,7 +2,9 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { prisma } from "@/lib/db";
 import {
   assessOrganizerPlanAutomation,
+  buildOrganizerExtraTargetPath,
   buildOrganizerEpisodeTitleSegment,
+  classifyOrganizerFile,
   hasBlockingOrganizerPlan,
   isAutoExecutableOrganizerPlan,
   organizerTargetPathLooksPolluted,
@@ -151,6 +153,54 @@ describe("resolveOrganizerMediaType", () => {
         },
       }),
     ).toBe("ANIME");
+  });
+});
+
+describe("classifyOrganizerFile", () => {
+  it("classifies playable videos and common extra assets", () => {
+    expect(classifyOrganizerFile("/downloads/movie.mkv")).toBe("video");
+    expect(classifyOrganizerFile("/downloads/Extra/OP.flac")).toBe("audio");
+    expect(classifyOrganizerFile("/downloads/Extra/Scans/booklet.avif")).toBe("image");
+    expect(classifyOrganizerFile("/downloads/Extra/CD1/soundtrack.cue")).toBe("metadata");
+    expect(classifyOrganizerFile("/downloads/Extra/README.md")).toBeNull();
+  });
+});
+
+describe("buildOrganizerExtraTargetPath", () => {
+  it("places movie package extras under the movie Extras directory", () => {
+    expect(
+      buildOrganizerExtraTargetPath({
+        mediaType: "MOVIE",
+        roots: {
+          animeLibraryDir: "/data/library/anime",
+          moviesLibraryDir: "/data/library/movies",
+          tvLibraryDir: "/data/library/tv",
+        },
+        title: "佐贺偶像是传奇 梦想银河乐园",
+        season: 1,
+        sourcePackageRoot:
+          "/data/downloads/[H-Enc] Zombie Land Saga Yumeginga Paradise (BDRip 1080p HEVC FLAC)",
+        sourcePath:
+          "/data/downloads/[H-Enc] Zombie Land Saga Yumeginga Paradise (BDRip 1080p HEVC FLAC)/Extra/CD1/01. 空飛ぶ首.flac",
+      }),
+    ).toBe("/data/library/movies/佐贺偶像是传奇 梦想银河乐园/Extras/CD1/01. 空飛ぶ首.flac");
+  });
+
+  it("preserves scan subdirectories without duplicating the Extra segment", () => {
+    expect(
+      buildOrganizerExtraTargetPath({
+        mediaType: "MOVIE",
+        roots: {
+          animeLibraryDir: "/data/library/anime",
+          moviesLibraryDir: "/data/library/movies",
+          tvLibraryDir: "/data/library/tv",
+        },
+        title: "Zombie Land Saga Yumeginga Paradise",
+        season: 1,
+        sourcePackageRoot: "/data/downloads/ZLS",
+        sourcePath: "/data/downloads/ZLS/Extra/Scans/Booklet 01.avif",
+      }),
+    ).toBe("/data/library/movies/Zombie Land Saga Yumeginga Paradise/Extras/Scans/Booklet 01.avif");
   });
 });
 
