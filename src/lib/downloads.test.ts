@@ -104,6 +104,12 @@ describe("aria2 download helpers", () => {
         "File /data/downloads/episode.mkv exists, but a control file(*.aria2) does not exist.",
       ),
     ).toBe(true);
-    expect(isRecoverableDownloadError("Failed to make the directory /data/downloads")).toBe(false);
+    expect(
+      isRecoverableDownloadError(
+        "Failed to make the directory /data/downloads, cause: Permission denied",
+      ),
+    ).toBe(true);
+    expect(isRecoverableDownloadError("Reached max-file-not-found count=10")).toBe(true);
+    expect(isRecoverableDownloadError("")).toBe(true);
   });
 });

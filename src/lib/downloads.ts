@@ -116,6 +116,9 @@ export async function syncAria2Downloads() {
         { status: "FAILED", errorMessage: { contains: "InfoHash" } },
         { status: "FAILED", errorMessage: { contains: "already registered" } },
         { status: "FAILED", errorMessage: { contains: "control file" } },
+        { status: "FAILED", errorMessage: { contains: "Permission denied" } },
+        { status: "FAILED", errorMessage: { contains: "file-not-found" } },
+        { status: "FAILED", errorMessage: "" },
       ],
     },
   });
@@ -497,10 +500,13 @@ function inferDownloadReason(
 export function isRecoverableDownloadError(value: string | null | undefined) {
   const message = value ?? "";
   return (
+    message.length === 0 ||
     message.startsWith("aria2 task is not available") ||
     /InfoHash\s+[a-z0-9]{32,40}\s+is already registered/i.test(message) ||
     /already registered/i.test(message) ||
-    /control file\(\*\.aria2\) does not exist/i.test(message)
+    /control file\(\*\.aria2\) does not exist/i.test(message) ||
+    /Permission denied/i.test(message) ||
+    /max-file-not-found/i.test(message)
   );
 }
 
@@ -577,13 +583,16 @@ function bigintString(value: bigint | number | string | null | undefined) {
 
 export async function controlAria2Download(
   downloadId: string,
-  action: "pause" | "resume" | "remove" | "sync",
+  action: "pause" | "resume" | "remove" | "sync" | "retry",
 ) {
   const download = await prisma.download.findUniqueOrThrow({
     where: { id: downloadId },
   });
   if (action === "sync") {
     return syncSingleAria2Download(downloadId);
+  }
+  if (action === "retry") {
+    return retryFailedDownload(downloadId);
   }
   if (!download.aria2Gid) {
     throw new Error("Download has no aria2 gid.");
@@ -625,6 +634,67 @@ export async function controlAria2Download(
       },
     });
   }
+}
+
+export async function retryFailedDownload(downloadId: string) {
+  const download = await prisma.download.findUniqueOrThrow({
+    where: { id: downloadId },
+  });
+  if (download.status !== "FAILED") {
+    throw new Error("Only failed downloads can be retried.");
+  }
+  if (!download.sourceUrl) {
+    throw new Error("Download has no source URL to retry.");
+  }
+
+  const settings = await getAppSettings();
+  if (download.aria2Gid) {
+    await removeAria2Download(download.aria2Gid)
+      .catch(async () => removeAria2DownloadResult(download.aria2Gid as string))
+      .catch(() => null);
+  }
+
+  const gid = await addSourceUrlToAria2(download.sourceUrl, settings.directories.downloadsDir);
+  const tracked = await findTrackedDownloadForAria2Gid(download.id, gid);
+  if (tracked) {
+    const syncedTracked = await syncSingleAria2Download(tracked.id).catch(() => tracked);
+    return syncFromTrackedDuplicate(download, syncedTracked);
+  }
+
+  await prisma.download.update({
+    where: { id: download.id },
+    data: {
+      aria2Gid: gid,
+      status: "WAITING",
+      progress: 0,
+      totalBytes: BigInt(0),
+      completedBytes: BigInt(0),
+      downloadSpeed: BigInt(0),
+      etaSeconds: null,
+      downloadDir: settings.directories.downloadsDir,
+      aria2Files: Prisma.DbNull,
+      errorMessage: null,
+      archiveStatus: null,
+      lastSyncedAt: new Date(),
+    },
+  });
+  if (download.candidateId) {
+    await prisma.releaseCandidate.update({
+      where: { id: download.candidateId },
+      data: { status: "SUBSCRIBED" },
+    });
+  }
+  return syncSingleAria2Download(download.id);
+}
+
+async function addSourceUrlToAria2(sourceUrl: string, downloadDir: string) {
+  if (sourceUrl.startsWith("magnet:")) {
+    return addMagnetToAria2(sourceUrl, downloadDir);
+  }
+  if (/^https?:\/\//i.test(sourceUrl)) {
+    return addTorrentUrlToAria2(sourceUrl, downloadDir);
+  }
+  return addTorrentToAria2(sourceUrl, downloadDir);
 }
 
 export function selectTargetPath(

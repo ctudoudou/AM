@@ -71,6 +71,7 @@ type Aria2Overview =
 
 type Messages = ReturnType<typeof getMessages>;
 type DownloadReason = NonNullable<DownloadRecord["aria2Diagnostics"]>["reason"];
+type DownloadAction = "pause" | "resume" | "remove" | "sync" | "retry";
 
 export function DownloadsClient({ locale }: { locale: Locale }) {
   const t = getMessages(locale);
@@ -145,7 +146,7 @@ export function DownloadsClient({ locale }: { locale: Locale }) {
     }
   }
 
-  async function runDownloadAction(download: DownloadRecord, action: "pause" | "resume" | "remove" | "sync") {
+  async function runDownloadAction(download: DownloadRecord, action: DownloadAction) {
     setError("");
     setMessage("");
     setPendingAction(`${download.id}:${action}`);
@@ -283,6 +284,16 @@ export function DownloadsClient({ locale }: { locale: Locale }) {
                     {pendingAction === `${download.id}:pause` ? <Loader2 size={13} /> : <Pause size={13} />}
                   </button>
                 ) : null}
+                {download.status === "FAILED" ? (
+                  <button
+                    aria-label={t.retryDownload}
+                    disabled={pendingAction === `${download.id}:retry`}
+                    onClick={() => void runDownloadAction(download, "retry")}
+                    type="button"
+                  >
+                    {pendingAction === `${download.id}:retry` ? <Loader2 size={13} /> : <RefreshCw size={13} />}
+                  </button>
+                ) : null}
                 {!["COMPLETED"].includes(download.status) ? (
                   <button
                     aria-label={t.removeDownload}
@@ -366,12 +377,13 @@ function formatSyncResult(result: { synced?: number; failed?: number } | null | 
   return `${t.downloadsSyncDone}: ${result.synced ?? 0}`;
 }
 
-function formatActionResult(action: "pause" | "resume" | "remove" | "sync", status: string | undefined, t: Messages) {
+function formatActionResult(action: DownloadAction, status: string | undefined, t: Messages) {
   const label = {
     pause: t.pauseDownload,
     resume: t.resumeDownload,
     remove: t.removeDownload,
     sync: t.syncTask,
+    retry: t.retryDownload,
   }[action];
   return status ? `${label}: ${status}` : t.downloadActionDone;
 }

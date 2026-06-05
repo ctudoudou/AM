@@ -174,6 +174,7 @@ export const zhHans = {
   pauseDownload: "暂停下载",
   resumeDownload: "继续下载",
   removeDownload: "移除下载",
+  retryDownload: "重试下载",
   syncTask: "同步任务",
   aria2StatusError: "aria2 状态异常",
   aria2Error: "aria2 错误",

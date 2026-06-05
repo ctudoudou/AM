@@ -174,6 +174,7 @@ export const en = {
   pauseDownload: "Pause download",
   resumeDownload: "Resume download",
   removeDownload: "Remove download",
+  retryDownload: "Retry download",
   syncTask: "Sync task",
   aria2StatusError: "aria2 status error",
   aria2Error: "aria2 error",
