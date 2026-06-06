@@ -176,6 +176,7 @@ type BackfillProvider = {
 
 - 先按 identity 过滤：title、targetSeason、targetEpisode/range。
 - 再按 release profile 排序：字幕组、字幕语言、分辨率、codec、source、seeders、发布时间。
+- 对安全候选做有限额度的 aria2 临时可用性探测：magnet 优先解析 metadata，torrent URL 做短时低速 probe，探测后清理 aria2 任务；探测结果只作为排序和提示信号，不替代下载完成后的 organizer 安全检查。
 - 单集 strong 候选可一键下载。
 - 多个 strong 或存在 batch/absolute/cour/part 归一化时，必须进入 review。
 - 支持“选中这些 episode 的最佳候选并批量 enqueue”，但每个 episode 要独立记录选择结果。

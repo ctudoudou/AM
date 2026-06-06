@@ -8,6 +8,8 @@ export type Aria2Status = {
   totalLength?: string;
   completedLength?: string;
   downloadSpeed?: string;
+  connections?: string;
+  numSeeders?: string;
   errorMessage?: string;
   followedBy?: string[];
   following?: string;
@@ -31,6 +33,8 @@ const statusKeys = [
   "totalLength",
   "completedLength",
   "downloadSpeed",
+  "connections",
+  "numSeeders",
   "errorMessage",
   "followedBy",
   "following",
@@ -65,26 +69,41 @@ export async function aria2Request<T>(method: string, params: unknown[] = []) {
   return payload.result as T;
 }
 
-function buildDownloadOptions(dir?: string) {
+export type Aria2DownloadOptions = Record<string, string | number | boolean>;
+
+function buildDownloadOptions(dir?: string, options: Aria2DownloadOptions = {}) {
   return {
     ...(dir ? { dir } : {}),
     continue: "true",
     "check-integrity": "true",
     "allow-overwrite": "false",
     "auto-file-renaming": "true",
+    ...options,
   };
 }
 
-export async function addMagnetToAria2(magnetUrl: string, dir?: string) {
-  return aria2Request<string>("addUri", [[magnetUrl], buildDownloadOptions(dir)]);
+export async function addMagnetToAria2(
+  magnetUrl: string,
+  dir?: string,
+  options: Aria2DownloadOptions = {},
+) {
+  return aria2Request<string>("addUri", [[magnetUrl], buildDownloadOptions(dir, options)]);
 }
 
-export async function addTorrentToAria2(torrentFilePath: string, dir?: string) {
+export async function addTorrentToAria2(
+  torrentFilePath: string,
+  dir?: string,
+  options: Aria2DownloadOptions = {},
+) {
   const torrent = await fs.readFile(torrentFilePath);
-  return addTorrentBytesToAria2(torrent, dir);
+  return addTorrentBytesToAria2(torrent, dir, options);
 }
 
-export async function addTorrentUrlToAria2(torrentUrl: string, dir?: string) {
+export async function addTorrentUrlToAria2(
+  torrentUrl: string,
+  dir?: string,
+  options: Aria2DownloadOptions = {},
+) {
   const response = await fetch(torrentUrl, {
     headers: { "User-Agent": "Kura/0.1 aria2 torrent fetcher" },
   });
@@ -92,14 +111,18 @@ export async function addTorrentUrlToAria2(torrentUrl: string, dir?: string) {
     throw new Error(`Torrent fetch failed: ${response.status} ${response.statusText}`);
   }
   const torrent = Buffer.from(await response.arrayBuffer());
-  return addTorrentBytesToAria2(torrent, dir);
+  return addTorrentBytesToAria2(torrent, dir, options);
 }
 
-function addTorrentBytesToAria2(torrent: Buffer, dir?: string) {
+export function addTorrentBytesToAria2(
+  torrent: Buffer,
+  dir?: string,
+  options: Aria2DownloadOptions = {},
+) {
   return aria2Request<string>("addTorrent", [
     torrent.toString("base64"),
     [],
-    buildDownloadOptions(dir),
+    buildDownloadOptions(dir, options),
   ]);
 }
 

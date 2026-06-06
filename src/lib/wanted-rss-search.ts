@@ -7,6 +7,7 @@ import { normalizeTitleAliases } from "@/lib/anime-parser";
 import { normalizeParsedReleaseEpisode } from "@/lib/episode-normalizer";
 import { parseMediaReleaseTitle } from "@/lib/media-parser";
 import { enqueueCandidateDownload } from "@/lib/downloads";
+import { attachTorrentAvailability, type TorrentAvailability } from "@/lib/torrent-availability";
 
 type WantedWithMedia = WantedEpisode & {
   mediaTitle: MediaTitle & {
@@ -37,6 +38,7 @@ export type WantedSearchResult = {
   publishedAt: string | null;
   seeders: number | null;
   size: string | null;
+  availability?: TorrentAvailability;
   match: "strong" | "related";
   reason: string;
   parsed: {
@@ -75,7 +77,10 @@ const wantedSeasonTitlePattern =
 const toSimplifiedChinese = OpenCC.Converter({ from: "tw", to: "cn" });
 const toTraditionalChinese = OpenCC.Converter({ from: "cn", to: "tw" });
 
-export async function searchWantedEpisodeSources(wantedEpisodeId: string) {
+export async function searchWantedEpisodeSources(
+  wantedEpisodeId: string,
+  options: { probeAvailability?: boolean } = {},
+) {
   const wanted = await loadWanted(wantedEpisodeId);
   const queries = buildWantedEpisodeSearchQueries(wanted);
   const mediaAliasSet = mediaAliases(wanted.mediaTitle);
@@ -143,7 +148,12 @@ export async function searchWantedEpisodeSources(wantedEpisodeId: string) {
   return {
     wantedEpisodeId,
     queries,
-    results: sortSearchResults(results).slice(0, 30),
+    results: options.probeAvailability === false
+      ? sortSearchResults(results).slice(0, 30)
+      : await attachTorrentAvailability(sortSearchResults(results).slice(0, 30), {
+          probeLimit: 5,
+          shouldProbe: (result) => result.match === "strong",
+        }),
     sourceErrors: sourceErrors.slice(0, 12),
   };
 }
@@ -455,7 +465,8 @@ function sortSearchResults(results: WantedSearchResult[]) {
 }
 
 function scoreMatch(result: WantedSearchResult) {
-  return result.match === "strong" ? 10 : 1;
+  const seederScore = result.seeders === null ? 0 : Math.min(result.seeders, 200) / 100;
+  return (result.match === "strong" ? 10 : 1) + seederScore;
 }
 
 async function upsertWantedCandidateGroup(wanted: WantedWithMedia, parsed: ReturnType<typeof parseMediaReleaseTitle>) {
