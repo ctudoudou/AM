@@ -103,7 +103,7 @@ export function MediaLibraryClient({
   return (
     <div className="library-workspace">
       <div className="library-toolbar">
-        <label>
+        <label className="library-search-field">
           <Search size={14} />
           <input
             onChange={(event) => setQuery(event.target.value)}
