@@ -655,7 +655,7 @@ function prioritizeGenericMetadataQueryValues(values: Array<string | null | unde
       if (parsedTitle && parsedTitle !== text && !isNoisyGenericMetadataQuery(parsedTitle)) {
         seeds.push({
           value: parsedTitle,
-          score: scoreMetadataQueryValue(parsedTitle, false) + 12,
+          score: scoreMetadataQueryValue(parsedTitle, false) + metadataQueryPositionBonus(index) + 12,
           index,
         });
       }
@@ -665,7 +665,7 @@ function prioritizeGenericMetadataQueryValues(values: Array<string | null | unde
     }
     seeds.push({
       value: text,
-      score: scoreMetadataQueryValue(text, releaseLike),
+      score: scoreMetadataQueryValue(text, releaseLike) + metadataQueryPositionBonus(index),
       index,
     });
   });
@@ -692,6 +692,19 @@ function addPossessiveEnglishVariants(queries: string[], value: string) {
   addQuery(queries, value.replace(/\bKing's\b/g, "Kings"));
 }
 
+function metadataQueryPositionBonus(index: number) {
+  if (index === 0) {
+    return 160;
+  }
+  if (index === 1) {
+    return 80;
+  }
+  if (index < 5) {
+    return 20;
+  }
+  return 0;
+}
+
 function isNoisyGenericMetadataQuery(value: string) {
   const clean = cleanSearchTitle(value)
     .replace(/\b(?:flac|wav|mp3|m4a|aac|cue|log|nfo|txt|m3u8?|jpg|jpeg|png|webp|avif)\b$/i, " ")
@@ -700,7 +713,13 @@ function isNoisyGenericMetadataQuery(value: string) {
   if (!clean || /^[\d\s._-]+$/.test(clean)) {
     return true;
   }
+  if (/^(?:unknown|untitled)$/i.test(clean)) {
+    return true;
+  }
   if (/^\d{1,4}\s*(?:avif|png|jpe?g|webp|flac|cue|log|mkv)?$/i.test(clean)) {
+    return true;
+  }
+  if (/^\d{1,3}\.?\s+/.test(clean) && /[\u3040-\u30ff\u3400-\u9fff]/.test(clean)) {
     return true;
   }
   if (/\.(?:flac|wav|mp3|m4a|aac|cue|log|nfo|txt|m3u8?|jpg|jpeg|png|webp|avif)$/i.test(value)) {

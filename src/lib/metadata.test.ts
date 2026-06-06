@@ -91,6 +91,10 @@ describe("buildGenericMetadataQueries", () => {
       "24",
       "25.avif",
       "25 avif",
+      "01 空飛ぶ首",
+      "01. 空飛ぶ首",
+      "05 光の中に立つ影",
+      "05. 光の中に立つ影",
       "Menu 1-1.mkv",
       "thumbnail.jpg",
       "Zombie Land Saga Yumeginga Paradise - OP.flac",
@@ -101,9 +105,12 @@ describe("buildGenericMetadataQueries", () => {
 
     expect(queries).toContain("佐贺偶像是传奇 梦想银河乐园");
     expect(queries).toContain("Zombie Land Saga Yumeginga Paradise");
-    expect(queries.some((query) => /(?:avif|thumbnail|menu|soundtrack|OP|^\d+$)/i.test(query))).toBe(
-      false,
-    );
+    expect(queries[0]).toBe("佐贺偶像是传奇 梦想银河乐园");
+    expect(
+      queries.some((query) =>
+        /(?:avif|thumbnail|menu|soundtrack|OP|^\d+$|^\d{1,3}\.?\s+)/i.test(query),
+      ),
+    ).toBe(false);
   });
 });
 
