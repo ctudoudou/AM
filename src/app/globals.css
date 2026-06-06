@@ -2396,6 +2396,7 @@ a {
   line-height: 18px;
 }
 
+.history-backfill-panel button,
 .missing-episodes-panel .episode-browser-heading button,
 .missing-episode-actions button {
   display: inline-flex;
@@ -2413,6 +2414,7 @@ a {
   cursor: pointer;
 }
 
+.history-backfill-panel button:disabled,
 .missing-episodes-panel button:disabled,
 .missing-episode-actions button:disabled {
   cursor: wait;
