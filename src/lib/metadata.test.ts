@@ -83,6 +83,7 @@ describe("buildGenericMetadataQueries", () => {
     expect(queries).toContain("与王生活的男人 The Kings Warden");
     expect(queries).toContain("与王生活的男人 The King's Warden");
     expect(queries.some((query) => /\bmkv\b/i.test(query))).toBe(false);
+    expect(queries.some((query) => /(?:^|\s)[._]+(?:\s|$)/.test(query))).toBe(false);
   });
 
   it("keeps movie title aliases ahead of extra package noise", () => {

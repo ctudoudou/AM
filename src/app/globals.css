@@ -2396,6 +2396,7 @@ a {
   line-height: 18px;
 }
 
+.history-backfill-panel button,
 .missing-episodes-panel .episode-browser-heading button,
 .missing-episode-actions button {
   display: inline-flex;
@@ -2413,6 +2414,7 @@ a {
   cursor: pointer;
 }
 
+.history-backfill-panel button:disabled,
 .missing-episodes-panel button:disabled,
 .missing-episode-actions button:disabled {
   cursor: wait;
@@ -3152,7 +3154,7 @@ a {
 
 .watch-episode-list a,
 .watch-version-list a,
-.watch-subtitle-list div {
+.watch-subtitle-list > div {
   display: grid;
   min-width: 0;
   grid-template-columns: auto minmax(0, 1fr) auto;
@@ -3170,11 +3172,11 @@ a {
   grid-template-columns: minmax(0, 1fr);
 }
 
-.watch-subtitle-list div {
-  grid-template-columns: auto minmax(0, 1fr);
+.watch-subtitle-list > div {
+  grid-template-columns: auto minmax(0, 1fr) auto;
 }
 
-.watch-subtitle-list div.muted {
+.watch-subtitle-list > div.muted {
   opacity: 0.58;
 }
 
@@ -3221,6 +3223,20 @@ a {
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
+}
+
+.watch-subtitle-translate-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  justify-content: flex-end;
+}
+
+.watch-subtitle-translate-actions button {
+  min-height: 28px;
+  padding: 5px 8px;
+  font-size: 11px;
+  line-height: 14px;
 }
 
 .watch-muted {

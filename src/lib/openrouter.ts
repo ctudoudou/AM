@@ -23,6 +23,15 @@ const organizerReviewSchema = z.object({
   rejectedSourcePaths: z.array(z.string()).default([]),
 });
 
+const subtitleTranslationSchema = z.object({
+  cues: z.array(
+    z.object({
+      index: z.number().int().nonnegative(),
+      text: z.string(),
+    }),
+  ),
+});
+
 export type AiCandidateInput = {
   id: string;
   rawTitle: string;
@@ -53,6 +62,13 @@ export type OrganizerReviewInput = {
 };
 
 export type OrganizerAiReview = z.infer<typeof organizerReviewSchema>;
+
+export type SubtitleTranslationTarget = "zh-Hans" | "zh-Hant";
+
+export type SubtitleTranslationCue = {
+  index: number;
+  text: string;
+};
 
 export async function groupCandidatesWithOpenRouter(candidates: AiCandidateInput[]) {
   const settings = await getAppSettings();
@@ -165,6 +181,64 @@ export async function reviewOrganizerPlanWithOpenRouter(
   } catch {
     return null;
   }
+}
+
+export async function translateSubtitleCuesWithOpenRouter(input: {
+  targetLanguage: SubtitleTranslationTarget;
+  cues: SubtitleTranslationCue[];
+  context?: {
+    title?: string | null;
+    sourceLanguage?: string | null;
+  };
+}) {
+  const settings = await getAppSettings();
+
+  if (!settings.ai.openRouterApiKey) {
+    throw new Error("OpenRouter API key is not configured.");
+  }
+
+  const targetLanguageLabel = input.targetLanguage === "zh-Hant" ? "Traditional Chinese" : "Simplified Chinese";
+  const response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
+    method: "POST",
+    signal: AbortSignal.timeout(60_000),
+    headers: {
+      Authorization: `Bearer ${settings.ai.openRouterApiKey}`,
+      "Content-Type": "application/json",
+      "HTTP-Referer": "http://localhost:3000",
+      "X-Title": "Kura",
+    },
+    body: JSON.stringify({
+      model: settings.ai.model || "glm5.1",
+      messages: [
+        {
+          role: "system",
+          content:
+            `You translate anime subtitles into ${targetLanguageLabel}. ` +
+            "Return strict JSON only: {\"cues\":[{\"index\":0,\"text\":\"\"}]}. " +
+            "Preserve cue count and index values exactly. Translate only dialogue text. " +
+            "Preserve line breaks when useful, do not include timestamps, markdown, or explanations.",
+        },
+        {
+          role: "user",
+          content: JSON.stringify({
+            targetLanguage: input.targetLanguage,
+            sourceLanguage: input.context?.sourceLanguage ?? null,
+            title: input.context?.title ?? null,
+            cues: input.cues,
+          }),
+        },
+      ],
+    }),
+  });
+
+  if (!response.ok) {
+    throw new Error(`OpenRouter subtitle translation failed: ${response.status}`);
+  }
+
+  const payload = await response.json();
+  const content = payload?.choices?.[0]?.message?.content;
+  const json = typeof content === "string" ? parseJsonObject(content) : content;
+  return subtitleTranslationSchema.parse(json).cues;
 }
 
 function heuristicGroups(

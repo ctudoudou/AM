@@ -103,7 +103,7 @@ export function MediaLibraryClient({
   return (
     <div className="library-workspace">
       <div className="library-toolbar">
-        <label>
+        <label className="library-search-field">
           <Search size={14} />
           <input
             onChange={(event) => setQuery(event.target.value)}
@@ -155,7 +155,7 @@ export function MediaLibraryClient({
                 </p>
                 {title.synopsis ? <small>{title.synopsis}</small> : null}
                 {title.nextEpisode?.mediaFileId ? (
-                  <a href={`/${locale}/watch/${title.nextEpisode.id}`}>
+                  <a className="anime-play-link" href={`/${locale}/watch/${title.nextEpisode.id}`}>
                     <Play size={14} />
                     {t.playNow}
                   </a>

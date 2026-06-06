@@ -1,11 +1,19 @@
 import { createReadStream } from "node:fs";
 import fs from "node:fs/promises";
 import path from "node:path";
+import { execFile } from "node:child_process";
 import { Readable } from "node:stream";
+import { promisify } from "node:util";
+import type { SubtitleTrack } from "@prisma/client";
 import { prisma } from "@/lib/db";
 import { parseMediaReleaseTitle } from "@/lib/media-parser";
+import {
+  translateSubtitleCuesWithOpenRouter,
+  type SubtitleTranslationTarget,
+} from "@/lib/openrouter";
 import { getAppSettings } from "@/lib/settings";
 
+const execFileAsync = promisify(execFile);
 const subtitleExtensions = new Set([".vtt", ".srt", ".ass", ".ssa"]);
 const playableSubtitleFormats = new Set(["vtt", "srt", "ass", "ssa"]);
 const subtitleContentTypes = new Map([
@@ -14,6 +22,7 @@ const subtitleContentTypes = new Map([
   ["ass", "text/plain; charset=utf-8"],
   ["ssa", "text/plain; charset=utf-8"],
 ]);
+const subtitleTranslationBatchSize = 40;
 
 export type SubtitleTrackDescriptor = {
   id: string;
@@ -25,6 +34,20 @@ export type SubtitleTrackDescriptor = {
   isDefault: boolean;
   canPlay: boolean;
   url: string;
+};
+
+export type EmbeddedSubtitleStream = {
+  index: number;
+  codec_name?: string;
+  codec_type?: string;
+  tags?: {
+    language?: string;
+    title?: string;
+  };
+};
+
+type EmbeddedSubtitleProbe = {
+  streams?: EmbeddedSubtitleStream[];
 };
 
 export async function listSubtitleTracks(mediaFileId: string) {
@@ -44,7 +67,7 @@ export async function discoverSubtitleTracks(mediaFileId: string) {
   const mediaPath = assertInsideRoots(file.absolutePath, allowedSubtitleRoots(settings.directories));
   const dir = path.dirname(mediaPath);
   const entries = await fs.readdir(dir, { withFileTypes: true }).catch(() => []);
-  const discovered = [];
+  const discovered: SubtitleTrack[] = [];
 
   for (const entry of entries) {
     if (!entry.isFile()) {
@@ -89,11 +112,86 @@ export async function discoverSubtitleTracks(mediaFileId: string) {
     });
     discovered.push(track);
   }
+  discovered.push(...(await discoverEmbeddedSubtitleTracks({
+    mediaFileId,
+    episodeId: file.episodeId,
+    mediaPath,
+    metadataRoot: settings.directories.metadataDir,
+  })));
 
   return {
     discovered: discovered.length,
     tracks: await listSubtitleTracks(mediaFileId),
   };
+}
+
+async function discoverEmbeddedSubtitleTracks(input: {
+  mediaFileId: string;
+  episodeId: string | null;
+  mediaPath: string;
+  metadataRoot: string;
+}) {
+  const streams = await probeEmbeddedSubtitleStreams(input.mediaPath).catch(() => []);
+  if (streams.length === 0) {
+    return [];
+  }
+  const outputDir = assertInsideRoots(
+    path.join(input.metadataRoot, "subtitles", input.mediaFileId),
+    [path.resolve(input.metadataRoot)],
+  );
+  await fs.mkdir(outputDir, { recursive: true });
+  const discovered: SubtitleTrack[] = [];
+
+  for (const stream of streams) {
+    const format = embeddedSubtitleOutputFormatForCodec(stream.codec_name);
+    if (!format) {
+      continue;
+    }
+    const language = inferEmbeddedSubtitleLanguage(stream);
+    const label = buildEmbeddedSubtitleLabel(stream, language, format);
+    const sourcePath = assertInsideRoots(
+      path.join(outputDir, `embedded-${stream.index}.${format}`),
+      [path.resolve(input.metadataRoot)],
+    );
+    const extracted = await extractEmbeddedSubtitleStream({
+      mediaPath: input.mediaPath,
+      streamIndex: stream.index,
+      outputPath: sourcePath,
+    });
+    if (!extracted) {
+      continue;
+    }
+    const track = await prisma.subtitleTrack.upsert({
+      where: {
+        mediaFileId_sourcePath: {
+          mediaFileId: input.mediaFileId,
+          sourcePath,
+        },
+      },
+      create: {
+        mediaFileId: input.mediaFileId,
+        episodeId: input.episodeId,
+        label,
+        language,
+        format,
+        kind: "EMBEDDED",
+        sourcePath,
+        sourceName: stream.tags?.title ?? `Stream ${stream.index}`,
+        isDefault: discovered.length === 0,
+      },
+      update: {
+        episodeId: input.episodeId,
+        label,
+        language,
+        format,
+        kind: "EMBEDDED",
+        sourceName: stream.tags?.title ?? `Stream ${stream.index}`,
+      },
+    });
+    discovered.push(track);
+  }
+
+  return discovered;
 }
 
 export async function createSubtitleTrackResponse(subtitleTrackId: string) {
@@ -118,6 +216,111 @@ export async function createSubtitleTrackResponse(subtitleTrackId: string) {
       "Content-Type": contentType,
     },
   });
+}
+
+export async function translateSubtitleTrack(
+  subtitleTrackId: string,
+  targetLanguage: SubtitleTranslationTarget,
+) {
+  const settings = await getAppSettings();
+  const track = await prisma.subtitleTrack.findUniqueOrThrow({
+    where: { id: subtitleTrackId },
+    include: {
+      mediaFile: {
+        include: {
+          episode: {
+            include: { season: { include: { media: true } } },
+          },
+        },
+      },
+    },
+  });
+  if (!track.mediaFileId || !track.sourcePath) {
+    throw new Error("Subtitle track has no local source file.");
+  }
+  if (track.format.toLowerCase() !== "vtt") {
+    throw new Error("Subtitle translation currently requires a WebVTT subtitle track.");
+  }
+  if (track.language === targetLanguage || track.language === "zh") {
+    throw new Error("Selected subtitle track is already Chinese.");
+  }
+
+  const sourcePath = assertInsideRoots(track.sourcePath, allowedSubtitleRoots(settings.directories));
+  const source = await fs.readFile(sourcePath, "utf8");
+  const parsed = parseWebVtt(source);
+  const translatableCues = parsed.cues
+    .map((cue, index) => ({ index, text: cue.text.trim() }))
+    .filter((cue) => cue.text.length > 0);
+  if (translatableCues.length === 0) {
+    throw new Error("Subtitle track has no translatable cues.");
+  }
+
+  const translated = new Map<number, string>();
+  for (let offset = 0; offset < translatableCues.length; offset += subtitleTranslationBatchSize) {
+    const batch = translatableCues.slice(offset, offset + subtitleTranslationBatchSize);
+    const translatedBatch = await translateSubtitleCuesWithOpenRouter({
+      targetLanguage,
+      cues: batch,
+      context: {
+        title: track.mediaFile?.episode?.season.media.primaryTitle ?? null,
+        sourceLanguage: track.language,
+      },
+    });
+    validateTranslatedCueBatch(batch, translatedBatch);
+    for (const cue of translatedBatch) {
+      translated.set(cue.index, cue.text.trim());
+    }
+  }
+
+  const output = formatWebVtt({
+    cues: parsed.cues.map((cue, index) => ({
+      ...cue,
+      text: translated.get(index) ?? cue.text,
+    })),
+  });
+  const outputDir = assertInsideRoots(
+    path.join(settings.directories.metadataDir, "subtitles", track.mediaFileId),
+    [path.resolve(settings.directories.metadataDir)],
+  );
+  await fs.mkdir(outputDir, { recursive: true });
+  const outputPath = assertInsideRoots(
+    path.join(outputDir, `translated-${targetLanguage}-from-${track.id}.vtt`),
+    [path.resolve(settings.directories.metadataDir)],
+  );
+  await fs.writeFile(outputPath, output);
+
+  const translatedTrack = await prisma.subtitleTrack.upsert({
+    where: {
+      mediaFileId_sourcePath: {
+        mediaFileId: track.mediaFileId,
+        sourcePath: outputPath,
+      },
+    },
+    create: {
+      mediaFileId: track.mediaFileId,
+      episodeId: track.episodeId,
+      label: translatedSubtitleLabel(targetLanguage),
+      language: targetLanguage,
+      format: "vtt",
+      kind: "TRANSLATED",
+      sourcePath: outputPath,
+      sourceName: `${translatedSubtitleLabel(targetLanguage)} from ${track.label}`,
+      isDefault: false,
+    },
+    update: {
+      episodeId: track.episodeId,
+      label: translatedSubtitleLabel(targetLanguage),
+      language: targetLanguage,
+      format: "vtt",
+      kind: "TRANSLATED",
+      sourceName: `${translatedSubtitleLabel(targetLanguage)} from ${track.label}`,
+    },
+  });
+
+  return {
+    track: toSubtitleTrackDescriptor(translatedTrack),
+    tracks: await listSubtitleTracks(track.mediaFileId),
+  };
 }
 
 export function inferSubtitleLanguage(fileName: string) {
@@ -166,6 +369,21 @@ function buildSubtitleLabel(fileName: string, language: string | null, format: s
   return `${languageLabel} · ${format.toUpperCase()}`;
 }
 
+function translatedSubtitleLabel(targetLanguage: SubtitleTranslationTarget) {
+  return targetLanguage === "zh-Hant" ? "繁體中文 · AI translated" : "简体中文 · AI translated";
+}
+
+export function buildEmbeddedSubtitleLabel(
+  stream: Pick<EmbeddedSubtitleStream, "index" | "tags">,
+  language: string | null,
+  format: string,
+) {
+  const title = stream.tags?.title?.trim();
+  const languageLabel = language ? languageLabelForCode(language) : null;
+  const label = title || languageLabel || `Subtitle ${stream.index}`;
+  return `${label} · ${format.toUpperCase()}`;
+}
+
 function languageLabelForCode(language: string) {
   if (language === "zh-Hans") {
     return "简体中文";
@@ -182,8 +400,207 @@ function languageLabelForCode(language: string) {
   if (language === "en") {
     return "English";
   }
+  if (language === "es") {
+    return "Español";
+  }
+  if (language === "pt") {
+    return "Português";
+  }
+  if (language === "fr") {
+    return "Français";
+  }
+  if (language === "de") {
+    return "Deutsch";
+  }
+  if (language === "ar") {
+    return "العربية";
+  }
+  if (language === "it") {
+    return "Italiano";
+  }
+  if (language === "ru") {
+    return "Русский";
+  }
   return language;
 }
+
+type WebVttCue = {
+  id: string | null;
+  timing: string;
+  text: string;
+};
+
+export function parseWebVtt(source: string) {
+  const normalized = source.replace(/\r\n/g, "\n").replace(/\r/g, "\n");
+  const blocks = normalized
+    .split(/\n{2,}/)
+    .map((block) => block.trim())
+    .filter(Boolean);
+  const cues: WebVttCue[] = [];
+
+  for (const block of blocks) {
+    if (/^WEBVTT(?:\s|$)/i.test(block) || /^NOTE(?:\s|$)/i.test(block)) {
+      continue;
+    }
+    const lines = block.split("\n");
+    const timingIndex = lines.findIndex((line) => line.includes("-->"));
+    if (timingIndex < 0) {
+      continue;
+    }
+    const id = timingIndex > 0 ? lines.slice(0, timingIndex).join("\n").trim() : null;
+    const text = lines.slice(timingIndex + 1).join("\n").trim();
+    cues.push({
+      id: id || null,
+      timing: lines[timingIndex].trim(),
+      text,
+    });
+  }
+
+  if (cues.length === 0) {
+    throw new Error("WebVTT subtitle track has no cues.");
+  }
+  return { cues };
+}
+
+export function formatWebVtt(input: { cues: WebVttCue[] }) {
+  return [
+    "WEBVTT",
+    "",
+    ...input.cues.flatMap((cue) => [
+      ...(cue.id ? [cue.id] : []),
+      cue.timing,
+      cue.text,
+      "",
+    ]),
+  ].join("\n");
+}
+
+function validateTranslatedCueBatch(
+  source: Array<{ index: number; text: string }>,
+  translated: Array<{ index: number; text: string }>,
+) {
+  if (source.length !== translated.length) {
+    throw new Error("Subtitle translation returned the wrong number of cues.");
+  }
+  const sourceIndexes = new Set(source.map((cue) => cue.index));
+  for (const cue of translated) {
+    if (!sourceIndexes.has(cue.index)) {
+      throw new Error("Subtitle translation returned an unexpected cue index.");
+    }
+    if (!cue.text.trim()) {
+      throw new Error("Subtitle translation returned an empty cue.");
+    }
+  }
+}
+
+async function probeEmbeddedSubtitleStreams(mediaPath: string) {
+  const { stdout } = await execFileAsync("ffprobe", [
+    "-hide_banner",
+    "-v",
+    "error",
+    "-show_entries",
+    "stream=index,codec_type,codec_name:stream_tags=language,title",
+    "-of",
+    "json",
+    mediaPath,
+  ]);
+  return embeddedSubtitleStreamsFromProbe(stdout);
+}
+
+export function embeddedSubtitleStreamsFromProbe(stdout: string) {
+  const probe = JSON.parse(stdout) as EmbeddedSubtitleProbe;
+  return (probe.streams ?? []).filter(
+    (stream) =>
+      stream.codec_type === "subtitle" &&
+      Number.isInteger(stream.index) &&
+      Boolean(subtitleFormatForCodec(stream.codec_name)),
+  );
+}
+
+async function extractEmbeddedSubtitleStream(input: {
+  mediaPath: string;
+  streamIndex: number;
+  outputPath: string;
+}) {
+  const extension = path.extname(input.outputPath);
+  const temporaryPath = path.join(
+    path.dirname(input.outputPath),
+    `.${path.basename(input.outputPath, extension)}.tmp-${process.pid}${extension}`,
+  );
+  await fs.rm(temporaryPath, { force: true }).catch(() => undefined);
+  await execFileAsync("ffmpeg", [
+    "-hide_banner",
+    "-y",
+    "-i",
+    input.mediaPath,
+    "-map",
+    `0:${input.streamIndex}`,
+    "-c:s",
+    "webvtt",
+    temporaryPath,
+  ]).catch(() => undefined);
+  const stat = await fs.stat(temporaryPath).catch(() => null);
+  if (!stat?.isFile() || stat.size === 0) {
+    await fs.rm(temporaryPath, { force: true }).catch(() => undefined);
+    return false;
+  }
+  await fs.rename(temporaryPath, input.outputPath);
+  return true;
+}
+
+export function subtitleFormatForCodec(codecName: string | null | undefined) {
+  switch (codecName?.toLowerCase()) {
+    case "ass":
+      return "ass";
+    case "ssa":
+      return "ssa";
+    case "subrip":
+      return "srt";
+    case "webvtt":
+      return "vtt";
+    default:
+      return null;
+  }
+}
+
+export function embeddedSubtitleOutputFormatForCodec(codecName: string | null | undefined) {
+  return subtitleFormatForCodec(codecName) ? "vtt" : null;
+}
+
+export function inferEmbeddedSubtitleLanguage(stream: Pick<EmbeddedSubtitleStream, "tags">) {
+  return normalizeSubtitleLanguageCode(stream.tags?.language) ?? inferSubtitleLanguage(stream.tags?.title ?? "");
+}
+
+function normalizeSubtitleLanguageCode(language: string | null | undefined) {
+  const normalized = language?.trim().toLowerCase();
+  if (!normalized || normalized === "und") {
+    return null;
+  }
+  const mapped = iso639ThreeLetterLanguageMap.get(normalized);
+  if (mapped) {
+    return mapped;
+  }
+  if (/^[a-z]{2}(?:-[a-z0-9]+)?$/i.test(normalized)) {
+    return normalized;
+  }
+  return null;
+}
+
+const iso639ThreeLetterLanguageMap = new Map([
+  ["ara", "ar"],
+  ["deu", "de"],
+  ["ger", "de"],
+  ["eng", "en"],
+  ["fre", "fr"],
+  ["fra", "fr"],
+  ["ita", "it"],
+  ["jpn", "ja"],
+  ["por", "pt"],
+  ["rus", "ru"],
+  ["spa", "es"],
+  ["zho", "zh"],
+  ["chi", "zh"],
+]);
 
 function toSubtitleTrackDescriptor(track: {
   id: string;

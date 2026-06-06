@@ -14,6 +14,7 @@ import {
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Captions,
+  Languages,
   ListVideo,
   Loader2,
   RefreshCw,
@@ -121,6 +122,7 @@ export function WatchClient({
   const [autoNext, setAutoNext] = useState(false);
   const [subtitleTracks, setSubtitleTracks] = useState<SubtitleTrackDescriptor[]>([]);
   const [subtitleLoading, setSubtitleLoading] = useState(false);
+  const [translatingSubtitleId, setTranslatingSubtitleId] = useState<string | null>(null);
   const [subtitleMessage, setSubtitleMessage] = useState("");
 
   const load = useCallback(async () => {
@@ -189,6 +191,34 @@ export function WatchClient({
       setSubtitleLoading(false);
     }
   }, [mediaFileId, t.subtitleScanDone, t.subtitleScanError]);
+
+  const translateSubtitle = useCallback(
+    async (track: SubtitleTrackDescriptor, targetLanguage: "zh-Hans" | "zh-Hant") => {
+      setTranslatingSubtitleId(`${track.id}:${targetLanguage}`);
+      setSubtitleMessage("");
+      try {
+        const response = await fetch(`/api/subtitles/${track.id}/translate`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ targetLanguage }),
+        });
+        if (!response.ok) {
+          const body = (await response.json().catch(() => null)) as { message?: string } | null;
+          throw new Error(body?.message || t.subtitleTranslateError);
+        }
+        const body = (await response.json()) as { tracks: SubtitleTrackDescriptor[] };
+        setSubtitleTracks(body.tracks);
+        setSubtitleMessage(t.subtitleTranslateDone);
+      } catch (translateError) {
+        setSubtitleMessage(
+          translateError instanceof Error ? translateError.message : t.subtitleTranslateError,
+        );
+      } finally {
+        setTranslatingSubtitleId(null);
+      }
+    },
+    [t.subtitleTranslateDone, t.subtitleTranslateError],
+  );
 
   const stopHls = useCallback(() => {
     const current = descriptorRef.current;
@@ -594,6 +624,34 @@ export function WatchClient({
                       {track.sourceName ?? track.kind} · {track.canPlay ? t.subtitlePlayable : t.subtitleUnsupported}
                     </small>
                   </span>
+                  {track.canPlay && !isChineseSubtitleTrack(track) ? (
+                    <div className="watch-subtitle-translate-actions">
+                      <button
+                        disabled={Boolean(translatingSubtitleId)}
+                        onClick={() => void translateSubtitle(track, "zh-Hans")}
+                        type="button"
+                      >
+                        {translatingSubtitleId === `${track.id}:zh-Hans` ? (
+                          <Loader2 size={13} />
+                        ) : (
+                          <Languages size={13} />
+                        )}
+                        {t.translateSubtitleZhHans}
+                      </button>
+                      <button
+                        disabled={Boolean(translatingSubtitleId)}
+                        onClick={() => void translateSubtitle(track, "zh-Hant")}
+                        type="button"
+                      >
+                        {translatingSubtitleId === `${track.id}:zh-Hant` ? (
+                          <Loader2 size={13} />
+                        ) : (
+                          <Languages size={13} />
+                        )}
+                        {t.translateSubtitleZhHant}
+                      </button>
+                    </div>
+                  ) : null}
                 </div>
               ))}
             </div>
@@ -657,6 +715,10 @@ function formatMediaFileLabel(file: WatchMediaFile) {
     file.audioCodec,
     file.subtitleGroup,
   ].filter(Boolean).join(" / ") || file.originalName;
+}
+
+function isChineseSubtitleTrack(track: SubtitleTrackDescriptor) {
+  return track.language === "zh" || track.language === "zh-Hans" || track.language === "zh-Hant";
 }
 
 function currentEpisodeLabel(episode: EpisodeLink) {
