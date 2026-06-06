@@ -565,20 +565,72 @@ export function collectMediaMetadataQueryTexts(media: {
 
 export function buildGenericMetadataQueries(values: Array<string | null | undefined>) {
   const queries: string[] = [];
-  for (const value of values) {
+  for (const value of prioritizeGenericMetadataQueryValues(values)) {
     const title = cleanSearchTitle(value ?? "")
       .replace(/\bS\d{1,2}E\d{1,4}\b/gi, " ")
       .replace(/\b\d{1,2}x\d{1,4}\b/gi, " ")
-      .replace(/\b(1080p|2160p|720p|web-?dl|webrip|bluray|bdrip|x26[45]|h\.?26[45]|hevc|avc)\b/gi, " ")
+      .replace(/\b(1080p|2160p|720p|web-?dl|webrip|bluray|bdrip|x26[45]|h\.?26[45]|hevc|avc|mkv|mp4|avi|mov|webm|m4v|ts)\b/gi, " ")
       .replace(/\s+/g, " ")
       .trim();
     if (!title) {
       continue;
     }
     addQuery(queries, title);
+    for (const part of title.split(/\s+\/\s+|｜|\|/).map((item) => cleanSearchTitle(item))) {
+      addQuery(queries, part);
+      addPossessiveEnglishVariants(queries, part);
+    }
+    addPossessiveEnglishVariants(queries, title);
     addQuery(queries, title.replace(/\b(19\d{2}|20\d{2})\b/g, " ").replace(/\s+/g, " ").trim());
   }
   return queries.slice(0, 8);
+}
+
+function prioritizeGenericMetadataQueryValues(values: Array<string | null | undefined>) {
+  const seeds: Array<{ value: string; score: number; index: number }> = [];
+  values.forEach((value, index) => {
+    const text = value?.replace(/\s+/g, " ").trim();
+    if (!text) {
+      return;
+    }
+    const releaseLike = isReleaseLikeMetadataQuery(text);
+    if (releaseLike) {
+      const parsedTitle = parseMediaReleaseTitle(text, "MOVIE").parsedTitle;
+      if (parsedTitle && parsedTitle !== text) {
+        seeds.push({
+          value: parsedTitle,
+          score: scoreMetadataQueryValue(parsedTitle, false) + 12,
+          index,
+        });
+      }
+    }
+    seeds.push({
+      value: text,
+      score: scoreMetadataQueryValue(text, releaseLike),
+      index,
+    });
+  });
+
+  const seen = new Set<string>();
+  return seeds
+    .sort((a, b) => b.score - a.score || a.index - b.index)
+    .map((seed) => seed.value)
+    .filter((value) => {
+      const key = cleanSearchTitle(value).toLowerCase();
+      if (!key || seen.has(key)) {
+        return false;
+      }
+      seen.add(key);
+      return true;
+    });
+}
+
+function addPossessiveEnglishVariants(queries: string[], value: string) {
+  if (!/[a-z]/i.test(value)) {
+    return;
+  }
+  addQuery(queries, value.replace(/\bKings\b/g, "King's"));
+  addQuery(queries, value.replace(/\bKing's\b/g, "Kings"));
 }
 
 export function buildAnimeMetadataQueries(values: Array<string | null | undefined>) {

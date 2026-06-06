@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   buildAnimeMetadataQueries,
+  buildGenericMetadataQueries,
   collectAnimeMetadataQueryTexts,
   scoreMetadataRelevance,
 } from "./metadata";
@@ -68,6 +69,20 @@ describe("collectAnimeMetadataQueryTexts", () => {
 
     expect(queries).toContain("淡岛百景");
     expect(queries).toContain("Awajima Hyakkei");
+  });
+});
+
+describe("buildGenericMetadataQueries", () => {
+  it("prioritizes clean movie titles and useful English variants", () => {
+    const queries = buildGenericMetadataQueries([
+      "与王生活的男人 The Kings Warden mkv",
+      "与王生活的男人.The.Kings.Warden.2026.WEB-DL.1080p.X264.mkv",
+      "与王生活的男人 The Kings Warden [1080p][X264].mkv",
+    ]);
+
+    expect(queries).toContain("与王生活的男人 The Kings Warden");
+    expect(queries).toContain("与王生活的男人 The King's Warden");
+    expect(queries.some((query) => /\bmkv\b/i.test(query))).toBe(false);
   });
 });
 

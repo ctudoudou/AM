@@ -63,7 +63,7 @@ export default async function MovieTitlePage({
           <div className="anime-detail-nav">
             <a className="anime-back-link" href={`/${locale}/movies`}>
               <ArrowLeft size={14} />
-              {t.backToLibrary}
+              {t.backToMovies}
             </a>
           </div>
           <div className="anime-detail-main">
@@ -102,7 +102,7 @@ export default async function MovieTitlePage({
           <div className="episode-browser-heading">
             <div>
               <h2>{t.files}</h2>
-              <p>{t.selectEpisodeDescription}</p>
+              <p>{t.movieFilesDescription}</p>
             </div>
             <span>
               {playableEpisodes.length} {t.fileVersions}
@@ -120,7 +120,7 @@ export default async function MovieTitlePage({
               return (
                 <article className="episode-row" key={episode.id}>
                   <div className="episode-index">
-                    <strong>{String(episode.number).padStart(2, "0")}</strong>
+                    <strong>{episode.files.length}</strong>
                     <span>{t.fileVersions}</span>
                   </div>
                   <div className="episode-summary">
