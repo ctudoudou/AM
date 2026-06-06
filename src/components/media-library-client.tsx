@@ -155,7 +155,7 @@ export function MediaLibraryClient({
                 </p>
                 {title.synopsis ? <small>{title.synopsis}</small> : null}
                 {title.nextEpisode?.mediaFileId ? (
-                  <a href={`/${locale}/watch/${title.nextEpisode.id}`}>
+                  <a className="anime-play-link" href={`/${locale}/watch/${title.nextEpisode.id}`}>
                     <Play size={14} />
                     {t.playNow}
                   </a>
