@@ -572,7 +572,7 @@ export function buildGenericMetadataQueries(values: Array<string | null | undefi
       .replace(/\b(1080p|2160p|720p|web-?dl|webrip|bluray|bdrip|x26[45]|h\.?26[45]|hevc|avc|mkv|mp4|avi|mov|webm|m4v|ts)\b/gi, " ")
       .replace(/\s+/g, " ")
       .trim();
-    if (!title) {
+    if (!title || isNoisyGenericMetadataQuery(title)) {
       continue;
     }
     addQuery(queries, title);
@@ -596,13 +596,16 @@ function prioritizeGenericMetadataQueryValues(values: Array<string | null | unde
     const releaseLike = isReleaseLikeMetadataQuery(text);
     if (releaseLike) {
       const parsedTitle = parseMediaReleaseTitle(text, "MOVIE").parsedTitle;
-      if (parsedTitle && parsedTitle !== text) {
+      if (parsedTitle && parsedTitle !== text && !isNoisyGenericMetadataQuery(parsedTitle)) {
         seeds.push({
           value: parsedTitle,
           score: scoreMetadataQueryValue(parsedTitle, false) + 12,
           index,
         });
       }
+    }
+    if (isNoisyGenericMetadataQuery(text)) {
+      return;
     }
     seeds.push({
       value: text,
@@ -631,6 +634,32 @@ function addPossessiveEnglishVariants(queries: string[], value: string) {
   }
   addQuery(queries, value.replace(/\bKings\b/g, "King's"));
   addQuery(queries, value.replace(/\bKing's\b/g, "Kings"));
+}
+
+function isNoisyGenericMetadataQuery(value: string) {
+  const clean = cleanSearchTitle(value)
+    .replace(/\b(?:flac|wav|mp3|m4a|aac|cue|log|nfo|txt|m3u8?|jpg|jpeg|png|webp|avif)\b$/i, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  if (!clean || /^[\d\s._-]+$/.test(clean)) {
+    return true;
+  }
+  if (/^\d{1,4}\s*(?:avif|png|jpe?g|webp|flac|cue|log|mkv)?$/i.test(clean)) {
+    return true;
+  }
+  if (/\.(?:flac|wav|mp3|m4a|aac|cue|log|nfo|txt|m3u8?|jpg|jpeg|png|webp|avif)$/i.test(value)) {
+    return true;
+  }
+  if (/^(?:menu|thumbnail|merge)(?:\b|[\s._-])/i.test(clean)) {
+    return true;
+  }
+  if (/\b(?:scans?|booklet|thumbnail|menu|soundtrack|original soundtrack|op|ed)\b$/i.test(clean)) {
+    return true;
+  }
+  if (/オリジナルサウンドトラック/.test(clean)) {
+    return true;
+  }
+  return false;
 }
 
 export function buildAnimeMetadataQueries(values: Array<string | null | undefined>) {

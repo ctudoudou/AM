@@ -84,6 +84,27 @@ describe("buildGenericMetadataQueries", () => {
     expect(queries).toContain("与王生活的男人 The King's Warden");
     expect(queries.some((query) => /\bmkv\b/i.test(query))).toBe(false);
   });
+
+  it("keeps movie title aliases ahead of extra package noise", () => {
+    const queries = buildGenericMetadataQueries([
+      "佐贺偶像是传奇 梦想银河乐园",
+      "24",
+      "25.avif",
+      "25 avif",
+      "Menu 1-1.mkv",
+      "thumbnail.jpg",
+      "Zombie Land Saga Yumeginga Paradise - OP.flac",
+      "劇場版『ゾンビランドサガ ゆめぎんがパラダイス』オリジナルサウンドトラック.cue",
+      "Zombie Land Saga Yumeginga Paradise.mkv",
+      "Zombie Land Saga Yumeginga Paradise",
+    ]);
+
+    expect(queries).toContain("佐贺偶像是传奇 梦想银河乐园");
+    expect(queries).toContain("Zombie Land Saga Yumeginga Paradise");
+    expect(queries.some((query) => /(?:avif|thumbnail|menu|soundtrack|OP|^\d+$)/i.test(query))).toBe(
+      false,
+    );
+  });
 });
 
 describe("scoreMetadataRelevance", () => {
