@@ -173,6 +173,7 @@ function parseCommonReleaseInfo(rawTitle: string) {
 
 function cleanReleaseTitle(value: string) {
   return value
+    .replace(/\.(?:mkv|mp4|avi|mov|webm|m4v|ts)$/i, " ")
     .replace(/\[[^\]]+\]|【[^】]+】|\([^)]+\)/g, " ")
     .replace(resolutionPattern, " ")
     .replace(codecPattern, " ")
@@ -180,6 +181,7 @@ function cleanReleaseTitle(value: string) {
     .replace(sourcePattern, " ")
     .replace(/\b(complete|proper|repack|multi|internal|remux|extended|theatrical)\b/gi, " ")
     .replace(/[._-]+/g, " ")
+    .replace(/\b(?:mkv|mp4|avi|mov|webm|m4v|ts)\b$/i, " ")
     .replace(/\s+/g, " ")
     .trim();
 }

@@ -19,6 +19,7 @@ const statusGroups = [
       "organizer.cleanupPollutedPlans",
       "organizer.cleanupStalePlans",
       "library.scan",
+      "library.cleanupMovieMetadataAliases",
     ],
   },
   {

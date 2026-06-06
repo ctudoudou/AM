@@ -17,6 +17,21 @@ describe("parseMediaReleaseTitle", () => {
     expect(parsed.codec).toBe("X265");
   });
 
+  it("strips video file extensions from movie titles", () => {
+    expect(
+      parseMediaReleaseTitle(
+        "与王生活的男人 The Kings Warden [1080p][X264].mkv",
+        "MOVIE",
+      ).parsedTitle,
+    ).toBe("与王生活的男人 The Kings Warden");
+    expect(
+      parseMediaReleaseTitle(
+        "与王生活的男人.The.Kings.Warden.2026.WEB-DL.1080p.X264.mkv",
+        "MOVIE",
+      ).parsedTitle,
+    ).toBe("与王生活的男人 The Kings Warden");
+  });
+
   it("parses TV season and episode releases", () => {
     const parsed = parseMediaReleaseTitle(
       "Slow.Horses.S04E02.1080p.WEB-DL.H264.AAC",

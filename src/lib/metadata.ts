@@ -4,11 +4,14 @@ import { prisma } from "@/lib/db";
 import { normalizeTitleAliases } from "@/lib/anime-parser";
 import { parseMediaReleaseTitle } from "@/lib/media-parser";
 import { cacheRemoteMediaAsset, isLocalMediaAssetUrl } from "@/lib/media-assets";
+import { getAppSettings, type AppSettings } from "@/lib/settings";
 import {
   aliasesFromMetadataRaw,
   aliasesFromTitleTexts,
   upsertTitleAliases,
 } from "@/lib/title-display";
+
+type MetadataProviderSettings = AppSettings["metadataProviders"];
 
 export type MetadataMatch = {
   provider:
@@ -167,7 +170,8 @@ export async function matchMetadataForGroup(groupId: string) {
     where: { id: groupId },
   });
   const query = group.displayTitle || group.normalizedTitle;
-  const providerResults = await searchMediaMetadata(query, group.mediaType);
+  const providerSettings = (await getAppSettings()).metadataProviders;
+  const providerResults = await searchMediaMetadata(query, group.mediaType, providerSettings);
 
   const results =
     providerResults.length > 0
@@ -287,8 +291,9 @@ export async function refreshMediaMetadata(titleId: string) {
   const queryTexts = collectMediaMetadataQueryTexts(media);
   const queries = buildGenericMetadataQueries(queryTexts);
   const matches = [];
+  const providerSettings = (await getAppSettings()).metadataProviders;
   for (const query of queries) {
-    matches.push(...(await searchMediaMetadata(query, media.type)));
+    matches.push(...(await searchMediaMetadata(query, media.type, providerSettings)));
     const best = selectBestMetadataMatch(matches);
     if (best?.posterUrl && best.score >= 0.9 && (best.relevance ?? 0) >= 0.86) {
       break;
@@ -399,6 +404,7 @@ export async function refreshAnimeMetadata(titleId: string) {
   const queryTexts = collectAnimeMetadataQueryTexts(media);
   const queries = buildAnimeMetadataQueries(queryTexts);
   const targetSeason = queries.map(detectSeason).find((season): season is number => Boolean(season));
+  const providerSettings = (await getAppSettings()).metadataProviders;
   await upsertTitleAliases(
     media.id,
     aliasesFromTitleTexts(queryTexts),
@@ -406,7 +412,7 @@ export async function refreshAnimeMetadata(titleId: string) {
   const matches = [];
 
   for (const query of queries) {
-    matches.push(...(await searchAnimeMetadata(query)));
+    matches.push(...(await searchMediaMetadata(query, "ANIME", providerSettings)));
     const best = selectBestMetadataMatch(matches, targetSeason);
     const seasonSatisfied = !targetSeason || Boolean(best && metadataResultHasSeason(best, targetSeason));
     if (seasonSatisfied && best?.posterUrl && best.score >= 0.92 && (best.relevance ?? 0) >= 0.9) {
@@ -506,6 +512,56 @@ export async function refreshAnimeMetadata(titleId: string) {
   };
 }
 
+export async function listNoisyMovieMetadataAliases() {
+  const aliases = await prisma.titleAlias.findMany({
+    where: { media: { type: "MOVIE" } },
+    select: {
+      id: true,
+      title: true,
+      locale: true,
+      mediaId: true,
+      media: {
+        select: {
+          primaryTitle: true,
+          originalTitle: true,
+        },
+      },
+    },
+    orderBy: { createdAt: "asc" },
+  });
+
+  return aliases.filter((alias) => {
+    const protectedTitles = new Set(
+      [alias.media.primaryTitle, alias.media.originalTitle]
+        .map((value) => cleanSearchTitle(value ?? "").toLowerCase())
+        .filter(Boolean),
+    );
+    const key = cleanSearchTitle(alias.title).toLowerCase();
+    return Boolean(key && !protectedTitles.has(key) && isNoisyGenericMetadataQuery(alias.title));
+  });
+}
+
+export async function cleanupNoisyMovieMetadataAliases() {
+  const aliases = await listNoisyMovieMetadataAliases();
+  const deleted = aliases.length
+    ? await prisma.titleAlias.deleteMany({
+        where: { id: { in: aliases.map((alias) => alias.id) } },
+      })
+    : { count: 0 };
+
+  return {
+    matched: aliases.length,
+    deleted: deleted.count,
+    mediaTitles: new Set(aliases.map((alias) => alias.mediaId)).size,
+    samples: aliases.slice(0, 20).map((alias) => ({
+      id: alias.id,
+      mediaId: alias.mediaId,
+      title: alias.title,
+      locale: alias.locale,
+    })),
+  };
+}
+
 export function collectAnimeMetadataQueryTexts(media: {
   primaryTitle: string;
   originalTitle?: string | null;
@@ -565,20 +621,101 @@ export function collectMediaMetadataQueryTexts(media: {
 
 export function buildGenericMetadataQueries(values: Array<string | null | undefined>) {
   const queries: string[] = [];
-  for (const value of values) {
+  for (const value of prioritizeGenericMetadataQueryValues(values)) {
     const title = cleanSearchTitle(value ?? "")
       .replace(/\bS\d{1,2}E\d{1,4}\b/gi, " ")
       .replace(/\b\d{1,2}x\d{1,4}\b/gi, " ")
-      .replace(/\b(1080p|2160p|720p|web-?dl|webrip|bluray|bdrip|x26[45]|h\.?26[45]|hevc|avc)\b/gi, " ")
+      .replace(/\b(1080p|2160p|720p|web-?dl|webrip|bluray|bdrip|x26[45]|h\.?26[45]|hevc|avc|mkv|mp4|avi|mov|webm|m4v|ts)\b/gi, " ")
       .replace(/\s+/g, " ")
       .trim();
-    if (!title) {
+    if (!title || isNoisyGenericMetadataQuery(title)) {
       continue;
     }
     addQuery(queries, title);
+    for (const part of title.split(/\s+\/\s+|｜|\|/).map((item) => cleanSearchTitle(item))) {
+      addQuery(queries, part);
+      addPossessiveEnglishVariants(queries, part);
+    }
+    addPossessiveEnglishVariants(queries, title);
     addQuery(queries, title.replace(/\b(19\d{2}|20\d{2})\b/g, " ").replace(/\s+/g, " ").trim());
   }
   return queries.slice(0, 8);
+}
+
+function prioritizeGenericMetadataQueryValues(values: Array<string | null | undefined>) {
+  const seeds: Array<{ value: string; score: number; index: number }> = [];
+  values.forEach((value, index) => {
+    const text = value?.replace(/\s+/g, " ").trim();
+    if (!text) {
+      return;
+    }
+    const releaseLike = isReleaseLikeMetadataQuery(text);
+    if (releaseLike) {
+      const parsedTitle = parseMediaReleaseTitle(text, "MOVIE").parsedTitle;
+      if (parsedTitle && parsedTitle !== text && !isNoisyGenericMetadataQuery(parsedTitle)) {
+        seeds.push({
+          value: parsedTitle,
+          score: scoreMetadataQueryValue(parsedTitle, false) + 12,
+          index,
+        });
+      }
+    }
+    if (isNoisyGenericMetadataQuery(text)) {
+      return;
+    }
+    seeds.push({
+      value: text,
+      score: scoreMetadataQueryValue(text, releaseLike),
+      index,
+    });
+  });
+
+  const seen = new Set<string>();
+  return seeds
+    .sort((a, b) => b.score - a.score || a.index - b.index)
+    .map((seed) => seed.value)
+    .filter((value) => {
+      const key = cleanSearchTitle(value).toLowerCase();
+      if (!key || seen.has(key)) {
+        return false;
+      }
+      seen.add(key);
+      return true;
+    });
+}
+
+function addPossessiveEnglishVariants(queries: string[], value: string) {
+  if (!/[a-z]/i.test(value)) {
+    return;
+  }
+  addQuery(queries, value.replace(/\bKings\b/g, "King's"));
+  addQuery(queries, value.replace(/\bKing's\b/g, "Kings"));
+}
+
+function isNoisyGenericMetadataQuery(value: string) {
+  const clean = cleanSearchTitle(value)
+    .replace(/\b(?:flac|wav|mp3|m4a|aac|cue|log|nfo|txt|m3u8?|jpg|jpeg|png|webp|avif)\b$/i, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  if (!clean || /^[\d\s._-]+$/.test(clean)) {
+    return true;
+  }
+  if (/^\d{1,4}\s*(?:avif|png|jpe?g|webp|flac|cue|log|mkv)?$/i.test(clean)) {
+    return true;
+  }
+  if (/\.(?:flac|wav|mp3|m4a|aac|cue|log|nfo|txt|m3u8?|jpg|jpeg|png|webp|avif)$/i.test(value)) {
+    return true;
+  }
+  if (/^(?:menu|thumbnail|merge)(?:\b|[\s._-])/i.test(clean)) {
+    return true;
+  }
+  if (/\b(?:scans?|booklet|thumbnail|menu|soundtrack|original soundtrack|op|ed)\b$/i.test(clean)) {
+    return true;
+  }
+  if (/オリジナルサウンドトラック/.test(clean)) {
+    return true;
+  }
+  return false;
 }
 
 export function buildAnimeMetadataQueries(values: Array<string | null | undefined>) {
@@ -656,7 +793,9 @@ export async function searchAnimeMetadata(query: string): Promise<MetadataMatch[
 export async function searchMediaMetadata(
   query: string,
   mediaType: MediaType = "ANIME",
+  providerSettings?: MetadataProviderSettings,
 ): Promise<MetadataMatch[]> {
+  const providers = providerSettings ?? (await getAppSettings()).metadataProviders;
   const providerResults = (
     mediaType === "ANIME"
       ? await Promise.allSettled([
@@ -664,11 +803,20 @@ export async function searchMediaMetadata(
           searchBangumi(query),
           searchJikan(query),
           searchKitsu(query),
-          searchTmdb(query, "tv"),
+          searchTmdb(query, "tv", providers.tmdbApiKey),
         ])
+      : mediaType === "MOVIE"
+        ? await Promise.allSettled([
+            searchTmdb(query, "movie", providers.tmdbApiKey),
+            searchOmdb(query, mediaType, providers.omdbApiKey),
+            searchAniList(query),
+            searchBangumi(query),
+            searchJikan(query),
+            searchKitsu(query),
+          ])
       : await Promise.allSettled([
-          searchTmdb(query, mediaType === "MOVIE" ? "movie" : "tv"),
-          searchOmdb(query, mediaType),
+          searchTmdb(query, "tv", providers.tmdbApiKey),
+          searchOmdb(query, mediaType, providers.omdbApiKey),
         ])
   ).flatMap((result) => (result.status === "fulfilled" ? result.value : []));
 
@@ -735,8 +883,11 @@ async function searchAniList(query: string): Promise<MetadataMatch[]> {
   }));
 }
 
-async function searchTmdb(query: string, kind: "movie" | "tv"): Promise<MetadataMatch[]> {
-  const token = process.env.TMDB_API_KEY;
+async function searchTmdb(
+  query: string,
+  kind: "movie" | "tv",
+  token: MetadataProviderSettings["tmdbApiKey"],
+): Promise<MetadataMatch[]> {
   if (!token) {
     return [];
   }
@@ -873,8 +1024,11 @@ async function searchKitsu(query: string): Promise<MetadataMatch[]> {
   });
 }
 
-async function searchOmdb(query: string, mediaType: MediaType): Promise<MetadataMatch[]> {
-  const apiKey = process.env.OMDB_API_KEY;
+async function searchOmdb(
+  query: string,
+  mediaType: MediaType,
+  apiKey: MetadataProviderSettings["omdbApiKey"],
+): Promise<MetadataMatch[]> {
   if (!apiKey || mediaType === "ANIME") {
     return [];
   }

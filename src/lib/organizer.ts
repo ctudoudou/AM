@@ -1347,6 +1347,7 @@ async function upsertMediaRecords(plan: {
   const title = cleanMediaTitle(
     metadata?.title || candidate?.group?.displayTitle || candidate?.parsedTitle || "Unknown",
   );
+  const titleAliasItems = plan.items.filter((item) => !isOrganizerExtraItem(item));
   const aliasValues = [
     title,
     metadata?.originalTitle,
@@ -1354,7 +1355,7 @@ async function upsertMediaRecords(plan: {
     candidate?.group?.normalizedTitle,
     ...groupAliases(candidate?.group?.aliases),
     candidate?.parsedTitle,
-    ...plan.items.flatMap((item) => [
+    ...titleAliasItems.flatMap((item) => [
       item.originalName,
       parseMediaReleaseTitle(item.originalName, mediaType).parsedTitle,
       path.basename(item.targetPath, path.extname(item.targetPath)),

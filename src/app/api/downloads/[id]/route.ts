@@ -5,7 +5,7 @@ import { controlAria2Download } from "@/lib/downloads";
 export const dynamic = "force-dynamic";
 
 const actionSchema = z.object({
-  action: z.enum(["pause", "resume", "remove", "sync"]),
+  action: z.enum(["pause", "resume", "remove", "sync", "retry"]),
 });
 
 type RouteContext = {

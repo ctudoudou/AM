@@ -16,7 +16,7 @@ Object.assign(zhHant, {
   aria2Settings: "aria2 下載器",
   aiSettings: "AI 模型",
   metadataProviderSettings: "元資料來源",
-  metadataProviderSettingsDescription: "TheTVDB 和 AniDB 憑據會用於後續建立季集目錄與絕對編號對應。",
+  metadataProviderSettingsDescription: "TMDB/OMDB 用於電影和電視劇匹配；TheTVDB/AniDB 用於動畫目錄、季集與絕對編號映射。",
   generalSettings: "一般設定",
   queueStatus: "佇列狀態",
   queueStatusReview: "需確認",

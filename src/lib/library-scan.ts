@@ -170,10 +170,12 @@ function extractYear(value: string) {
 
 function cleanTitle(value: string) {
   return value
+    .replace(/\.(?:mkv|mp4|avi|mov|webm|m4v|ts)$/i, " ")
     .replace(/[\[(](19\d{2}|20\d{2})[\])]/g, " ")
     .replace(/\bS\d{1,2}E\d{1,4}\b/gi, " ")
     .replace(/\bE\d{1,4}\b/gi, " ")
     .replace(/[._-]+/g, " ")
+    .replace(/\b(?:mkv|mp4|avi|mov|webm|m4v|ts)\b$/i, " ")
     .replace(/\s+/g, " ")
     .trim() || "Unknown";
 }

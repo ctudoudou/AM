@@ -7,6 +7,7 @@ import type { Locale } from "@/lib/i18n";
 
 type MediaTitle = {
   id: string;
+  type: "ANIME" | "MOVIE" | "TV";
   primaryTitle: string;
   originalTitle?: string | null;
   year?: number | null;
@@ -135,15 +136,22 @@ export function MediaLibraryClient({
                   backgroundImage: title.posterUrl ? `url(${title.posterUrl})` : undefined,
                 }}
               >
-                {!title.posterUrl ? <span>{title.primaryTitle.slice(0, 1)}</span> : null}
+                {!title.posterUrl ? (
+                  title.type === "MOVIE" ? (
+                    <Play size={28} />
+                  ) : (
+                    <span>{title.primaryTitle.slice(0, 1)}</span>
+                  )
+                ) : null}
               </a>
               <div className="anime-card-body">
                 <h2>
                   <a href={`/${locale}${detailBasePath}/${title.id}`}>{title.primaryTitle}</a>
                 </h2>
                 <p>
-                  {title.year ?? "-"} · {title.seasonCount} {t.seasons} ·{" "}
-                  {title.episodeCount} {t.episodes}
+                  {title.type === "MOVIE"
+                    ? `${title.year ?? "-"} · ${title.episodeCount} ${t.fileVersions}`
+                    : `${title.year ?? "-"} · ${title.seasonCount} ${t.seasons} · ${title.episodeCount} ${t.episodes}`}
                 </p>
                 {title.synopsis ? <small>{title.synopsis}</small> : null}
                 {title.nextEpisode?.mediaFileId ? (
