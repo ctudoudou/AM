@@ -91,6 +91,16 @@ async function findOrCreateMediaTitle(
 ) {
   const existing = await findExistingMediaTitle({ type, title, year, aliases });
   if (existing) {
+    const promotedTitle = shouldPromoteScannedTitle(existing.primaryTitle, title) ? title : undefined;
+    if (promotedTitle || (!existing.year && year)) {
+      await prisma.mediaTitle.update({
+        where: { id: existing.id },
+        data: {
+          primaryTitle: promotedTitle,
+          year: existing.year ?? year,
+        },
+      });
+    }
     await addMediaTitleAliases(existing.id, [title, ...aliases]);
     return existing;
   }
@@ -178,4 +188,16 @@ function cleanTitle(value: string) {
     .replace(/\b(?:mkv|mp4|avi|mov|webm|m4v|ts)\b$/i, " ")
     .replace(/\s+/g, " ")
     .trim() || "Unknown";
+}
+
+export function shouldPromoteScannedTitle(currentTitle: string, scannedTitle: string) {
+  const current = currentTitle.trim();
+  const scanned = scannedTitle.trim();
+  if (!current || !scanned || current === scanned || scanned.length > current.length) {
+    return false;
+  }
+  if (!/\b(?:mkv|mp4|avi|mov|webm|m4v|ts)\b$/i.test(current)) {
+    return false;
+  }
+  return cleanTitle(current).toLowerCase() === scanned.toLowerCase();
 }

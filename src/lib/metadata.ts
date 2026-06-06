@@ -622,12 +622,7 @@ export function collectMediaMetadataQueryTexts(media: {
 export function buildGenericMetadataQueries(values: Array<string | null | undefined>) {
   const queries: string[] = [];
   for (const value of prioritizeGenericMetadataQueryValues(values)) {
-    const title = cleanSearchTitle(value ?? "")
-      .replace(/\bS\d{1,2}E\d{1,4}\b/gi, " ")
-      .replace(/\b\d{1,2}x\d{1,4}\b/gi, " ")
-      .replace(/\b(1080p|2160p|720p|web-?dl|webrip|bluray|bdrip|x26[45]|h\.?26[45]|hevc|avc|mkv|mp4|avi|mov|webm|m4v|ts)\b/gi, " ")
-      .replace(/\s+/g, " ")
-      .trim();
+    const title = cleanGenericMetadataQueryTitle(value ?? "");
     if (!title || isNoisyGenericMetadataQuery(title)) {
       continue;
     }
@@ -640,6 +635,16 @@ export function buildGenericMetadataQueries(values: Array<string | null | undefi
     addQuery(queries, title.replace(/\b(19\d{2}|20\d{2})\b/g, " ").replace(/\s+/g, " ").trim());
   }
   return queries.slice(0, 8);
+}
+
+function cleanGenericMetadataQueryTitle(value: string) {
+  return cleanSearchTitle(value)
+    .replace(/\bS\d{1,2}E\d{1,4}\b/gi, " ")
+    .replace(/\b\d{1,2}x\d{1,4}\b/gi, " ")
+    .replace(/\b(1080p|2160p|720p|web-?dl|webrip|bluray|bdrip|x26[45]|h\.?26[45]|hevc|avc|mkv|mp4|avi|mov|webm|m4v|ts)\b/gi, " ")
+    .replace(/[._]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
 }
 
 function prioritizeGenericMetadataQueryValues(values: Array<string | null | undefined>) {
