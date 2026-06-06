@@ -342,6 +342,9 @@ export function MissingEpisodesPanel({
                       <span>{result.safeToDownload ? t.safeToDownload : t.requiresReview}</span>
                       <span>{result.identity.numberingScheme}</span>
                       {result.parsed.resolution ? <span>{result.parsed.resolution}</span> : null}
+                      <span title={result.availability?.reason}>
+                        {formatTorrentAvailability(result, t)}
+                      </span>
                     </div>
                     <strong>{result.title}</strong>
                     <small>
@@ -353,6 +356,8 @@ export function MissingEpisodesPanel({
                         result.identity.episodeOffset > 0
                           ? `${t.episodeOffset} ${result.identity.episodeOffset}`
                           : null,
+                        result.size,
+                        result.seeders !== null ? `Seed ${result.seeders}` : null,
                         result.safetyReason,
                       ]
                         .filter(Boolean)
@@ -472,6 +477,9 @@ export function MissingEpisodesPanel({
                             <span>{result.sourceName}</span>
                             <span>{result.match === "strong" ? t.strongWantedMatch : t.relatedWantedMatch}</span>
                             {result.parsed.resolution ? <span>{result.parsed.resolution}</span> : null}
+                            <span title={result.availability?.reason}>
+                              {formatTorrentAvailability(result, t)}
+                            </span>
                           </div>
                           <strong>{result.title}</strong>
                           <small>
@@ -504,6 +512,25 @@ export function MissingEpisodesPanel({
       )}
     </section>
   );
+}
+
+function formatTorrentAvailability(result: WantedSearchResult, t: ReturnType<typeof getMessages>) {
+  switch (result.availability?.status) {
+    case "available":
+      return t.torrentAvailabilityAvailable;
+    case "reported":
+      return t.torrentAvailabilityReported;
+    case "unknown":
+      return t.torrentAvailabilityUnknown;
+    case "unavailable":
+      return t.torrentAvailabilityUnavailable;
+    case "not_probeable":
+      return t.torrentAvailabilityNotProbeable;
+    default:
+      return result.seeders !== null && result.seeders > 0
+        ? t.torrentAvailabilityReported
+        : t.torrentAvailabilityUnknown;
+  }
 }
 
 function labelForStatus(status: EpisodeCoverageItem["status"], t: ReturnType<typeof getMessages>) {

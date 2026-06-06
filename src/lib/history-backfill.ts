@@ -10,6 +10,7 @@ import {
   type WantedSearchSourceError,
 } from "@/lib/wanted-rss-search";
 import { scanWantedEpisodes } from "@/lib/wanted-episodes";
+import { attachTorrentAvailability } from "@/lib/torrent-availability";
 
 export type HistoryBackfillResult = WantedSearchResult & {
   identity: EpisodeIdentity;
@@ -66,7 +67,7 @@ export async function searchHistoryBackfill(input: {
   const episodes: HistoryBackfillEpisodeResult[] = [];
 
   for (const wanted of wantedRows) {
-    const search = await searchWantedEpisodeSources(wanted.id);
+    const search = await searchWantedEpisodeSources(wanted.id, { probeAvailability: false });
     const results = search.results
       .map((result) =>
         assessHistoryBackfillResult({
@@ -90,6 +91,7 @@ export async function searchHistoryBackfill(input: {
       sourceErrors: search.sourceErrors,
     });
   }
+  await attachHistoryBackfillAvailability(episodes);
 
   return {
     mediaTitleId: media.id,
@@ -99,6 +101,29 @@ export async function searchHistoryBackfill(input: {
     episodeEnd,
     episodes,
   };
+}
+
+async function attachHistoryBackfillAvailability(episodes: HistoryBackfillEpisodeResult[]) {
+  const flattened = episodes.flatMap((episode) =>
+    episode.results.map((result) => result),
+  );
+  if (flattened.length === 0) {
+    return;
+  }
+  const annotated = await attachTorrentAvailability(
+    flattened,
+    {
+      probeLimit: 8,
+      shouldProbe: (result) => result.safeToDownload && result.match === "strong",
+    },
+  );
+  const availabilityByKey = new Map(annotated.map((result) => [result.key, result.availability]));
+  for (const episode of episodes) {
+    episode.results = episode.results.map((result) => ({
+      ...result,
+      availability: availabilityByKey.get(result.key) ?? result.availability,
+    }));
+  }
 }
 
 export async function selectHistoryBackfillDownload(input: {
