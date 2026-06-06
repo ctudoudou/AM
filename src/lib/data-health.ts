@@ -10,6 +10,10 @@ import {
   cleanupStaleOrganizerPlans,
   organizerTargetPathLooksPolluted,
 } from "@/lib/organizer";
+import {
+  cleanupNoisyMovieMetadataAliases,
+  listNoisyMovieMetadataAliases,
+} from "@/lib/metadata";
 import { repairAnimeEpisodeNumbering } from "@/lib/wanted-episodes";
 
 const maxIssueSamples = 40;
@@ -39,6 +43,7 @@ export type DataHealthIssueType =
   | "polluted_group"
   | "split_group"
   | "organizer_plan"
+  | "movie_metadata_alias"
   | "media_path";
 
 export type DataHealthIssue = {
@@ -62,6 +67,7 @@ export type DataHealthScan = {
     splitGroups: number;
     organizerIssues: number;
     pollutedMediaFiles: number;
+    noisyMovieMetadataAliases: number;
     autoFixableIssues: number;
   };
   issues: DataHealthIssue[];
@@ -73,6 +79,7 @@ export type DataHealthRepairResult = {
     organizerCleanup: Awaited<ReturnType<typeof cleanupPollutedOrganizerPlans>>;
     stalePlans: Awaited<ReturnType<typeof cleanupStaleOrganizerPlans>>;
     episodeNumbering: Awaited<ReturnType<typeof repairAnimeEpisodeNumbering>>;
+    movieMetadataAliases: Awaited<ReturnType<typeof cleanupNoisyMovieMetadataAliases>>;
   };
   scan: DataHealthScan;
 };
@@ -96,7 +103,7 @@ type CandidateSnapshot = {
 };
 
 export async function scanDataHealth(): Promise<DataHealthScan> {
-  const [candidates, groups, activePlans, pollutedMediaFiles, pollutedMediaFileCount] =
+  const [candidates, groups, activePlans, pollutedMediaFiles, pollutedMediaFileCount, noisyMovieAliases] =
     await Promise.all([
       prisma.releaseCandidate.findMany({
         where: {
@@ -150,6 +157,7 @@ export async function scanDataHealth(): Promise<DataHealthScan> {
         take: maxIssueSamples,
       }),
       prisma.mediaFile.count({ where: pollutedMediaPathWhere() }),
+      listNoisyMovieMetadataAliases(),
     ]);
 
   const replay = collectReplayIssues(candidates);
@@ -157,12 +165,14 @@ export async function scanDataHealth(): Promise<DataHealthScan> {
   const pollutedGroups = collectPollutedGroups(groups, candidates);
   const splitGroups = collectSplitGroups(candidates);
   const organizerIssues = collectOrganizerIssues(activePlans);
+  const movieAliasIssues = collectNoisyMovieAliasIssues(noisyMovieAliases);
   const issues: DataHealthIssue[] = [
     ...replay.issues,
     ...nonVideoCandidates,
     ...pollutedGroups,
     ...splitGroups,
     ...organizerIssues,
+    ...movieAliasIssues,
   ];
 
   if (pollutedMediaFileCount > 0) {
@@ -197,6 +207,7 @@ export async function scanDataHealth(): Promise<DataHealthScan> {
       splitGroups: splitGroups.length,
       organizerIssues: organizerIssues.reduce((sum, issue) => sum + issue.count, 0),
       pollutedMediaFiles: pollutedMediaFileCount,
+      noisyMovieMetadataAliases: noisyMovieAliases.length,
       autoFixableIssues: issues.filter((issue) => issue.autoFixable).length,
     },
     issues,
@@ -208,6 +219,7 @@ export async function repairDataHealth(): Promise<DataHealthRepairResult> {
   const organizerCleanup = await cleanupPollutedOrganizerPlans();
   const stalePlans = await cleanupStaleOrganizerPlans();
   const episodeNumbering = await repairAnimeEpisodeNumbering();
+  const movieMetadataAliases = await cleanupNoisyMovieMetadataAliases();
 
   return {
     repair: {
@@ -215,6 +227,7 @@ export async function repairDataHealth(): Promise<DataHealthRepairResult> {
       organizerCleanup,
       stalePlans,
       episodeNumbering,
+      movieMetadataAliases,
     },
     scan: await scanDataHealth(),
   };
@@ -492,6 +505,33 @@ function collectOrganizerIssues(
         reason: plan.reason,
         items: plan.items.length,
         targetPath: plan.items[0]?.targetPath,
+      })),
+    },
+  ];
+}
+
+function collectNoisyMovieAliasIssues(
+  aliases: Awaited<ReturnType<typeof listNoisyMovieMetadataAliases>>,
+) {
+  if (aliases.length === 0) {
+    return [];
+  }
+
+  return [
+    {
+      id: "movie-metadata-alias-noise",
+      type: "movie_metadata_alias" as const,
+      severity: "warning" as const,
+      title: "Noisy movie metadata aliases",
+      description:
+        "Movie titles have aliases derived from Extras, scans, menus, audio tracks, or image files. These aliases can crowd out real metadata queries.",
+      count: aliases.length,
+      autoFixable: true,
+      samples: aliases.slice(0, maxIssueSamples).map((alias) => ({
+        id: alias.id,
+        mediaId: alias.mediaId,
+        title: alias.title,
+        locale: alias.locale,
       })),
     },
   ];

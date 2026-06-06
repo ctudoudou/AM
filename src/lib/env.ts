@@ -15,6 +15,7 @@ const envSchema = z.object({
   ARIA2_RPC_SECRET: z.string().default(""),
   OPENROUTER_API_KEY: z.string().default(""),
   OPENROUTER_MODEL: z.string().default("glm5.1"),
+  TMDB_API_KEY: z.string().default(""),
   OMDB_API_KEY: z.string().default(""),
   THETVDB_API_KEY: z.string().default(""),
   ANIDB_USERNAME: z.string().default(""),

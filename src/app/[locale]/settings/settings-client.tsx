@@ -17,6 +17,8 @@ type PublicSettings = {
     openRouterApiKeyConfigured: boolean;
   };
   metadataProviders: {
+    tmdbApiKeyConfigured: boolean;
+    omdbApiKeyConfigured: boolean;
     theTvdbApiKeyConfigured: boolean;
     anidbUsernameConfigured: boolean;
     anidbPasswordConfigured: boolean;
@@ -98,6 +100,8 @@ export function SettingsClient({ locale }: { locale: Locale }) {
   const [rssDraft, setRssDraft] = useState({ name: "", url: "" });
   const [aria2Secret, setAria2Secret] = useState("");
   const [openRouterApiKey, setOpenRouterApiKey] = useState("");
+  const [tmdbApiKey, setTmdbApiKey] = useState("");
+  const [omdbApiKey, setOmdbApiKey] = useState("");
   const [theTvdbApiKey, setTheTvdbApiKey] = useState("");
   const [anidbUsername, setAnidbUsername] = useState("");
   const [anidbPassword, setAnidbPassword] = useState("");
@@ -117,6 +121,8 @@ export function SettingsClient({ locale }: { locale: Locale }) {
     const ai = settings.ai.openRouterApiKeyConfigured ? t.configured : t.notConfigured;
     const aria2 = settings.aria2.rpcSecretConfigured ? t.configured : t.notConfigured;
     const metadata =
+      settings.metadataProviders.tmdbApiKeyConfigured ||
+      settings.metadataProviders.omdbApiKeyConfigured ||
       settings.metadataProviders.theTvdbApiKeyConfigured ||
       settings.metadataProviders.anidbUsernameConfigured
         ? t.configured
@@ -272,12 +278,16 @@ export function SettingsClient({ locale }: { locale: Locale }) {
 
     try {
       await patchSettings("metadata-providers", {
+        ...(tmdbApiKey.length > 0 ? { tmdbApiKey } : {}),
+        ...(omdbApiKey.length > 0 ? { omdbApiKey } : {}),
         ...(theTvdbApiKey.length > 0 ? { theTvdbApiKey } : {}),
         ...(anidbUsername.length > 0 ? { anidbUsername } : {}),
         ...(anidbPassword.length > 0 ? { anidbPassword } : {}),
         anidbClientName: settings.metadataProviders.anidbClientName,
         anidbClientVersion: settings.metadataProviders.anidbClientVersion,
       });
+      setTmdbApiKey("");
+      setOmdbApiKey("");
       setTheTvdbApiKey("");
       setAnidbUsername("");
       setAnidbPassword("");
@@ -540,6 +550,32 @@ export function SettingsClient({ locale }: { locale: Locale }) {
             {t.save}
           </button>
         </div>
+        <label>
+          <span>TMDB API Key</span>
+          <input
+            onChange={(event) => setTmdbApiKey(event.target.value)}
+            placeholder={
+              settings.metadataProviders.tmdbApiKeyConfigured
+                ? t.secretConfigured
+                : t.secretEmpty
+            }
+            type="password"
+            value={tmdbApiKey}
+          />
+        </label>
+        <label>
+          <span>OMDB API Key</span>
+          <input
+            onChange={(event) => setOmdbApiKey(event.target.value)}
+            placeholder={
+              settings.metadataProviders.omdbApiKeyConfigured
+                ? t.secretConfigured
+                : t.secretEmpty
+            }
+            type="password"
+            value={omdbApiKey}
+          />
+        </label>
         <label>
           <span>TheTVDB API Key</span>
           <input

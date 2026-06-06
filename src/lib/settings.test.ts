@@ -57,6 +57,8 @@ describe("redactAppSettings", () => {
       },
       metadataProviders: {
         ...defaultAppSettings.metadataProviders,
+        tmdbApiKey: "tmdb-secret",
+        omdbApiKey: "omdb-secret",
         theTvdbApiKey: "tvdb-secret",
         anidbUsername: "anidb-user",
         anidbPassword: "anidb-password",
@@ -70,12 +72,16 @@ describe("redactAppSettings", () => {
     });
     expect(publicSettings.ai.openRouterApiKeyConfigured).toBe(true);
     expect(publicSettings.metadataProviders).toMatchObject({
+      tmdbApiKeyConfigured: true,
+      omdbApiKeyConfigured: true,
       theTvdbApiKeyConfigured: true,
       anidbUsernameConfigured: true,
       anidbPasswordConfigured: true,
       anidbClientName: "kura",
     });
     expect(JSON.stringify(publicSettings)).not.toContain("secret");
+    expect(JSON.stringify(publicSettings)).not.toContain("tmdb-secret");
+    expect(JSON.stringify(publicSettings)).not.toContain("omdb-secret");
     expect(JSON.stringify(publicSettings)).not.toContain("key");
     expect(JSON.stringify(publicSettings)).not.toContain("anidb-user");
     expect(JSON.stringify(publicSettings)).not.toContain("anidb-password");

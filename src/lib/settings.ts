@@ -59,6 +59,8 @@ export const aiSettingsSchema = z.object({
 });
 
 export const metadataProviderSettingsSchema = z.object({
+  tmdbApiKey: z.string(),
+  omdbApiKey: z.string(),
   theTvdbApiKey: z.string(),
   anidbUsername: z.string(),
   anidbPassword: z.string(),
@@ -102,6 +104,8 @@ export const aiSettingsPatchSchema = z.object({
   model: z.string().trim().min(1).optional(),
 });
 export const metadataProviderSettingsPatchSchema = z.object({
+  tmdbApiKey: z.string().optional(),
+  omdbApiKey: z.string().optional(),
   theTvdbApiKey: z.string().optional(),
   anidbUsername: z.string().optional(),
   anidbPassword: z.string().optional(),
@@ -138,6 +142,8 @@ export const defaultAppSettings: AppSettings = appSettingsSchema.parse({
     model: serverEnv.OPENROUTER_MODEL || "glm5.1",
   },
   metadataProviders: {
+    tmdbApiKey: serverEnv.TMDB_API_KEY,
+    omdbApiKey: serverEnv.OMDB_API_KEY,
     theTvdbApiKey: serverEnv.THETVDB_API_KEY,
     anidbUsername: serverEnv.ANIDB_USERNAME,
     anidbPassword: serverEnv.ANIDB_PASSWORD,
@@ -164,6 +170,8 @@ export function redactAppSettings(settings: AppSettings) {
       openRouterApiKeyConfigured: settings.ai.openRouterApiKey.length > 0,
     },
     metadataProviders: {
+      tmdbApiKeyConfigured: settings.metadataProviders.tmdbApiKey.length > 0,
+      omdbApiKeyConfigured: settings.metadataProviders.omdbApiKey.length > 0,
       theTvdbApiKeyConfigured: settings.metadataProviders.theTvdbApiKey.length > 0,
       anidbUsernameConfigured: settings.metadataProviders.anidbUsername.length > 0,
       anidbPasswordConfigured: settings.metadataProviders.anidbPassword.length > 0,
@@ -187,6 +195,26 @@ export async function getAppSettings(): Promise<AppSettings> {
   const parsed = appSettingsSchema.safeParse({
     ...defaultAppSettings,
     ...saved,
+    directories: {
+      ...defaultAppSettings.directories,
+      ...(isRecord(saved.directories) ? saved.directories : {}),
+    },
+    aria2: {
+      ...defaultAppSettings.aria2,
+      ...(isRecord(saved.aria2) ? saved.aria2 : {}),
+    },
+    ai: {
+      ...defaultAppSettings.ai,
+      ...(isRecord(saved.ai) ? saved.ai : {}),
+    },
+    metadataProviders: {
+      ...defaultAppSettings.metadataProviders,
+      ...(isRecord(saved.metadataProviders) ? saved.metadataProviders : {}),
+    },
+    general: {
+      ...defaultAppSettings.general,
+      ...(isRecord(saved.general) ? saved.general : {}),
+    },
   });
   return parsed.success ? parsed.data : defaultAppSettings;
 }

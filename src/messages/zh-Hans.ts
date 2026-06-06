@@ -45,7 +45,7 @@ export const zhHans = {
   aiSettings: "AI 模型",
   aiSettingsDescription: "OpenRouter 设置会用于标题归并、候选版本识别和低置信度审核。",
   metadataProviderSettings: "元数据源",
-  metadataProviderSettingsDescription: "TheTVDB 和 AniDB 凭据会用于后续构建季集目录与绝对编号映射。",
+  metadataProviderSettingsDescription: "TMDB/OMDB 用于电影和电视剧匹配；TheTVDB/AniDB 用于动画目录、季集与绝对编号映射。",
   generalSettings: "通用设置",
   generalSettingsDescription: "默认语言和订阅抓取频率。",
   rssSources: "RSS 源",

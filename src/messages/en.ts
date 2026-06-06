@@ -45,7 +45,7 @@ export const en = {
   aiSettings: "AI model",
   aiSettingsDescription: "OpenRouter settings are used for title grouping, variant detection, and review queues.",
   metadataProviderSettings: "Metadata providers",
-  metadataProviderSettingsDescription: "TheTVDB and AniDB credentials will be used to build season catalogs and absolute episode maps.",
+  metadataProviderSettingsDescription: "TMDB/OMDB power movie and TV matches; TheTVDB/AniDB support anime catalogs, seasons, and absolute episode maps.",
   generalSettings: "General settings",
   generalSettingsDescription: "Default language and subscription fetch interval.",
   rssSources: "RSS sources",
