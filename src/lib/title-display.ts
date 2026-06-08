@@ -17,6 +17,12 @@ const toSimplifiedChinese = OpenCC.Converter({ from: "tw", to: "cn" });
 const toTraditionalChinese = OpenCC.Converter({ from: "cn", to: "tw" });
 const releaseEditionPattern =
   /(?:^|[\s（(【\[])(?:放送版|オンエア版|先行放送版|先行版|無修正版|修正版|on[\s-]?air\s+version|broadcast\s+version|uncensored|censored)(?:$|[\s）)】\]])/gi;
+const mediaFileExtensionPattern = /\.(?:mkv|mp4|m4v|webm|mov|avi|m2ts|ts)$/i;
+const releaseEpisodePattern = /\bS\d{1,2}E\d{1,3}\b/i;
+const releaseNumberPattern = /\s[-–]\s\d{1,3}(?:\s|$)/;
+const releaseMarkerPattern =
+  /(?:\b(?:\d{3,4}p|HEVC|AVC|x26[45]|WEB[-_. ]?DL|Baha|AAC|FLAC|Ma10p|ASS|CH[ST]|CHT_JPN|JPN)\b|\[[^\]]*(?:\d{3,4}p|HEVC|AVC|x26[45]|WEB[-_. ]?DL|AAC|FLAC|Ma10p|ASS|CH[ST]|JPN)[^\]]*\])/i;
+const releaseGroupPrefixPattern = /^(?:\[[^\]]+\]\s*)+/;
 const seasonQualifierPatterns = [
   /\s+第\s*[一二三四五六七八九十\d]+\s*(?:季|期|シリーズ|クール)\s*$/i,
   /\s+\d{1,2}(?:st|nd|rd|th)\s+season\s*$/i,
@@ -73,7 +79,7 @@ export function collectTitleCandidates(media: DisplayMediaTitle) {
     if (!normalized) {
       return;
     }
-    const resolvedLocale = locale || inferTitleLanguage(normalized);
+    const resolvedLocale = locale && !isReleaseTitleInput(title) ? locale : inferTitleLanguage(normalized);
     candidates.push({ title: normalized, locale: resolvedLocale });
     if (/[\u3400-\u9fff]/.test(normalized)) {
       candidates.push({ title: toTraditionalChinese(normalized), locale: "zh-Hant" });
@@ -105,7 +111,7 @@ export async function upsertTitleAliases(mediaId: string, aliases: TitleAliasInp
     .flatMap(expandChineseAlias)
     .map((alias) => ({
       title: cleanTitle(alias.title),
-      locale: alias.locale?.trim() || null,
+      locale: isReleaseTitleInput(alias.title) ? null : alias.locale?.trim() || null,
     }))
     .filter((alias): alias is { title: string; locale: string | null } => Boolean(alias.title));
   if (cleanAliases.length === 0) {
@@ -274,7 +280,50 @@ function cleanTitle(value: string | null | undefined) {
       ?.replace(releaseEditionPattern, " ")
       .replace(/\s+/g, " ")
       .trim() || "";
-  return stripSeasonQualifier(cleaned);
+  const releaseTitle = cleanReleaseTitleCandidate(cleaned);
+  return stripSeasonQualifier(releaseTitle ?? cleaned);
+}
+
+function cleanReleaseTitleCandidate(value: string) {
+  if (!isReleaseTitleInput(value)) {
+    return null;
+  }
+
+  const withoutExtension = value.replace(mediaFileExtensionPattern, "").trim();
+  const bracketedTitle = withoutExtension.match(/^\[[^\]]+\]\[([^\]]{2,120})\]\[\d{1,3}\]/);
+  if (bracketedTitle?.[1]) {
+    return bracketedTitle[1].trim();
+  }
+
+  const withoutGroup = withoutExtension.replace(releaseGroupPrefixPattern, "").trim();
+  const seasonEpisode = withoutGroup.match(/^(.*?)\s[-–]\sS\d{1,2}E\d{1,3}\b/i);
+  if (seasonEpisode?.[1]) {
+    return seasonEpisode[1].trim();
+  }
+
+  const compactSeasonEpisode = withoutGroup.match(/^(.*?)\sS\d{1,2}E\d{1,3}\b/i);
+  if (compactSeasonEpisode?.[1]) {
+    return compactSeasonEpisode[1].trim();
+  }
+
+  const numberedEpisode = withoutGroup.match(/^(.*?)\s[-–]\s\d{1,3}(?:\s|$)/);
+  if (numberedEpisode?.[1] && releaseMarkerPattern.test(withoutGroup)) {
+    return numberedEpisode[1].trim();
+  }
+
+  return "";
+}
+
+function isReleaseTitleInput(value: string | null | undefined) {
+  if (!value) {
+    return false;
+  }
+  return (
+    mediaFileExtensionPattern.test(value) ||
+    (releaseEpisodePattern.test(value) && releaseMarkerPattern.test(value)) ||
+    (releaseNumberPattern.test(value) && releaseMarkerPattern.test(value)) ||
+    (releaseGroupPrefixPattern.test(value) && releaseMarkerPattern.test(value))
+  );
 }
 
 function stripSeasonQualifier(value: string) {

@@ -421,37 +421,6 @@ export function SettingsClient({ locale }: { locale: Locale }) {
       <section className="settings-panel wide">
         <div className="settings-panel-heading">
           <div>
-            <h2>{t.jobRuns}</h2>
-            <p>{t.jobRunsDescription}</p>
-          </div>
-          <button onClick={() => void refreshJobRuns()} type="button">
-            <RefreshCw size={14} />
-            {t.refresh}
-          </button>
-        </div>
-        <div className="job-run-list">
-          {jobRuns.length === 0 ? (
-            <p>{t.noJobRuns}</p>
-          ) : (
-            jobRuns.map((run) => (
-              <article className={run.status === "SUCCESS" ? "success" : "failed"} key={run.id}>
-                <div>
-                  <strong>{run.job}</strong>
-                  <small>
-                    {new Date(run.finishedAt).toLocaleString()} · {run.durationMs}ms
-                  </small>
-                </div>
-                <span>{run.status === "SUCCESS" ? t.jobStatusSuccess : t.jobStatusFailed}</span>
-                {run.error ? <em>{run.error}</em> : null}
-              </article>
-            ))
-          )}
-        </div>
-      </section>
-
-      <section className="settings-panel wide">
-        <div className="settings-panel-heading">
-          <div>
             <h2>{t.directorySettings}</h2>
             <p>{t.directorySettingsDescription}</p>
           </div>
@@ -821,6 +790,37 @@ export function SettingsClient({ locale }: { locale: Locale }) {
                 >
                   <Trash2 size={14} />
                 </button>
+              </article>
+            ))
+          )}
+        </div>
+      </section>
+
+      <section className="settings-panel wide">
+        <div className="settings-panel-heading">
+          <div>
+            <h2>{t.jobRuns}</h2>
+            <p>{t.jobRunsDescription}</p>
+          </div>
+          <button onClick={() => void refreshJobRuns()} type="button">
+            <RefreshCw size={14} />
+            {t.refresh}
+          </button>
+        </div>
+        <div className="job-run-list">
+          {jobRuns.length === 0 ? (
+            <p>{t.noJobRuns}</p>
+          ) : (
+            jobRuns.map((run) => (
+              <article className={run.status === "SUCCESS" ? "success" : "failed"} key={run.id}>
+                <div>
+                  <strong>{run.job}</strong>
+                  <small>
+                    {new Date(run.finishedAt).toLocaleString()} · {run.durationMs}ms
+                  </small>
+                </div>
+                <span>{run.status === "SUCCESS" ? t.jobStatusSuccess : t.jobStatusFailed}</span>
+                {run.error ? <em>{run.error}</em> : null}
               </article>
             ))
           )}
