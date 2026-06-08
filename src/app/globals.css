@@ -2776,6 +2776,10 @@ a {
   margin-top: 12px;
 }
 
+.metadata-alias-form {
+  display: contents;
+}
+
 .anime-metadata-actions select,
 .anime-metadata-actions input {
   min-height: 32px;
