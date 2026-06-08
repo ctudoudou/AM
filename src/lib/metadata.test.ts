@@ -86,6 +86,19 @@ describe("buildGenericMetadataQueries", () => {
     expect(queries.some((query) => /(?:^|\s)[._]+(?:\s|$)/.test(query))).toBe(false);
   });
 
+  it("keeps manually supplied aliases inside the provider query budget", () => {
+    const queries = buildGenericMetadataQueries([
+      "与王生活的男人 The Kings Warden",
+      "与王生活的男人 The King's Warden",
+      "與王生活的男人 The Kings Warden",
+      "與王生活的男人 The King's Warden",
+      "The King's Warden",
+      "The Man Who Lives with The King",
+    ]);
+
+    expect(queries).toContain("The Man Who Lives with The King");
+  });
+
   it("keeps movie title aliases ahead of extra package noise", () => {
     const queries = buildGenericMetadataQueries([
       "佐贺偶像是传奇 梦想银河乐园",

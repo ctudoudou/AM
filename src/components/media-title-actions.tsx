@@ -62,8 +62,13 @@ export function MediaTitleActions({
       if (!response.ok) {
         throw new Error(t.metadataActionError);
       }
+      const result = await response.json();
       setAlias("");
-      setMessage(t.metadataActionDone);
+      setMessage(
+        result?.metadata?.updated || result?.metadata?.provider
+          ? t.metadataActionDone
+          : t.metadataAliasNoMatch,
+      );
       router.refresh();
     } catch (error) {
       setMessage(error instanceof Error ? error.message : t.metadataActionError);

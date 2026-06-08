@@ -294,6 +294,7 @@ export const zhHans = {
   manualMetadataAlias: "手动元数据别名",
   manualMetadataAliasPlaceholder: "别名，例如：The Man Who Lives with The King",
   addMetadataAlias: "添加别名并刷新",
+  metadataAliasNoMatch: "已添加别名，但没有找到元数据匹配。",
   titleDisplayMode: "标题显示",
   followGlobalTitleDisplay: "跟随全局",
   titleZhHant: "繁体中文优先",
