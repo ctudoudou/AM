@@ -3622,6 +3622,11 @@ a {
     align-items: stretch;
   }
 
+  .library-filter-controls {
+    flex: 0 0 auto;
+    width: 100%;
+  }
+
   .watch-heading {
     gap: 10px;
     margin-bottom: 14px;
@@ -3968,7 +3973,8 @@ a {
   }
 
   .library-filter-controls {
-    flex: 1 1 100%;
+    flex: 0 0 auto;
+    width: 100%;
   }
 
   .library-filter-controls label {

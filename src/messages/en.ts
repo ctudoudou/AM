@@ -294,6 +294,7 @@ export const en = {
   manualMetadataAlias: "Manual metadata alias",
   manualMetadataAliasPlaceholder: "Alias, e.g. The Man Who Lives with The King",
   addMetadataAlias: "Add alias and refresh",
+  metadataAliasNoMatch: "Alias added, but no metadata match was found.",
   titleDisplayMode: "Title display",
   followGlobalTitleDisplay: "Follow global",
   titleZhHant: "Traditional Chinese first",

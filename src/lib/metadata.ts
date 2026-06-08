@@ -621,14 +621,22 @@ export function collectMediaMetadataQueryTexts(media: {
 
 export function buildGenericMetadataQueries(values: Array<string | null | undefined>) {
   const queries: string[] = [];
+  const titles: string[] = [];
   for (const value of prioritizeGenericMetadataQueryValues(values)) {
     const title = cleanGenericMetadataQueryTitle(value ?? "");
     if (!title || isNoisyGenericMetadataQuery(title)) {
       continue;
     }
-    addQuery(queries, title);
+    addQuery(titles, title);
     for (const part of title.split(/\s+\/\s+|｜|\|/).map((item) => cleanSearchTitle(item))) {
-      addQuery(queries, part);
+      addQuery(titles, part);
+    }
+  }
+  for (const title of titles) {
+    addQuery(queries, title);
+  }
+  for (const title of titles) {
+    for (const part of title.split(/\s+\/\s+|｜|\|/).map((item) => cleanSearchTitle(item))) {
       addPossessiveEnglishVariants(queries, part);
     }
     addPossessiveEnglishVariants(queries, title);

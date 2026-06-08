@@ -91,4 +91,51 @@ describe("resolveMediaDisplayTitle", () => {
     expect(title.secondaryTitles).toContain("よわよわ先生");
     expect(title.secondaryTitles).toContain("弱弱老师");
   });
+
+  it("does not promote episode release aliases as anime display titles", () => {
+    const title = resolveMediaDisplayTitle(
+      {
+        primaryTitle: "Sousou no Frieren",
+        originalTitle: "葬送のフリーレン",
+        aliases: [
+          {
+            title: "Sousou no Frieren - S01E09 [❀撥雪尋春❀][1080p][HEVC]",
+            locale: "zh-Hant",
+          },
+          { title: "[Haruhana] Sousou no Frieren - 09 [HEVC-10bit 1080p][CHT_JPN].mkv" },
+        ],
+      },
+      settings,
+    );
+
+    expect(title.displayTitle).toBe("葬送のフリーレン");
+    expect(title.secondaryTitles).toContain("Sousou no Frieren");
+    expect([title.displayTitle, ...title.secondaryTitles].join(" ")).not.toMatch(
+      /S01E09|1080p|HEVC|\.mkv/i,
+    );
+  });
+
+  it("falls back to the real localized title when release aliases contain localized episode notes", () => {
+    const title = resolveMediaDisplayTitle(
+      {
+        primaryTitle: "躲在超市后门抽烟的两人",
+        originalTitle: "スーパーの裏でヤニ吸うふたり",
+        aliases: [
+          {
+            title: "Behind the Supermarket, Smoking with You. - S01E01 [黒ネズミたち][1080p][AVC]",
+            locale: "zh-Hant",
+          },
+          {
+            title: "[Dynamis One] Super no Ura de Yani Suu Futari - 01 (CR 1920x1080 AVC AAC MKV) [857157AF].mkv",
+          },
+        ],
+      },
+      settings,
+    );
+
+    expect(title.displayTitle).toBe("躲在超市後門抽菸的兩人");
+    expect([title.displayTitle, ...title.secondaryTitles].join(" ")).not.toMatch(
+      /S01E01|1080p|AVC|Dynamis|\.mkv/i,
+    );
+  });
 });
