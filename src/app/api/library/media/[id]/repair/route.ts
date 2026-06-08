@@ -3,12 +3,19 @@ import { jsonError, jsonResponse } from "@/lib/api";
 import { prisma } from "@/lib/db";
 import { parseMediaReleaseTitle } from "@/lib/media-parser";
 import { refreshMediaMetadata } from "@/lib/metadata";
+import { upsertTitleAliases } from "@/lib/title-display";
 
 export const dynamic = "force-dynamic";
 
-const repairSchema = z.object({
-  action: z.enum(["refreshMetadata", "clearMetadata", "rebuildTitleFromFiles"]),
-});
+const repairSchema = z.discriminatedUnion("action", [
+  z.object({ action: z.literal("refreshMetadata") }),
+  z.object({ action: z.literal("clearMetadata") }),
+  z.object({ action: z.literal("rebuildTitleFromFiles") }),
+  z.object({
+    action: z.literal("addAliasAndRefresh"),
+    alias: z.string().trim().min(2).max(180),
+  }),
+]);
 
 export async function POST(
   request: Request,
@@ -21,6 +28,15 @@ export async function POST(
 
     if (input.action === "refreshMetadata") {
       return jsonResponse(await refreshMediaMetadata(id));
+    }
+
+    if (input.action === "addAliasAndRefresh") {
+      const aliasResult = await upsertTitleAliases(id, [{ title: input.alias }]);
+      return jsonResponse({
+        updated: true,
+        aliasCreated: aliasResult.created,
+        metadata: await refreshMediaMetadata(id),
+      });
     }
 
     if (input.action === "clearMetadata") {
