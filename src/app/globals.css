@@ -1317,6 +1317,114 @@ a {
   padding: 0 9px;
 }
 
+.subscription-workbench {
+  display: grid;
+  grid-template-columns: minmax(280px, 0.42fr) minmax(0, 1fr);
+  gap: 14px;
+  align-items: start;
+}
+
+.queue-master-list {
+  display: flex;
+  max-height: 760px;
+  flex-direction: column;
+  overflow: auto;
+  border: 1px solid rgba(255, 255, 255, 0.055);
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.018);
+}
+
+.queue-master-item {
+  display: grid;
+  min-height: 104px;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 5px;
+  border: 0;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.045);
+  border-radius: 0;
+  background: transparent;
+  color: inherit;
+  padding: 12px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.queue-master-item:last-child {
+  border-bottom: 0;
+}
+
+.queue-master-item:hover,
+.queue-master-item.active {
+  background: rgba(255, 255, 255, 0.045);
+}
+
+.queue-master-item.active {
+  box-shadow: inset 3px 0 0 rgba(0, 212, 146, 0.82);
+}
+
+.queue-master-item .candidate-policy {
+  width: fit-content;
+  min-height: 24px;
+  padding: 0 8px;
+  font-size: 11px;
+}
+
+.queue-master-item strong {
+  display: -webkit-box;
+  overflow: hidden;
+  color: rgba(255, 255, 255, 0.86);
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  font-size: 13px;
+  line-height: 18px;
+}
+
+.queue-master-item small,
+.queue-master-meta {
+  overflow: hidden;
+  color: var(--text-faint);
+  font-size: 11px;
+  line-height: 15px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.queue-master-item small:nth-of-type(2) {
+  color: var(--text-muted);
+}
+
+.queue-detail-panel {
+  min-height: 520px;
+}
+
+.queue-detail-status,
+.queue-subscription-summary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.queue-detail-status span,
+.queue-subscription-summary span {
+  display: inline-flex;
+  min-height: 26px;
+  align-items: center;
+  border: 1px solid rgba(255, 255, 255, 0.065);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.028);
+  color: var(--text-muted);
+  padding: 0 9px;
+  font-size: 12px;
+  line-height: 18px;
+}
+
+.queue-subscription-summary span {
+  color: rgba(167, 243, 208, 0.92);
+  border-color: rgba(16, 185, 129, 0.22);
+  background: rgba(16, 185, 129, 0.075);
+}
+
 .candidate-pagination {
   color: var(--text-muted);
   font-size: 12px;
@@ -3600,6 +3708,7 @@ a {
   .rss-draft,
   .subscription-controls,
   .candidate-filter-bar,
+  .subscription-workbench,
   .candidate-board,
   .anime-detail-main,
   .history-backfill-panel,
@@ -3625,6 +3734,14 @@ a {
   .library-filter-controls {
     flex: 0 0 auto;
     width: 100%;
+  }
+
+  .queue-master-list {
+    max-height: 360px;
+  }
+
+  .queue-detail-panel {
+    min-height: auto;
   }
 
   .watch-heading {
@@ -4021,6 +4138,19 @@ a {
   .candidate-group {
     padding: 14px;
     border-radius: 14px;
+  }
+
+  .queue-master-list {
+    max-height: 300px;
+  }
+
+  .queue-master-item {
+    min-height: 96px;
+    padding: 11px;
+  }
+
+  .queue-master-item strong {
+    overflow-wrap: anywhere;
   }
 
   .candidate-stats-row {
