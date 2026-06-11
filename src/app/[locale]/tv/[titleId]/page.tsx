@@ -45,13 +45,16 @@ export default async function TvTitlePage({
 
   const t = getMessages(locale);
   const missingCoverage = await getTvEpisodeCoverage(media.id);
+  type TvDetailSeason = (typeof media.seasons)[number];
+  type TvDetailEpisode = TvDetailSeason["episodes"][number];
+  const hasPlayableFile = (episode: TvDetailEpisode) => episode.files.length > 0;
   const episodeCount = media.seasons.reduce(
-    (count, season) =>
-      count + season.episodes.filter((episode) => episode.files.length > 0).length,
+    (count: number, season: TvDetailSeason) =>
+      count + season.episodes.filter(hasPlayableFile).length,
     0,
   );
-  const playableEpisodes = media.seasons.flatMap((season) =>
-    season.episodes.filter((episode) => episode.files.length > 0),
+  const playableEpisodes: TvDetailEpisode[] = media.seasons.flatMap((season: TvDetailSeason) =>
+    season.episodes.filter(hasPlayableFile),
   );
   const nextEpisode =
     playableEpisodes.find((episode) => !episode.progress[0]?.completed) ??
@@ -124,13 +127,13 @@ export default async function TvTitlePage({
               {episodeCount} {t.episodes}
             </span>
           </div>
-          {media.seasons.map((season) => (
+          {media.seasons.map((season: TvDetailSeason) => (
             <div className="episode-season" key={season.id}>
               <h3>
                 {t.seasons} {String(season.number).padStart(2, "0")}
               </h3>
               <div className="episode-list">
-                {season.episodes.map((episode) => {
+                {season.episodes.map((episode: TvDetailEpisode) => {
                   const file = selectPlayableFile(episode.files);
                   const progress = episode.progress[0];
                   const progressPercent =
@@ -152,7 +155,7 @@ export default async function TvTitlePage({
                         </small>
                       </div>
                       <div className="episode-files">
-                        {episode.files.slice(0, 3).map((item) => (
+                        {episode.files.slice(0, 3).map((item: TvDetailEpisode["files"][number]) => (
                           <span className="file-chip" key={item.id}>
                             {formatFileLabel(item)}
                           </span>

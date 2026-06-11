@@ -55,13 +55,16 @@ export default async function AnimeTitlePage({
   const display = resolveMediaDisplayTitle(media, settings);
   const missingCoverage = await getAnimeEpisodeCoverage(media.id);
   const title = splitTitle(display.displayTitle);
+  type AnimeDetailSeason = (typeof media.seasons)[number];
+  type AnimeDetailEpisode = AnimeDetailSeason["episodes"][number];
+  const hasPlayableFile = (episode: AnimeDetailEpisode) => episode.files.length > 0;
   const episodeCount = media.seasons.reduce(
-    (count, season) =>
-      count + season.episodes.filter((episode) => episode.files.length > 0).length,
+    (count: number, season: AnimeDetailSeason) =>
+      count + season.episodes.filter(hasPlayableFile).length,
     0,
   );
-  const playableEpisodes = media.seasons.flatMap((season) =>
-    season.episodes.filter((episode) => episode.files.length > 0),
+  const playableEpisodes: AnimeDetailEpisode[] = media.seasons.flatMap((season: AnimeDetailSeason) =>
+    season.episodes.filter(hasPlayableFile),
   );
   const nextEpisode =
     playableEpisodes.find((episode) => !episode.progress[0]?.completed) ??
@@ -146,13 +149,13 @@ export default async function AnimeTitlePage({
               {episodeCount} {t.episodes}
             </span>
           </div>
-          {media.seasons.map((season) => (
+          {media.seasons.map((season: AnimeDetailSeason) => (
             <div className="episode-season" key={season.id}>
               <h3>
                 {t.seasons} {String(season.number).padStart(2, "0")}
               </h3>
               <div className="episode-list">
-                {season.episodes.map((episode) => {
+                {season.episodes.map((episode: AnimeDetailEpisode) => {
                   const file = selectPlayableFile(episode.files);
                   const progress = episode.progress[0];
                   const progressPercent =
@@ -174,7 +177,7 @@ export default async function AnimeTitlePage({
                         </small>
                       </div>
                       <div className="episode-files">
-                        {episode.files.slice(0, 3).map((item) => (
+                        {episode.files.slice(0, 3).map((item: AnimeDetailEpisode["files"][number]) => (
                           <span className="file-chip" key={item.id}>
                             {formatFileLabel(item)}
                           </span>
