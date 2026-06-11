@@ -71,12 +71,15 @@ export default async function WatchPage({
       : media.type === "TV"
         ? `/${locale}/tv/${media.id}`
         : `/${locale}/anime/${media.id}`;
-  const file = episode.files.find((item) => item.id === requestedFileId) ?? selectPlayableFile(episode.files);
+  type WatchFile = (typeof episode.files)[number];
+  type WatchSeason = (typeof episode.season.media.seasons)[number];
+  type WatchEpisode = WatchSeason["episodes"][number];
+  const file = episode.files.find((item: WatchFile) => item.id === requestedFileId) ?? selectPlayableFile(episode.files);
   const episodes = episode.season.media.seasons
-    .flatMap((season) =>
+    .flatMap((season: WatchSeason) =>
       season.episodes
-        .filter((item) => item.files.length > 0)
-        .map((item) => ({
+        .filter((item: WatchEpisode) => item.files.length > 0)
+        .map((item: WatchEpisode) => ({
           id: item.id,
           number: item.number,
           title: item.title,
@@ -88,7 +91,7 @@ export default async function WatchPage({
                 completed: item.progress[0].completed,
               }
             : null,
-          files: item.files.map((mediaFile) => ({
+          files: item.files.map((mediaFile: WatchEpisode["files"][number]) => ({
             id: mediaFile.id,
             originalName: mediaFile.originalName,
             resolution: mediaFile.resolution,
@@ -101,7 +104,7 @@ export default async function WatchPage({
           })),
         })),
     );
-  const currentIndex = episodes.findIndex((item) => item.id === episode.id);
+  const currentIndex = episodes.findIndex((item: (typeof episodes)[number]) => item.id === episode.id);
   const previousEpisode = currentIndex > 0 ? episodes[currentIndex - 1] : null;
   const nextEpisode = currentIndex >= 0 ? episodes[currentIndex + 1] ?? null : null;
 

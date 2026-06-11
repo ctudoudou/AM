@@ -42,8 +42,11 @@ export default async function MovieTitlePage({
   }
 
   const t = getMessages(locale);
-  const playableEpisodes = media.seasons.flatMap((season) =>
-    season.episodes.filter((episode) => episode.files.length > 0),
+  type MovieDetailSeason = (typeof media.seasons)[number];
+  type MovieDetailEpisode = MovieDetailSeason["episodes"][number];
+  const hasPlayableFile = (episode: MovieDetailEpisode) => episode.files.length > 0;
+  const playableEpisodes: MovieDetailEpisode[] = media.seasons.flatMap((season: MovieDetailSeason) =>
+    season.episodes.filter(hasPlayableFile),
   );
   const nextEpisode =
     playableEpisodes.find((episode) => !episode.progress[0]?.completed) ??
@@ -109,7 +112,7 @@ export default async function MovieTitlePage({
             </span>
           </div>
           <div className="episode-list">
-            {playableEpisodes.map((episode) => {
+            {playableEpisodes.map((episode: MovieDetailEpisode) => {
               const file = selectPlayableFile(episode.files);
               const progress = episode.progress[0];
               const progressPercent =
@@ -131,7 +134,7 @@ export default async function MovieTitlePage({
                     </small>
                   </div>
                   <div className="episode-files">
-                    {episode.files.slice(0, 3).map((item) => (
+                    {episode.files.slice(0, 3).map((item: MovieDetailEpisode["files"][number]) => (
                       <span className="file-chip" key={item.id}>
                         {formatFileLabel(item)}
                       </span>

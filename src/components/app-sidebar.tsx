@@ -1,5 +1,6 @@
 import {
   Activity,
+  CalendarDays,
   Download,
   Film,
   Folder,
@@ -19,6 +20,7 @@ import { KuraIcon } from "@/components/kura-icon";
 type SidebarKey =
   | "home"
   | "anime"
+  | "animeCalendar"
   | "movies"
   | "tv"
   | "subscriptions"
@@ -34,6 +36,7 @@ const navGroups = [
     items: [
       { key: "home", icon: Home, href: "" },
       { key: "anime", icon: Sparkles, href: "/anime" },
+      { key: "animeCalendar", icon: CalendarDays, href: "/anime-calendar" },
       { key: "movies", icon: Film, href: "/movies" },
       { key: "tv", icon: Tv, href: "/tv" },
     ],
