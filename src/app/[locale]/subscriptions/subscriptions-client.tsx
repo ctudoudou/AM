@@ -200,6 +200,7 @@ export function SubscriptionsClient({ locale }: { locale: Locale }) {
   const [status, setStatus] = useState("");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(true);
+  const [selectedGroupId, setSelectedGroupId] = useState<string | null>(null);
   const groupsWithVersions = Math.max(0, candidateStats.totalGroups - candidateStats.emptyGroups);
   const visibleSubscriptions = useMemo(() => {
     const needle = subscriptionQuery.trim().toLowerCase();
@@ -257,6 +258,10 @@ export function SubscriptionsClient({ locale }: { locale: Locale }) {
     groups,
     subscriptions,
   ]);
+  const selectedGroup = useMemo(
+    () => visibleGroups.find((group) => group.id === selectedGroupId) ?? visibleGroups[0] ?? null,
+    [selectedGroupId, visibleGroups],
+  );
 
   const load = useCallback(async () => {
     try {
@@ -875,115 +880,169 @@ export function SubscriptionsClient({ locale }: { locale: Locale }) {
           <div className="empty-panel">
             {groups.length === 0 ? t.noCandidates : t.noMatchingResults}
           </div>
-        ) : (
-          visibleGroups.map((group) => {
-            const groupSubscriptions = subscriptions.filter(
-              (subscription) => subscription.candidateGroupId === group.id,
-            );
-            const hasAnySubscription = groupSubscriptions.length > 0;
-            const hasFutureOnlySubscription = groupSubscriptions.some((subscription) =>
-              subscriptionMatchesGroupFutureRule(group, subscription),
-            );
-            const freshness = summarizeCandidateGroupFreshness(group);
-            const queueStatus = group.queueStatus ?? fallbackQueueStatus(group, hasAnySubscription);
+        ) : selectedGroup ? (
+          <div className="subscription-workbench">
+            <div className="queue-master-list">
+              {visibleGroups.map((group) => {
+                const groupSubscriptions = subscriptions.filter(
+                  (subscription) => subscription.candidateGroupId === group.id,
+                );
+                const hasAnySubscription = groupSubscriptions.length > 0;
+                const freshness = summarizeCandidateGroupFreshness(group);
+                const queueStatus = group.queueStatus ?? fallbackQueueStatus(group, hasAnySubscription);
 
-            return (
-              <article className="candidate-group" key={group.id}>
-                <div className="candidate-heading">
-                  <div>
-                    <h2>{group.displayTitle}</h2>
-                    <p>
-                      {formatMediaType(group.mediaType, t)} ·{" "}
-                      {group._count.candidates} {t.candidates} ·{" "}
-                      {Math.round(group.confidence * 100)}% ·{" "}
-                      {group.reviewRequired ? t.needsReview : t.ready}
-                      {freshness ? (
-                        <>
-                          {" · "}
-                          {formatCandidateFreshness(freshness, locale, t)}
-                        </>
-                      ) : null}
-                      {group.sourceSummary ? (
-                        <>
-                          {" · "}
-                          {formatCandidateSourceSummary(group.sourceSummary, locale, t)}
-                        </>
-                      ) : null}
-                    </p>
-                  </div>
-                  <div className="candidate-heading-actions">
+                return (
+                  <button
+                    className={selectedGroup.id === group.id ? "queue-master-item active" : "queue-master-item"}
+                    key={group.id}
+                    onClick={() => setSelectedGroupId(group.id)}
+                    type="button"
+                  >
                     <span className={hasAnySubscription ? "candidate-policy active" : "candidate-policy"}>
                       {formatQueueState(queueStatus.state, t)}
                     </span>
-                    {!hasFutureOnlySubscription ? (
-                      <button onClick={() => void createSubscription(group)} type="button">
-                        <Plus size={14} />
-                        {t.futureOnlySubscribe}
-                      </button>
-                    ) : null}
-                  </div>
-                </div>
-                <p className="candidate-summary">{formatQueueReason(queueStatus.reason, t)}</p>
-                {group.aiSummary ? <p className="candidate-summary">{group.aiSummary}</p> : null}
-                {group.candidates.length === 0 ? (
-                  <div className="candidate-empty-version">
-                    {t.noVersionsYet} {formatQueueReason(queueStatus.reason, t)}
-                  </div>
-                ) : (
-                  <div className="candidate-list">
-                    {groupCandidatesByEpisode(group.candidates).map((episode) => (
-                      <div className="candidate-episode" key={episode.key}>
-                        <div className="candidate-episode-heading">
-                          <span>
-                            {t.episode} {episode.label}
-                          </span>
-                          <small>
-                            {episode.candidates.length} {t.candidates}
-                          </small>
-                        </div>
-                        {episode.candidates.map((candidate) => {
-                          const isSubscribed = groupSubscriptions.some((subscription) =>
-                            candidateMatchesSubscription(candidate, subscription),
-                          );
-                          const hasOtherSubscription = hasAnySubscription && !isSubscribed;
+                    <strong>{group.displayTitle}</strong>
+                    <small>
+                      {formatMediaType(group.mediaType, t)} · {group._count.candidates} {t.candidates} ·{" "}
+                      {Math.round(group.confidence * 100)}%
+                    </small>
+                    <small>
+                      {group.reviewRequired ? t.needsReview : formatQueueReason(queueStatus.reason, t)}
+                    </small>
+                    <span className="queue-master-meta">
+                      {freshness ? formatCandidateFreshness(freshness, locale, t) : t.latestCandidate}
+                      {group.sourceSummary
+                        ? ` · ${formatCandidateSourceSummary(group.sourceSummary, locale, t)}`
+                        : ""}
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
+            {(() => {
+              const group = selectedGroup;
+              const groupSubscriptions = subscriptions.filter(
+                (subscription) => subscription.candidateGroupId === group.id,
+              );
+              const hasAnySubscription = groupSubscriptions.length > 0;
+              const hasFutureOnlySubscription = groupSubscriptions.some((subscription) =>
+                subscriptionMatchesGroupFutureRule(group, subscription),
+              );
+              const freshness = summarizeCandidateGroupFreshness(group);
+              const queueStatus = group.queueStatus ?? fallbackQueueStatus(group, hasAnySubscription);
 
-                          return (
-                            <div className="candidate-row" key={candidate.id}>
-                              <div>
-                                <strong>{candidate.rawTitle}</strong>
-                                <span className="candidate-row-meta">
-                                  {formatCandidateMeta(candidate, locale)}
-                                </span>
-                              </div>
-                              <div className="candidate-actions">
-                                <button
-                                  disabled={isSubscribed}
-                                  onClick={() => void createSubscription(group, candidate)}
-                                  type="button"
-                                >
-                                  <Play size={14} />
-                                  {isSubscribed
-                                    ? t.matchedSubscribedVersion
-                                    : hasOtherSubscription
-                                      ? t.switchVersion
-                                      : t.subscribeVersion}
-                                </button>
-                                <button onClick={() => void downloadCandidate(candidate)} type="button">
-                                  <Download size={14} />
-                                  {t.download}
-                                </button>
-                              </div>
-                            </div>
-                          );
-                        })}
-                      </div>
-                    ))}
+              return (
+                <article className="candidate-group queue-detail-panel">
+                  <div className="candidate-heading">
+                    <div>
+                      <h2>{group.displayTitle}</h2>
+                      <p>
+                        {formatMediaType(group.mediaType, t)} ·{" "}
+                        {group._count.candidates} {t.candidates} ·{" "}
+                        {Math.round(group.confidence * 100)}% ·{" "}
+                        {group.reviewRequired ? t.needsReview : t.ready}
+                        {freshness ? (
+                          <>
+                            {" · "}
+                            {formatCandidateFreshness(freshness, locale, t)}
+                          </>
+                        ) : null}
+                        {group.sourceSummary ? (
+                          <>
+                            {" · "}
+                            {formatCandidateSourceSummary(group.sourceSummary, locale, t)}
+                          </>
+                        ) : null}
+                      </p>
+                    </div>
+                    <div className="candidate-heading-actions">
+                      <span className={hasAnySubscription ? "candidate-policy active" : "candidate-policy"}>
+                        {formatQueueState(queueStatus.state, t)}
+                      </span>
+                      {!hasFutureOnlySubscription ? (
+                        <button onClick={() => void createSubscription(group)} type="button">
+                          <Plus size={14} />
+                          {t.futureOnlySubscribe}
+                        </button>
+                      ) : null}
+                    </div>
                   </div>
-                )}
-              </article>
-            );
-          })
-        )}
+                  <div className="queue-detail-status">
+                    <span>{formatQueueReason(queueStatus.reason, t)}</span>
+                    {group.aiSummary ? <span>{group.aiSummary}</span> : null}
+                  </div>
+                  {groupSubscriptions.length > 0 ? (
+                    <div className="queue-subscription-summary">
+                      {groupSubscriptions.map((subscription) => (
+                        <span key={subscription.id}>
+                          {subscription.autoDownload ? t.subscriptionModeAuto : t.subscriptionModeManual}
+                          {formatSubscriptionPolicy(subscription)
+                            ? ` · ${formatSubscriptionPolicy(subscription)}`
+                            : ""}
+                        </span>
+                      ))}
+                    </div>
+                  ) : null}
+                  {group.candidates.length === 0 ? (
+                    <div className="candidate-empty-version">
+                      {t.noVersionsYet} {formatQueueReason(queueStatus.reason, t)}
+                    </div>
+                  ) : (
+                    <div className="candidate-list">
+                      {groupCandidatesByEpisode(group.candidates).map((episode) => (
+                        <div className="candidate-episode" key={episode.key}>
+                          <div className="candidate-episode-heading">
+                            <span>
+                              {t.episode} {episode.label}
+                            </span>
+                            <small>
+                              {episode.candidates.length} {t.candidates}
+                            </small>
+                          </div>
+                          {episode.candidates.map((candidate) => {
+                            const isSubscribed = groupSubscriptions.some((subscription) =>
+                              candidateMatchesSubscription(candidate, subscription),
+                            );
+                            const hasOtherSubscription = hasAnySubscription && !isSubscribed;
+
+                            return (
+                              <div className="candidate-row" key={candidate.id}>
+                                <div>
+                                  <strong>{candidate.rawTitle}</strong>
+                                  <span className="candidate-row-meta">
+                                    {formatCandidateMeta(candidate, locale)}
+                                  </span>
+                                </div>
+                                <div className="candidate-actions">
+                                  <button
+                                    disabled={isSubscribed}
+                                    onClick={() => void createSubscription(group, candidate)}
+                                    type="button"
+                                  >
+                                    <Play size={14} />
+                                    {isSubscribed
+                                      ? t.matchedSubscribedVersion
+                                      : hasOtherSubscription
+                                        ? t.switchVersion
+                                        : t.subscribeVersion}
+                                  </button>
+                                  <button onClick={() => void downloadCandidate(candidate)} type="button">
+                                    <Download size={14} />
+                                    {t.download}
+                                  </button>
+                                </div>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </article>
+              );
+            })()}
+          </div>
+        ) : null}
         <div className="candidate-pagination">
           <span>
             {t.queuePage} {candidatePageInfo.page} / {candidatePageInfo.totalPages} ·{" "}
