@@ -1,6 +1,9 @@
+import fs from "node:fs/promises";
+import path from "node:path";
 import type { MediaTitle } from "@prisma/client";
 import { normalizeTitleAliases } from "@/lib/anime-parser";
 import { prisma } from "@/lib/db";
+import { getAppSettings, type AppSettings } from "@/lib/settings";
 
 export const animeCalendarProviders = ["bangumi", "jikan"] as const;
 export type AnimeCalendarProvider = (typeof animeCalendarProviders)[number];
@@ -58,6 +61,41 @@ type FetchCalendarInput = {
   provider: AnimeCalendarProvider;
   year: number;
   quarter: AnimeCalendarQuarter;
+};
+
+type AnimeSeasonCalendarSettings = Pick<AppSettings, "directories" | "general">;
+
+type GetAnimeSeasonCalendarOptions = {
+  forceRefresh?: boolean;
+  now?: Date;
+  settings?: AnimeSeasonCalendarSettings;
+};
+
+type CachedProviderCalendar = {
+  items: AnimeCalendarItem[];
+  fetchedAt: Date;
+  expiresAt: Date;
+  hit: boolean;
+  stale: boolean;
+};
+
+type AnimeCalendarCacheFile = {
+  provider: AnimeCalendarProvider;
+  year: number;
+  quarter: AnimeCalendarQuarter;
+  fetchedAt: string;
+  items: AnimeCalendarItem[];
+};
+
+export type AnimeSeasonCalendarResult = {
+  items: AnimeCalendarItem[];
+  cache: {
+    hit: boolean;
+    stale: boolean;
+    fetchedAt: string;
+    expiresAt: string;
+    refreshFrequencyMinutes: number;
+  };
 };
 
 type BangumiCalendarDay = {
@@ -184,9 +222,13 @@ export function quarterFromMonth(month: number): AnimeCalendarQuarter {
   return "Q4";
 }
 
-export async function getAnimeSeasonCalendar(input: FetchCalendarInput) {
+export async function getAnimeSeasonCalendar(
+  input: FetchCalendarInput,
+  options: GetAnimeSeasonCalendarOptions = {},
+): Promise<AnimeSeasonCalendarResult> {
+  const settings = options.settings ?? await getAppSettings();
   const [externalResult, localContextResult] = await Promise.allSettled([
-    fetchProviderCalendar(input),
+    getCachedProviderCalendar(input, settings, options),
     buildLocalAnimeCalendarContext(),
   ]);
   if (externalResult.status === "rejected") {
@@ -197,9 +239,20 @@ export async function getAnimeSeasonCalendar(input: FetchCalendarInput) {
       ? localContextResult.value
       : emptyLocalAnimeCalendarContext();
 
-  return externalResult.value
+  const items = externalResult.value.items
     .map((item) => annotateCalendarItem(item, localContext))
     .sort(compareCalendarItems);
+
+  return {
+    items,
+    cache: {
+      hit: externalResult.value.hit,
+      stale: externalResult.value.stale,
+      fetchedAt: externalResult.value.fetchedAt.toISOString(),
+      expiresAt: externalResult.value.expiresAt.toISOString(),
+      refreshFrequencyMinutes: settings.general.animeCalendarRefreshMinutes,
+    },
+  };
 }
 
 async function fetchProviderCalendar(input: FetchCalendarInput): Promise<AnimeCalendarItem[]> {
@@ -207,6 +260,110 @@ async function fetchProviderCalendar(input: FetchCalendarInput): Promise<AnimeCa
     return fetchJikanSeason(input.year, input.quarter);
   }
   return fetchBangumiCalendar(input.year, input.quarter);
+}
+
+async function getCachedProviderCalendar(
+  input: FetchCalendarInput,
+  settings: AnimeSeasonCalendarSettings,
+  options: GetAnimeSeasonCalendarOptions,
+): Promise<CachedProviderCalendar> {
+  const now = options.now ?? new Date();
+  const cachePath = animeCalendarCachePath(settings.directories.metadataDir, input);
+  const cached = await readAnimeCalendarCache(cachePath, input, settings.general.animeCalendarRefreshMinutes);
+
+  if (cached && !options.forceRefresh && cached.expiresAt > now) {
+    return {
+      ...cached,
+      hit: true,
+      stale: false,
+    };
+  }
+
+  try {
+    const items = stripLocalStatus(await fetchProviderCalendar(input));
+    const fetchedAt = now;
+    const expiresAt = animeCalendarCacheExpiresAt(fetchedAt, settings.general.animeCalendarRefreshMinutes);
+    await writeAnimeCalendarCache(cachePath, {
+      ...input,
+      fetchedAt: fetchedAt.toISOString(),
+      items,
+    }).catch(() => null);
+    return {
+      items,
+      fetchedAt,
+      expiresAt,
+      hit: false,
+      stale: false,
+    };
+  } catch (error) {
+    if (cached) {
+      return {
+        ...cached,
+        hit: true,
+        stale: true,
+      };
+    }
+    throw error;
+  }
+}
+
+function animeCalendarCachePath(metadataDir: string, input: FetchCalendarInput) {
+  return path.join(
+    metadataDir,
+    "anime-season-calendar",
+    `${input.provider}-${input.year}-${input.quarter}.json`,
+  );
+}
+
+async function readAnimeCalendarCache(
+  cachePath: string,
+  input: FetchCalendarInput,
+  refreshFrequencyMinutes: number,
+): Promise<CachedProviderCalendar | null> {
+  const raw = await fs.readFile(cachePath, "utf8").catch(() => null);
+  if (!raw) {
+    return null;
+  }
+
+  const parsed = safeJsonParse(raw);
+  if (!isRecord(parsed)) {
+    return null;
+  }
+
+  const fetchedAt = dateValue(parsed.fetchedAt);
+  if (
+    parsed.provider !== input.provider ||
+    parsed.year !== input.year ||
+    parsed.quarter !== input.quarter ||
+    !fetchedAt ||
+    !Array.isArray(parsed.items)
+  ) {
+    return null;
+  }
+
+  return {
+    items: stripLocalStatus(parsed.items.filter(isAnimeCalendarItem)),
+    fetchedAt,
+    expiresAt: animeCalendarCacheExpiresAt(fetchedAt, refreshFrequencyMinutes),
+    hit: true,
+    stale: false,
+  };
+}
+
+async function writeAnimeCalendarCache(cachePath: string, cache: AnimeCalendarCacheFile) {
+  await fs.mkdir(path.dirname(cachePath), { recursive: true });
+  await fs.writeFile(cachePath, `${JSON.stringify(cache, null, 2)}\n`, "utf8");
+}
+
+function animeCalendarCacheExpiresAt(fetchedAt: Date, refreshFrequencyMinutes: number) {
+  return new Date(fetchedAt.getTime() + refreshFrequencyMinutes * 60_000);
+}
+
+function stripLocalStatus(items: AnimeCalendarItem[]) {
+  return items.map((item) => ({
+    ...item,
+    local: null,
+  }));
 }
 
 async function fetchBangumiCalendar(year: number, quarter: AnimeCalendarQuarter): Promise<AnimeCalendarItem[]> {
@@ -652,6 +809,15 @@ function positiveInteger(value: unknown) {
   return Number.isInteger(number) && number > 0 ? number : null;
 }
 
+function dateValue(value: unknown) {
+  const text = stringValue(value);
+  if (!text) {
+    return null;
+  }
+  const date = new Date(text);
+  return Number.isNaN(date.getTime()) ? null : date;
+}
+
 function jsonStringList(value: unknown) {
   if (!Array.isArray(value)) {
     return [];
@@ -674,6 +840,27 @@ function normalizeProviderId(provider: string) {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+
+function isAnimeCalendarItem(value: unknown): value is AnimeCalendarItem {
+  if (!isRecord(value)) {
+    return false;
+  }
+  return (
+    animeCalendarProviders.includes(value.provider as AnimeCalendarProvider) &&
+    typeof value.externalId === "string" &&
+    typeof value.sourceUrl === "string" &&
+    typeof value.title === "string" &&
+    positiveInteger(value.weekday) !== null
+  );
+}
+
+function safeJsonParse(value: string) {
+  try {
+    return JSON.parse(value) as unknown;
+  } catch {
+    return null;
+  }
 }
 
 function delay(ms: number) {
