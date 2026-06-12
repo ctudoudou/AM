@@ -7,6 +7,9 @@ import { parseMediaReleaseTitle } from "@/lib/media-parser";
 import { getAppSettings } from "@/lib/settings";
 
 const videoExtensions = new Set([".mkv", ".mp4", ".avi", ".mov", ".webm", ".m4v", ".ts"]);
+const seasonDirectoryPattern = /^season\s*(?<season>\d{1,2})$/i;
+const supplementalDirectoryPattern =
+  /^(?:extra|extras|special|specials|ova|oad|sp|ncop|nced|menu|scan|scans|pv|cm)$/i;
 
 type ScanTarget = {
   type: MediaType;
@@ -133,7 +136,7 @@ async function findVideoFiles(root: string): Promise<string[]> {
   return files;
 }
 
-function parseLibraryIdentity(filePath: string, target: ScanTarget) {
+export function parseLibraryIdentity(filePath: string, target: ScanTarget) {
   const baseName = path.basename(filePath, path.extname(filePath));
   const parentName = path.basename(path.dirname(filePath));
   const titleSource = target.type === "MOVIE" ? parentName || baseName : inferSeriesName(filePath);
@@ -142,7 +145,7 @@ function parseLibraryIdentity(filePath: string, target: ScanTarget) {
   const tvMatch =
     baseName.match(/\bS(?<season>\d{1,2})E(?<episode>\d{1,4})\b/i) ??
     baseName.match(/\bE(?<episode>\d{1,4})\b/i);
-  const seasonFromDir = parentName.match(/season\s*(?<season>\d{1,2})/i)?.groups?.season;
+  const seasonFromDir = inferSeasonNumber(filePath);
   const episodeFromLoose = baseName.match(/(?:第|\s|\[| - )(?<episode>\d{1,4})(?:话|集|\]|\s|$)/i)
     ?.groups?.episode;
 
@@ -166,11 +169,30 @@ function parseLibraryIdentity(filePath: string, target: ScanTarget) {
 }
 
 function inferSeriesName(filePath: string) {
-  const parent = path.basename(path.dirname(filePath));
-  if (/season\s*\d+/i.test(parent)) {
-    return path.basename(path.dirname(path.dirname(filePath)));
+  const segments = path.dirname(filePath).split(path.sep).filter(Boolean);
+  for (let index = segments.length - 1; index > 0; index -= 1) {
+    if (seasonDirectoryPattern.test(segments[index])) {
+      return segments[index - 1];
+    }
   }
-  return parent;
+  for (let index = segments.length - 1; index >= 0; index -= 1) {
+    const segment = segments[index];
+    if (!supplementalDirectoryPattern.test(segment)) {
+      return segment;
+    }
+  }
+  return path.basename(path.dirname(filePath));
+}
+
+function inferSeasonNumber(filePath: string) {
+  const segments = path.dirname(filePath).split(path.sep).filter(Boolean);
+  for (let index = segments.length - 1; index >= 0; index -= 1) {
+    const season = segments[index].match(seasonDirectoryPattern)?.groups?.season;
+    if (season) {
+      return season;
+    }
+  }
+  return undefined;
 }
 
 function extractYear(value: string) {
