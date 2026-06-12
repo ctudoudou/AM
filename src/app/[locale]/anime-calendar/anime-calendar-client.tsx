@@ -249,60 +249,62 @@ function CalendarCard({ item, locale }: { item: AnimeCalendarItem; locale: Local
 
   return (
     <article className={`anime-calendar-card is-${status.toLowerCase().replace("_", "-")}`}>
-      <div
-        className="anime-calendar-poster"
-        style={{ backgroundImage: cover ? `url(${cover})` : undefined }}
-      >
-        {!cover ? <span>{item.title.slice(0, 2)}</span> : null}
+      <div className="anime-calendar-card-main">
+        <div
+          className="anime-calendar-poster"
+          style={{ backgroundImage: cover ? `url(${cover})` : undefined }}
+        >
+          {!cover ? <span>{item.title.slice(0, 2)}</span> : null}
+        </div>
+        <div className="anime-calendar-card-body">
+          <div className="anime-calendar-card-title">
+            <h2>{item.title}</h2>
+            <StatusBadge status={status} />
+          </div>
+          {secondaryTitle(item) ? <p>{secondaryTitle(item)}</p> : null}
+          <div className="anime-calendar-meta">
+            <span>
+              <Clock3 size={12} />
+              {broadcastLabel(item, t)}
+            </span>
+            {item.totalEpisodes ? <span>{item.totalEpisodes} {t.episodes}</span> : null}
+            {item.score ? <span>{item.score.toFixed(1)}</span> : null}
+          </div>
+          <div className="anime-calendar-local-row">
+            {local ? (
+              <>
+                <span>{local.playableEpisodes}/{totalEpisodeLabel}</span>
+                {local.subscribed ? <span>{t.calendarStatusSubscribed}</span> : null}
+                {local.wantedMissing > 0 ? <span>{t.missing} {local.wantedMissing}</span> : null}
+              </>
+            ) : (
+              <span>{t.calendarStatusUnmatched}</span>
+            )}
+          </div>
+        </div>
       </div>
-      <div className="anime-calendar-card-body">
-        <div className="anime-calendar-card-title">
-          <h2>{item.title}</h2>
-          <StatusBadge status={status} />
-        </div>
-        {secondaryTitle(item) ? <p>{secondaryTitle(item)}</p> : null}
-        <div className="anime-calendar-meta">
-          <span>
-            <Clock3 size={12} />
-            {broadcastLabel(item, t)}
-          </span>
-          {item.totalEpisodes ? <span>{item.totalEpisodes} {t.episodes}</span> : null}
-          {item.score ? <span>{item.score.toFixed(1)}</span> : null}
-        </div>
-        <div className="anime-calendar-local-row">
-          {local ? (
-            <>
-              <span>{local.playableEpisodes}/{totalEpisodeLabel}</span>
-              {local.subscribed ? <span>{t.calendarStatusSubscribed}</span> : null}
-              {local.wantedMissing > 0 ? <span>{t.missing} {local.wantedMissing}</span> : null}
-            </>
-          ) : (
-            <span>{t.calendarStatusUnmatched}</span>
-          )}
-        </div>
-        <div className="anime-calendar-actions">
-          {local?.mediaId ? (
-            <a href={`/${locale}/anime/${local.mediaId}`}>
-              <Library size={13} />
-              {t.openAnimeTitle}
-            </a>
-          ) : (
-            <a href={`/${locale}/subscriptions`}>
-              <Rss size={13} />
-              {t.openSubscriptions}
-            </a>
-          )}
-          {local?.nextEpisodeId ? (
-            <a href={`/${locale}/watch/${local.nextEpisodeId}`}>
-              <Play size={13} />
-              {t.playNow}
-            </a>
-          ) : null}
-          <a href={item.sourceUrl} rel="noreferrer" target="_blank">
-            <ExternalLink size={13} />
-            {providerLabel(item.provider)}
+      <div className="anime-calendar-actions">
+        {local?.mediaId ? (
+          <a href={`/${locale}/anime/${local.mediaId}`}>
+            <Library size={13} />
+            {t.openAnimeTitle}
           </a>
-        </div>
+        ) : (
+          <a href={`/${locale}/subscriptions`}>
+            <Rss size={13} />
+            {t.openSubscriptions}
+          </a>
+        )}
+        {local?.nextEpisodeId ? (
+          <a href={`/${locale}/watch/${local.nextEpisodeId}`}>
+            <Play size={13} />
+            {t.playNow}
+          </a>
+        ) : null}
+        <a href={item.sourceUrl} rel="noreferrer" target="_blank">
+          <ExternalLink size={13} />
+          {providerLabel(item.provider)}
+        </a>
       </div>
     </article>
   );

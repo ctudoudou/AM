@@ -2,7 +2,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/db";
-import { normalizeTitleAliases } from "@/lib/anime-parser";
+import { normalizeTitle, normalizeTitleAliases } from "@/lib/anime-parser";
 import { parseMediaReleaseTitle, type IntakeMediaType } from "@/lib/media-parser";
 import { createOrganizerPlanForCandidateSource } from "@/lib/organizer";
 import { getAppSettings } from "@/lib/settings";
@@ -17,7 +17,23 @@ export type ImportScanInput = {
 
 export function parseImportReleaseFromPath(filePath: string, mediaType: IntakeMediaType) {
   const baseName = path.basename(filePath, path.extname(filePath));
-  return parseMediaReleaseTitle(baseName, mediaType);
+  const parsed = parseMediaReleaseTitle(baseName, mediaType);
+  const seasonHint = inferImportSeason(filePath);
+  const titleHint = inferImportSeriesTitle(filePath, parsed.mediaType);
+  if (!titleHint) {
+    return {
+      ...parsed,
+      season: parsed.season ?? seasonHint,
+    };
+  }
+
+  return {
+    ...parsed,
+    parsedTitle: titleHint,
+    normalizedTitle: normalizeTitle(titleHint),
+    season: parsed.season ?? seasonHint,
+    confidence: Math.max(parsed.confidence, parsed.episodeNumber ? 0.82 : 0.72),
+  };
 }
 
 export async function scanImportDirectory(input: ImportScanInput) {
@@ -163,4 +179,52 @@ export function assertImportRootInsideDataRoot(candidatePath: string, rootPath: 
     throw new Error(`Import path must be inside DATA_ROOT: ${candidatePath}`);
   }
   return resolved;
+}
+
+function inferImportSeriesTitle(filePath: string, mediaType: Exclude<IntakeMediaType, "AUTO">) {
+  const segments = path.dirname(filePath).split(path.sep).filter(Boolean).reverse();
+  for (const segment of segments) {
+    if (isGenericImportDirectorySegment(segment)) {
+      continue;
+    }
+    const parsed = parseMediaReleaseTitle(segment, mediaType);
+    const title = parsed.parsedTitle.trim();
+    if (isUsableImportTitleHint(title)) {
+      return title;
+    }
+  }
+  return undefined;
+}
+
+function inferImportSeason(filePath: string) {
+  for (const segment of path.dirname(filePath).split(path.sep).filter(Boolean).reverse()) {
+    const normalized = segment.toLowerCase().replace(/[._-]+/g, " ").replace(/\s+/g, " ").trim();
+    const match = normalized.match(/^(?:season|series|s)\s*(?<season>\d{1,2})$/);
+    if (match?.groups?.season) {
+      return Number(match.groups.season);
+    }
+  }
+  return undefined;
+}
+
+function isGenericImportDirectorySegment(value: string) {
+  const normalized = value.toLowerCase().replace(/[._-]+/g, " ").replace(/\s+/g, " ").trim();
+  return (
+    /^(?:data|import|imports|download|downloads|library|anime|tv|movies?)$/.test(normalized) ||
+    /^(?:season|series|s)\s*\d{1,2}$/.test(normalized) ||
+    /^(?:extras?|specials?|ovas?|cd|disc|disk|vol(?:ume)?)\s*\d*$/.test(normalized)
+  );
+}
+
+function isUsableImportTitleHint(value: string) {
+  const normalized = normalizeTitle(value);
+  if (!normalized || normalized.length < 2 || /^[\d\s._-]+$/.test(normalized)) {
+    return false;
+  }
+  if (isGenericImportDirectorySegment(value)) {
+    return false;
+  }
+  return !/^(?:2160p|4k|1080p|720p|480p|x26[45]|h26[45]|hevc|avc|aac|flac|web|webrip|web dl|bd|bdrip|bluray)$/i.test(
+    normalized,
+  );
 }

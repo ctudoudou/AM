@@ -56,14 +56,31 @@ export async function findExistingMediaTitle(input: IdentityInput) {
     },
   });
 
-  return candidates
-    .map((media) => ({
-      media,
-      score: overlapScore(keys, createMediaIdentityKeys(media)),
-    }))
-    .filter((item) => item.score > 0)
-    .sort((a, b) => b.score - a.score || mediaQualityScore(b.media) - mediaQualityScore(a.media))[0]
-    ?.media ?? null;
+  const ranked = rankMediaIdentityMatches(keys, candidates);
+  if (ranked[0]) {
+    return ranked[0].media;
+  }
+
+  if (input.type !== "ANIME" || !input.year) {
+    return null;
+  }
+
+  const crossYearCandidates = await prisma.mediaTitle.findMany({
+    where: { type: input.type },
+    include: {
+      aliases: true,
+      metadata: true,
+      seasons: {
+        include: {
+          episodes: {
+            include: { files: true },
+          },
+        },
+      },
+    },
+  });
+
+  return rankMediaIdentityMatches(keys, crossYearCandidates, { minimumScore: 3 })[0]?.media ?? null;
 }
 
 export async function addMediaTitleAliases(mediaId: string, values: Array<string | null | undefined>) {
@@ -308,14 +325,34 @@ function identityKeys(values: Array<string | null | undefined>, mediaType?: Medi
   return keys;
 }
 
+export function rankMediaIdentityMatches<T extends MediaIdentity>(
+  keys: Set<string>,
+  candidates: T[],
+  options: { minimumScore?: number } = {},
+) {
+  const minimumScore = options.minimumScore ?? 1;
+  return candidates
+    .map((media) => ({
+      media,
+      score: overlapScore(keys, createMediaIdentityKeys(media)),
+    }))
+    .filter((item) => item.score >= minimumScore)
+    .sort((a, b) => b.score - a.score || mediaQualityScore(b.media) - mediaQualityScore(a.media));
+}
+
 function overlapScore(input: Set<string>, candidate: Set<string>) {
   let score = 0;
   for (const key of input) {
     if (candidate.has(key)) {
-      score += key.length >= 12 ? 3 : 1;
+      score += identityKeyWeight(key);
     }
   }
   return score;
+}
+
+function identityKeyWeight(key: string) {
+  const cjkCount = [...key].filter((char) => /[\u3400-\u9fff]/.test(char)).length;
+  return key.length >= 12 || cjkCount >= 4 ? 3 : 1;
 }
 
 function cleanMediaPrimaryTitle(value: string, mediaType?: MediaType) {

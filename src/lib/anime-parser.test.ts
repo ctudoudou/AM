@@ -255,6 +255,18 @@ describe("parseAnimeReleaseTitle", () => {
     expect(parsed.parsedTitle).not.toContain("MP4");
   });
 
+  it("parses hash-prefixed episode numbers without treating language tags as titles", () => {
+    const parsed = parseAnimeReleaseTitle(
+      "龍王的工作 #7 [國╱日] (TVRip 1920x1080 H265 AAC)",
+    );
+
+    expect(parsed.parsedTitle).toBe("龍王的工作");
+    expect(parsed.normalizedTitle).toBe("龙王的工作");
+    expect(parsed.episodeNumber).toBe(7);
+    expect(parsed.subtitleGroup).toBeUndefined();
+    expect(parsed.releaseProfile).toContain("國╱日");
+  });
+
   it("drops descriptive batch ranges from bracket title aliases", () => {
     const parsed = parseAnimeReleaseTitle(
       "[SweetSub][正相反的你与我][Seihantai na Kimi to Boku][01-12 精校合集][WebRip][1080P][AVC 8bit][简日双语]（检索用：相反的你和我）",
