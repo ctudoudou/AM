@@ -2254,7 +2254,7 @@ a {
 
 .anime-calendar-summary {
   display: grid;
-  grid-template-columns: repeat(5, minmax(0, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(148px, 1fr));
   gap: 10px;
 }
 
@@ -2301,26 +2301,33 @@ a {
 
 .anime-calendar-grid {
   display: grid;
-  grid-template-columns: repeat(7, minmax(148px, 1fr));
-  gap: 10px;
+  grid-template-columns: repeat(7, minmax(232px, 1fr));
+  gap: 12px;
   align-items: start;
+  overflow-x: auto;
+  overscroll-behavior-x: contain;
+  padding-bottom: 6px;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(255, 255, 255, 0.18) transparent;
 }
 
 .anime-calendar-day {
-  min-width: 0;
+  min-width: 232px;
   border: 1px solid rgba(255, 255, 255, 0.055);
   border-radius: 12px;
   background: rgba(255, 255, 255, 0.025);
+  overflow: hidden;
 }
 
 .anime-calendar-day > header {
   display: flex;
-  min-height: 38px;
+  min-height: 42px;
   align-items: center;
   justify-content: space-between;
   gap: 8px;
   border-bottom: 1px solid rgba(255, 255, 255, 0.055);
-  padding: 0 10px;
+  background: rgba(255, 255, 255, 0.018);
+  padding: 0 12px;
 }
 
 .anime-calendar-day > header strong {
@@ -2336,18 +2343,32 @@ a {
 .anime-calendar-day-list {
   display: grid;
   gap: 8px;
-  padding: 8px;
+  padding: 10px;
 }
 
 .anime-calendar-card {
-  display: grid;
+  display: flex;
   min-width: 0;
-  grid-template-columns: 54px minmax(0, 1fr);
+  flex-direction: column;
   gap: 9px;
   border: 1px solid rgba(255, 255, 255, 0.055);
   border-radius: 10px;
   background: rgba(255, 255, 255, 0.032);
-  padding: 8px;
+  padding: 10px;
+  transition: border-color 160ms ease, background-color 160ms ease;
+}
+
+.anime-calendar-card:hover {
+  border-color: rgba(255, 255, 255, 0.12);
+  background: rgba(255, 255, 255, 0.047);
+}
+
+.anime-calendar-card-main {
+  display: grid;
+  min-width: 0;
+  grid-template-columns: 66px minmax(0, 1fr);
+  gap: 10px;
+  align-items: start;
 }
 
 .anime-calendar-card.is-playable {
@@ -2364,7 +2385,7 @@ a {
 
 .anime-calendar-poster {
   display: grid;
-  width: 54px;
+  width: 66px;
   aspect-ratio: 2 / 3;
   place-items: center;
   overflow: hidden;
@@ -2397,8 +2418,8 @@ a {
   overflow: hidden;
   margin: 0;
   color: rgba(255, 255, 255, 0.9);
-  font-size: 12px;
-  line-height: 17px;
+  font-size: 13px;
+  line-height: 18px;
   -webkit-box-orient: vertical;
   -webkit-line-clamp: 2;
 }
@@ -2419,15 +2440,14 @@ a {
   overflow: hidden;
   margin: 3px 0 0;
   color: var(--text-faint);
-  font-size: 11px;
+  font-size: 11.5px;
   line-height: 15px;
   -webkit-box-orient: vertical;
-  -webkit-line-clamp: 2;
+  -webkit-line-clamp: 1;
 }
 
 .anime-calendar-meta,
-.anime-calendar-local-row,
-.anime-calendar-actions {
+.anime-calendar-local-row {
   display: flex;
   min-width: 0;
   flex-wrap: wrap;
@@ -2457,14 +2477,23 @@ a {
   display: inline-flex;
   min-height: 24px;
   align-items: center;
+  justify-content: center;
   gap: 5px;
   border: 1px solid var(--border-subtle);
   border-radius: 7px;
   color: rgba(255, 255, 255, 0.68);
   padding: 3px 6px;
   text-decoration: none;
-  font-size: 10px;
+  font-size: 11px;
   line-height: 14px;
+  white-space: nowrap;
+}
+
+.anime-calendar-actions {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(82px, 1fr));
+  gap: 6px;
+  margin-top: 1px;
 }
 
 .anime-calendar-actions a:hover {
@@ -4005,6 +4034,7 @@ a {
 
   .anime-calendar-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
+    overflow-x: visible;
   }
 
   .queue-master-list {
@@ -4385,6 +4415,10 @@ a {
     grid-template-columns: 1fr;
   }
 
+  .anime-calendar-day {
+    min-width: 0;
+  }
+
   .anime-calendar-notice {
     min-height: auto;
     align-items: flex-start;
@@ -4392,7 +4426,7 @@ a {
     padding: 10px 12px;
   }
 
-  .anime-calendar-card {
+  .anime-calendar-card-main {
     grid-template-columns: 64px minmax(0, 1fr);
   }
 

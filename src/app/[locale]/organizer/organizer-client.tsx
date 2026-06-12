@@ -208,6 +208,7 @@ export function OrganizerClient({ locale }: { locale: Locale }) {
       "organizer.inspectCompletedDownloads",
       "organizer.aiReviewPlans",
       "library.mergeDuplicateAnimeTitles",
+      "library.mergeDuplicateTvTitles",
       "library.repairEpisodeNumbering",
     ];
     const results: Array<{ job: string; result: Record<string, unknown> }> = [];
@@ -703,7 +704,8 @@ function formatRepairSummary(
   const sync = byJob.get("downloads.syncAria2");
   const inspect = byJob.get("organizer.inspectCompletedDownloads");
   const review = byJob.get("organizer.aiReviewPlans");
-  const merge = byJob.get("library.mergeDuplicateAnimeTitles");
+  const animeMerge = byJob.get("library.mergeDuplicateAnimeTitles");
+  const tvMerge = byJob.get("library.mergeDuplicateTvTitles");
   const episodeRepair = byJob.get("library.repairEpisodeNumbering");
   return [
     t.repairOrganizerPipelineDone,
@@ -713,7 +715,8 @@ function formatRepairSummary(
     `plans: ${numberValue(inspect?.inspected)}`,
     `ai reviewed: ${numberValue(review?.reviewed)}`,
     `filtered: ${numberValue(review?.filteredItems)}`,
-    `merged titles: ${numberValue(merge?.merged)}`,
+    `merged anime: ${numberValue(animeMerge?.merged)}`,
+    `merged tv: ${numberValue(tvMerge?.merged)}`,
     `episode repairs: ${numberValue(episodeRepair?.repairedEpisodes)}`,
   ].join(" ");
 }

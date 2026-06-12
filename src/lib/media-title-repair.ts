@@ -2,7 +2,7 @@ import path from "node:path";
 import type { MediaType } from "@prisma/client";
 import { normalizeTitleAliases } from "@/lib/anime-parser";
 import { prisma } from "@/lib/db";
-import { parseMediaReleaseTitle } from "@/lib/media-parser";
+import { cleanTvSeriesTitle, parseMediaReleaseTitle } from "@/lib/media-parser";
 import { aliasesFromTitleTexts, upsertTitleAliases } from "@/lib/title-display";
 
 type IdentityInput = {
@@ -56,14 +56,31 @@ export async function findExistingMediaTitle(input: IdentityInput) {
     },
   });
 
-  return candidates
-    .map((media) => ({
-      media,
-      score: overlapScore(keys, createMediaIdentityKeys(media)),
-    }))
-    .filter((item) => item.score > 0)
-    .sort((a, b) => b.score - a.score || mediaQualityScore(b.media) - mediaQualityScore(a.media))[0]
-    ?.media ?? null;
+  const ranked = rankMediaIdentityMatches(keys, candidates);
+  if (ranked[0]) {
+    return ranked[0].media;
+  }
+
+  if (input.type !== "ANIME" || !input.year) {
+    return null;
+  }
+
+  const crossYearCandidates = await prisma.mediaTitle.findMany({
+    where: { type: input.type },
+    include: {
+      aliases: true,
+      metadata: true,
+      seasons: {
+        include: {
+          episodes: {
+            include: { files: true },
+          },
+        },
+      },
+    },
+  });
+
+  return rankMediaIdentityMatches(keys, crossYearCandidates, { minimumScore: 3 })[0]?.media ?? null;
 }
 
 export async function addMediaTitleAliases(mediaId: string, values: Array<string | null | undefined>) {
@@ -71,8 +88,16 @@ export async function addMediaTitleAliases(mediaId: string, values: Array<string
 }
 
 export async function mergeDuplicateAnimeTitles() {
+  return mergeDuplicateMediaTitles("ANIME");
+}
+
+export async function mergeDuplicateTvTitles() {
+  return mergeDuplicateMediaTitles("TV");
+}
+
+export async function mergeDuplicateMediaTitles(type: MediaType) {
   const media = await prisma.mediaTitle.findMany({
-    where: { type: "ANIME" },
+    where: { type },
     include: {
       aliases: true,
       metadata: true,
@@ -198,6 +223,7 @@ async function mergeMediaTitleInto(sourceId: string, targetId: string) {
   await prisma.mediaTitle.update({
     where: { id: target.id },
     data: {
+      primaryTitle: cleanMediaPrimaryTitle(target.primaryTitle, target.type),
       originalTitle: target.originalTitle ?? source.originalTitle,
       year: target.year ?? source.year,
       synopsis: target.synopsis ?? source.synopsis,
@@ -249,6 +275,7 @@ function duplicateClusters<T extends { id: string } & MediaIdentity>(media: T[])
 }
 
 export type MediaIdentity = {
+  type?: MediaType;
   primaryTitle: string;
   originalTitle: string | null;
   aliases: Array<{ title: string }>;
@@ -269,27 +296,27 @@ export function createMediaIdentityKeys(media: MediaIdentity) {
     media.originalTitle,
     ...media.aliases.map((alias) => alias.title),
     ...mediaFileIdentityValues(media),
-  ]);
+  ], media.type);
 }
 
-function mediaFileIdentityValues(media: Pick<MediaIdentity, "seasons">) {
+function mediaFileIdentityValues(media: Pick<MediaIdentity, "seasons" | "type">) {
   return media.seasons.flatMap((season) =>
     season.episodes.flatMap((episode) =>
       episode.files.flatMap((file) => [
         episode.title,
         file.originalName,
         path.basename(file.absolutePath, path.extname(file.absolutePath)),
-        parseMediaReleaseTitle(file.originalName, "ANIME").parsedTitle,
+        parseMediaReleaseTitle(file.originalName, media.type ?? "ANIME").parsedTitle,
       ]),
     ),
   );
 }
 
-function identityKeys(values: Array<string | null | undefined>) {
+function identityKeys(values: Array<string | null | undefined>, mediaType?: MediaType) {
   const keys = new Set<string>();
   for (const value of values) {
-    for (const alias of normalizeTitleAliases(value ?? "")) {
-      const key = normalizeIdentityKey(alias);
+    for (const alias of normalizeTitleAliases(cleanMediaPrimaryTitle(value ?? "", mediaType))) {
+      const key = normalizeIdentityKey(alias, mediaType);
       if (isUsefulIdentityKey(key)) {
         keys.add(key);
       }
@@ -298,18 +325,46 @@ function identityKeys(values: Array<string | null | undefined>) {
   return keys;
 }
 
+export function rankMediaIdentityMatches<T extends MediaIdentity>(
+  keys: Set<string>,
+  candidates: T[],
+  options: { minimumScore?: number } = {},
+) {
+  const minimumScore = options.minimumScore ?? 1;
+  return candidates
+    .map((media) => ({
+      media,
+      score: overlapScore(keys, createMediaIdentityKeys(media)),
+    }))
+    .filter((item) => item.score >= minimumScore)
+    .sort((a, b) => b.score - a.score || mediaQualityScore(b.media) - mediaQualityScore(a.media));
+}
+
 function overlapScore(input: Set<string>, candidate: Set<string>) {
   let score = 0;
   for (const key of input) {
     if (candidate.has(key)) {
-      score += key.length >= 12 ? 3 : 1;
+      score += identityKeyWeight(key);
     }
   }
   return score;
 }
 
-function normalizeIdentityKey(value: string) {
-  return value
+function identityKeyWeight(key: string) {
+  const cjkCount = [...key].filter((char) => /[\u3400-\u9fff]/.test(char)).length;
+  return key.length >= 12 || cjkCount >= 4 ? 3 : 1;
+}
+
+function cleanMediaPrimaryTitle(value: string, mediaType?: MediaType) {
+  if (mediaType === "TV") {
+    return cleanTvSeriesTitle(value) || value;
+  }
+  return value;
+}
+
+function normalizeIdentityKey(value: string, mediaType?: MediaType) {
+  const title = cleanMediaPrimaryTitle(value, mediaType);
+  return title
     .toLowerCase()
     .replace(/\bgyaru\b/g, "gal")
     .replace(/\bs\d{1,2}e\d{1,4}(?:\.\d+)?\b/g, " ")

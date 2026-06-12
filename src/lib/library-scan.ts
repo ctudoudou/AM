@@ -3,10 +3,13 @@ import path from "node:path";
 import type { MediaType } from "@prisma/client";
 import { prisma } from "@/lib/db";
 import { addMediaTitleAliases, findExistingMediaTitle } from "@/lib/media-title-repair";
-import { parseMediaReleaseTitle } from "@/lib/media-parser";
+import { cleanTvSeriesTitle, parseMediaReleaseTitle } from "@/lib/media-parser";
 import { getAppSettings } from "@/lib/settings";
 
 const videoExtensions = new Set([".mkv", ".mp4", ".avi", ".mov", ".webm", ".m4v", ".ts"]);
+const seasonDirectoryPattern = /^season\s*(?<season>\d{1,2})$/i;
+const supplementalDirectoryPattern =
+  /^(?:extra|extras|special|specials|ova|oad|sp|ncop|nced|menu|scan|scans|pv|cm)$/i;
 
 type ScanTarget = {
   type: MediaType;
@@ -133,16 +136,16 @@ async function findVideoFiles(root: string): Promise<string[]> {
   return files;
 }
 
-function parseLibraryIdentity(filePath: string, target: ScanTarget) {
+export function parseLibraryIdentity(filePath: string, target: ScanTarget) {
   const baseName = path.basename(filePath, path.extname(filePath));
   const parentName = path.basename(path.dirname(filePath));
   const titleSource = target.type === "MOVIE" ? parentName || baseName : inferSeriesName(filePath);
-  const title = cleanTitle(titleSource || baseName);
+  const title = cleanScannedLibraryTitle(titleSource || baseName, target.type);
   const year = extractYear(titleSource) ?? extractYear(baseName);
   const tvMatch =
     baseName.match(/\bS(?<season>\d{1,2})E(?<episode>\d{1,4})\b/i) ??
     baseName.match(/\bE(?<episode>\d{1,4})\b/i);
-  const seasonFromDir = parentName.match(/season\s*(?<season>\d{1,2})/i)?.groups?.season;
+  const seasonFromDir = inferSeasonNumber(filePath);
   const episodeFromLoose = baseName.match(/(?:第|\s|\[| - )(?<episode>\d{1,4})(?:话|集|\]|\s|$)/i)
     ?.groups?.episode;
 
@@ -161,16 +164,42 @@ function parseLibraryIdentity(filePath: string, target: ScanTarget) {
     year,
     season: Number(tvMatch?.groups?.season ?? seasonFromDir ?? 1),
     episode: Number(tvMatch?.groups?.episode ?? episodeFromLoose ?? 1),
-    episodeTitle: cleanTitle(baseName),
+    episodeTitle: cleanScannedLibraryTitle(baseName, target.type),
   };
 }
 
-function inferSeriesName(filePath: string) {
-  const parent = path.basename(path.dirname(filePath));
-  if (/season\s*\d+/i.test(parent)) {
-    return path.basename(path.dirname(path.dirname(filePath)));
+export function cleanScannedLibraryTitle(value: string, type: MediaType) {
+  if (type === "TV") {
+    return cleanTvSeriesTitle(value) || cleanTitle(value);
   }
-  return parent;
+  return cleanTitle(value);
+}
+
+function inferSeriesName(filePath: string) {
+  const segments = path.dirname(filePath).split(path.sep).filter(Boolean);
+  for (let index = segments.length - 1; index > 0; index -= 1) {
+    if (seasonDirectoryPattern.test(segments[index])) {
+      return segments[index - 1];
+    }
+  }
+  for (let index = segments.length - 1; index >= 0; index -= 1) {
+    const segment = segments[index];
+    if (!supplementalDirectoryPattern.test(segment)) {
+      return segment;
+    }
+  }
+  return path.basename(path.dirname(filePath));
+}
+
+function inferSeasonNumber(filePath: string) {
+  const segments = path.dirname(filePath).split(path.sep).filter(Boolean);
+  for (let index = segments.length - 1; index >= 0; index -= 1) {
+    const season = segments[index].match(seasonDirectoryPattern)?.groups?.season;
+    if (season) {
+      return season;
+    }
+  }
+  return undefined;
 }
 
 function extractYear(value: string) {

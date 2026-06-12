@@ -30,6 +30,13 @@ type CalendarResponse = {
   year: number;
   quarter: AnimeCalendarQuarter;
   generatedAt: string;
+  cache?: {
+    hit: boolean;
+    stale: boolean;
+    fetchedAt: string;
+    expiresAt: string;
+    refreshFrequencyMinutes: number;
+  };
   providerNotice: string | null;
   items: AnimeCalendarItem[];
 };
@@ -66,7 +73,7 @@ export function AnimeCalendarClient({ locale }: { locale: Locale }) {
     return Array.from({ length: 6 }, (_item, index) => start + index);
   }, [current.year]);
 
-  const load = useCallback(async () => {
+  const load = useCallback(async (forceRefresh = false) => {
     setLoading(true);
     try {
       const params = new URLSearchParams({
@@ -74,6 +81,9 @@ export function AnimeCalendarClient({ locale }: { locale: Locale }) {
         quarter,
         year: String(year),
       });
+      if (forceRefresh) {
+        params.set("refresh", "1");
+      }
       const response = await fetch(`/api/anime-season-calendar?${params.toString()}`);
       if (!response.ok) {
         throw new Error(t.animeCalendarLoadError);
@@ -178,7 +188,7 @@ export function AnimeCalendarClient({ locale }: { locale: Locale }) {
             </select>
           </label>
         </div>
-        <button className="anime-calendar-refresh" disabled={loading} onClick={() => void load()} type="button">
+        <button className="anime-calendar-refresh" disabled={loading} onClick={() => void load(true)} type="button">
           {loading ? <Loader2 size={14} /> : <RefreshCw size={14} />}
           {t.refresh}
         </button>
@@ -239,60 +249,62 @@ function CalendarCard({ item, locale }: { item: AnimeCalendarItem; locale: Local
 
   return (
     <article className={`anime-calendar-card is-${status.toLowerCase().replace("_", "-")}`}>
-      <div
-        className="anime-calendar-poster"
-        style={{ backgroundImage: cover ? `url(${cover})` : undefined }}
-      >
-        {!cover ? <span>{item.title.slice(0, 2)}</span> : null}
+      <div className="anime-calendar-card-main">
+        <div
+          className="anime-calendar-poster"
+          style={{ backgroundImage: cover ? `url(${cover})` : undefined }}
+        >
+          {!cover ? <span>{item.title.slice(0, 2)}</span> : null}
+        </div>
+        <div className="anime-calendar-card-body">
+          <div className="anime-calendar-card-title">
+            <h2>{item.title}</h2>
+            <StatusBadge status={status} />
+          </div>
+          {secondaryTitle(item) ? <p>{secondaryTitle(item)}</p> : null}
+          <div className="anime-calendar-meta">
+            <span>
+              <Clock3 size={12} />
+              {broadcastLabel(item, t)}
+            </span>
+            {item.totalEpisodes ? <span>{item.totalEpisodes} {t.episodes}</span> : null}
+            {item.score ? <span>{item.score.toFixed(1)}</span> : null}
+          </div>
+          <div className="anime-calendar-local-row">
+            {local ? (
+              <>
+                <span>{local.playableEpisodes}/{totalEpisodeLabel}</span>
+                {local.subscribed ? <span>{t.calendarStatusSubscribed}</span> : null}
+                {local.wantedMissing > 0 ? <span>{t.missing} {local.wantedMissing}</span> : null}
+              </>
+            ) : (
+              <span>{t.calendarStatusUnmatched}</span>
+            )}
+          </div>
+        </div>
       </div>
-      <div className="anime-calendar-card-body">
-        <div className="anime-calendar-card-title">
-          <h2>{item.title}</h2>
-          <StatusBadge status={status} />
-        </div>
-        {secondaryTitle(item) ? <p>{secondaryTitle(item)}</p> : null}
-        <div className="anime-calendar-meta">
-          <span>
-            <Clock3 size={12} />
-            {broadcastLabel(item, t)}
-          </span>
-          {item.totalEpisodes ? <span>{item.totalEpisodes} {t.episodes}</span> : null}
-          {item.score ? <span>{item.score.toFixed(1)}</span> : null}
-        </div>
-        <div className="anime-calendar-local-row">
-          {local ? (
-            <>
-              <span>{local.playableEpisodes}/{totalEpisodeLabel}</span>
-              {local.subscribed ? <span>{t.calendarStatusSubscribed}</span> : null}
-              {local.wantedMissing > 0 ? <span>{t.missing} {local.wantedMissing}</span> : null}
-            </>
-          ) : (
-            <span>{t.calendarStatusUnmatched}</span>
-          )}
-        </div>
-        <div className="anime-calendar-actions">
-          {local?.mediaId ? (
-            <a href={`/${locale}/anime/${local.mediaId}`}>
-              <Library size={13} />
-              {t.openAnimeTitle}
-            </a>
-          ) : (
-            <a href={`/${locale}/subscriptions`}>
-              <Rss size={13} />
-              {t.openSubscriptions}
-            </a>
-          )}
-          {local?.nextEpisodeId ? (
-            <a href={`/${locale}/watch/${local.nextEpisodeId}`}>
-              <Play size={13} />
-              {t.playNow}
-            </a>
-          ) : null}
-          <a href={item.sourceUrl} rel="noreferrer" target="_blank">
-            <ExternalLink size={13} />
-            {providerLabel(item.provider)}
+      <div className="anime-calendar-actions">
+        {local?.mediaId ? (
+          <a href={`/${locale}/anime/${local.mediaId}`}>
+            <Library size={13} />
+            {t.openAnimeTitle}
           </a>
-        </div>
+        ) : (
+          <a href={`/${locale}/subscriptions`}>
+            <Rss size={13} />
+            {t.openSubscriptions}
+          </a>
+        )}
+        {local?.nextEpisodeId ? (
+          <a href={`/${locale}/watch/${local.nextEpisodeId}`}>
+            <Play size={13} />
+            {t.playNow}
+          </a>
+        ) : null}
+        <a href={item.sourceUrl} rel="noreferrer" target="_blank">
+          <ExternalLink size={13} />
+          {providerLabel(item.provider)}
+        </a>
       </div>
     </article>
   );

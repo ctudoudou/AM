@@ -30,6 +30,7 @@ const releaseEditionPattern =
 const episodePatterns = [
   /\bS(?<season>\d{1,2})E(?<episode>\d{1,4}(?:\.\d)?)\b/i,
   /★\s*(?<episode>\d{1,4}(?:\.\d)?)\s*★/i,
+  /(?:^|\s)[#＃]\s*(?<episode>\d{1,4}(?:\.\d)?)(?:\s|\[|\(|v\d|$)/i,
   /\s+-\s*(?<episode>\d{1,4}(?:\.\d)?)(?:\s|\[|\(|v\d|$)/i,
   /(?:第|\s|\[| - )(?<episode>\d{1,4}(?:\.\d)?)(?:话|集|\]|\s|v\d|$)/i,
   /\bEP?\s?(?<episode>\d{1,4}(?:\.\d)?)\b/i,
@@ -86,6 +87,7 @@ function normalizeTitlePart(title: string) {
     .replace(/第\s*\d+(\.\d+)?\s*(话|集)/g, " ")
     .replace(/\bs\d{1,2}e\d{1,4}(\.\d+)?\b/g, " ")
     .replace(/\bep?\s?\d{1,4}(\.\d+)?\b/g, " ")
+    .replace(/[#＃]\s*\d{1,4}(\.\d+)?\b/g, " ")
     .replace(/[._\-!！?？:：,，。·・、]+/g, " ")
     .replace(/\s+/g, " ")
     .trim();
@@ -261,7 +263,7 @@ function extractBracketTitleTags(rawTitle: string) {
     if (isReleaseSeasonBanner(tag)) {
       continue;
     }
-    if (isNonTitleBracketContent(tag)) {
+    if (isNonTitleBracketContent(tag) || isAudioLanguageTag(tag)) {
       if (isPureTechnicalTag(normalizeProfileAtom(tag))) {
         break;
       }
@@ -285,6 +287,7 @@ function extractLeadingTitle(rawTitle: string) {
   const match =
     cleaned.match(/^(?<title>.+?)\s+-\s*(?<episode>\d{1,4}(?:\.\d+)?)(?:\s|\[|\(|v\d|$)/) ??
     cleaned.match(/^(?<title>.+?)\s+-\s*EP?\s*(?<episode>\d{1,4}(?:\.\d+)?)(?:\s|\[|\(|v\d|$)/i) ??
+    cleaned.match(/^(?<title>.+?)\s*[#＃]\s*(?<episode>\d{1,4}(?:\.\d+)?)(?:\s|\[|\(|v\d|$)/i) ??
     cleaned.match(/^(?<title>.+?)\s+第(?<episode>\d{1,4}(?:\.\d+)?)话(?:\s|\[|\(|$)/) ??
     cleaned.match(/^(?<title>.+?)\s*(?:\[|【)(?<episode>\d{1,4}(?:\.\d+)?(?:\s*[-~～]\s*\d{1,4}(?:\.\d+)?)?\s*(?:fin|final|end|完|完结|完結|全集|全)?)(?:\]|】)/i);
   const title = match?.groups?.title?.trim();
@@ -437,11 +440,17 @@ function isEpisodeTag(value: string) {
 }
 
 function isSubtitleTag(value: string) {
-  return subtitlePattern.test(value) || /^(gb|big5|简中|繁中|简日双语|繁日双语)$/i.test(value.trim());
+  return subtitlePattern.test(value) || isGenericAudioLanguageTag(value) || /^(gb|big5|简中|繁中|简日双语|繁日双语)$/i.test(value.trim());
 }
 
 function isAudioLanguageTag(value: string) {
-  return cantoneseAudioPattern.test(value);
+  return cantoneseAudioPattern.test(value) || isGenericAudioLanguageTag(value);
+}
+
+function isGenericAudioLanguageTag(value: string) {
+  return /^(?:[國国中日英]|chs|cht|jpn|japanese|mandarin|chinese|eng|english)(?:\s*[\/／╱+&]\s*(?:[國国中日英]|chs|cht|jpn|japanese|mandarin|chinese|eng|english))+$/i.test(
+    value.trim(),
+  );
 }
 
 function isSourceProfileTag(value: string) {
@@ -634,9 +643,14 @@ function deriveReleaseProfile(input: {
       (title) => normalizeProfileAtom(title) === atom || normalizeProfileAtom(normalizeBracketTitleTag(tag)) === normalizeProfileAtom(title),
     );
     if (isAudioLanguageTag(tag)) {
-      hasCantoneseAudio = true;
-      if (/\btvb\b/i.test(tag)) {
-        hasTvbCantonese = true;
+      if (cantoneseAudioPattern.test(tag)) {
+        hasCantoneseAudio = true;
+        if (/\btvb\b/i.test(tag)) {
+          hasTvbCantonese = true;
+        }
+      }
+      if (isGenericAudioLanguageTag(tag)) {
+        normalizedAtoms.add(tag.trim());
       }
     }
     const sourceFromTag = normalizeSourceKind(tag.match(sourcePattern)?.[1]);
@@ -749,6 +763,7 @@ function isNonTitleBracketContent(value: string) {
     /^(?:19\d{2}|20\d{2})$/.test(normalized) ||
     /^(?:tv|ova|movie)?\s*\d{1,4}\s*,\s*(?:19\d{2}|20\d{2})$/.test(normalized) ||
     isReleaseEdition(value) ||
+    isAudioLanguageTag(value) ||
     isPureTechnicalTag(normalized) ||
     isReleaseSeasonBanner(value)
   );
