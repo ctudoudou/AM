@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   defaultAppSettings,
   directorySettingsSchema,
+  generalSettingsSchema,
   redactAppSettings,
 } from "./settings";
 
@@ -40,6 +41,28 @@ describe("directorySettingsSchema", () => {
         transcodesDir: "/data/transcodes",
       }),
     ).toThrow("Directory must be inside DATA_ROOT");
+  });
+});
+
+describe("generalSettingsSchema", () => {
+  it("includes a bounded anime calendar refresh interval", () => {
+    expect(defaultAppSettings.general.animeCalendarRefreshMinutes).toBe(360);
+    expect(
+      generalSettingsSchema.parse({
+        defaultLocale: "zh-Hans",
+        subscriptionFrequencyMinutes: 30,
+        animeCalendarRefreshMinutes: 15,
+        animeTitleLanguageOrder: ["zh-Hant", "ja"],
+      }).animeCalendarRefreshMinutes,
+    ).toBe(15);
+    expect(() =>
+      generalSettingsSchema.parse({
+        defaultLocale: "zh-Hans",
+        subscriptionFrequencyMinutes: 30,
+        animeCalendarRefreshMinutes: 14,
+        animeTitleLanguageOrder: ["zh-Hant", "ja"],
+      }),
+    ).toThrow();
   });
 });
 

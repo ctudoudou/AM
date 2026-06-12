@@ -9,7 +9,7 @@ export const zhHant = Object.fromEntries(
 
 Object.assign(zhHant, {
   settings: "設定",
-  settingsDescription: "設定目錄、下載器、AI 模型、RSS 來源和預設語言。",
+  settingsDescription: "設定目錄、下載器、AI 模型、RSS 來源、日曆快取和預設語言。",
   settingsLoadError: "無法載入設定。請確認資料庫已完成遷移並正在執行。",
   settingsSaveError: "儲存設定失敗。",
   directorySettings: "目錄設定",

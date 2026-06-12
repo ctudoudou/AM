@@ -77,6 +77,7 @@ export const metadataProviderSettingsSchema = z.object({
 export const generalSettingsSchema = z.object({
   defaultLocale: localeSchema,
   subscriptionFrequencyMinutes: z.coerce.number().int().min(5).max(10_080),
+  animeCalendarRefreshMinutes: z.coerce.number().int().min(15).max(10_080),
   animeTitleLanguageOrder: z
     .array(titleLanguageSchema)
     .min(1)
@@ -153,6 +154,7 @@ export const defaultAppSettings: AppSettings = appSettingsSchema.parse({
   general: {
     defaultLocale: defaultSettingsLocale,
     subscriptionFrequencyMinutes: 30,
+    animeCalendarRefreshMinutes: 360,
     animeTitleLanguageOrder: ["zh-Hant", "ja", "zh-Hans", "en", "romaji"],
   },
 });

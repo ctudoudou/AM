@@ -28,6 +28,7 @@ type PublicSettings = {
   general: {
     defaultLocale: Locale;
     subscriptionFrequencyMinutes: number;
+    animeCalendarRefreshMinutes: number;
     animeTitleLanguageOrder: Array<"zh-Hant" | "ja" | "zh-Hans" | "en" | "romaji">;
   };
 };
@@ -715,6 +716,23 @@ export function SettingsClient({ locale }: { locale: Locale }) {
             }
             type="number"
             value={settings.general.subscriptionFrequencyMinutes}
+          />
+        </label>
+        <label>
+          <span>{t.animeCalendarRefreshFrequency}</span>
+          <input
+            min={15}
+            onChange={(event) =>
+              setSettings({
+                ...settings,
+                general: {
+                  ...settings.general,
+                  animeCalendarRefreshMinutes: Number(event.target.value),
+                },
+              })
+            }
+            type="number"
+            value={settings.general.animeCalendarRefreshMinutes}
           />
         </label>
         <label>
