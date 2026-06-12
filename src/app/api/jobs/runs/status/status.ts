@@ -20,6 +20,7 @@ const statusGroups = [
       "organizer.cleanupStalePlans",
       "library.scan",
       "library.cleanupMovieMetadataAliases",
+      "library.mergeDuplicateTvTitles",
     ],
   },
   {

@@ -3,7 +3,7 @@ import path from "node:path";
 import type { MediaType } from "@prisma/client";
 import { prisma } from "@/lib/db";
 import { addMediaTitleAliases, findExistingMediaTitle } from "@/lib/media-title-repair";
-import { parseMediaReleaseTitle } from "@/lib/media-parser";
+import { cleanTvSeriesTitle, parseMediaReleaseTitle } from "@/lib/media-parser";
 import { getAppSettings } from "@/lib/settings";
 
 const videoExtensions = new Set([".mkv", ".mp4", ".avi", ".mov", ".webm", ".m4v", ".ts"]);
@@ -137,7 +137,7 @@ function parseLibraryIdentity(filePath: string, target: ScanTarget) {
   const baseName = path.basename(filePath, path.extname(filePath));
   const parentName = path.basename(path.dirname(filePath));
   const titleSource = target.type === "MOVIE" ? parentName || baseName : inferSeriesName(filePath);
-  const title = cleanTitle(titleSource || baseName);
+  const title = cleanScannedLibraryTitle(titleSource || baseName, target.type);
   const year = extractYear(titleSource) ?? extractYear(baseName);
   const tvMatch =
     baseName.match(/\bS(?<season>\d{1,2})E(?<episode>\d{1,4})\b/i) ??
@@ -161,8 +161,15 @@ function parseLibraryIdentity(filePath: string, target: ScanTarget) {
     year,
     season: Number(tvMatch?.groups?.season ?? seasonFromDir ?? 1),
     episode: Number(tvMatch?.groups?.episode ?? episodeFromLoose ?? 1),
-    episodeTitle: cleanTitle(baseName),
+    episodeTitle: cleanScannedLibraryTitle(baseName, target.type),
   };
+}
+
+export function cleanScannedLibraryTitle(value: string, type: MediaType) {
+  if (type === "TV") {
+    return cleanTvSeriesTitle(value) || cleanTitle(value);
+  }
+  return cleanTitle(value);
 }
 
 function inferSeriesName(filePath: string) {

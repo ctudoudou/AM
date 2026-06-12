@@ -3,6 +3,7 @@ import { createMediaIdentityKeys, type MediaIdentity } from "./media-title-repai
 
 function mediaIdentity(input: Partial<MediaIdentity>): MediaIdentity {
   return {
+    type: input.type ?? "ANIME",
     primaryTitle: input.primaryTitle ?? "",
     originalTitle: input.originalTitle ?? null,
     aliases: input.aliases ?? [],
@@ -66,5 +67,57 @@ describe("createMediaIdentityKeys", () => {
 
     expect(keys).toContain("出租女友");
     expect(keys).not.toContain("出租女友 03 mp4");
+  });
+
+  it("collapses TV release variants into the same identity key", () => {
+    const edith = mediaIdentity({
+      type: "TV",
+      primaryTitle: "Scavengers Reign WEB EDITH chs eng",
+      seasons: [
+        {
+          episodes: [
+            {
+              title: "Scavengers Reign WEB EDITH chs eng [1080p][H264]",
+              files: [
+                {
+                  originalName: "Scavengers Reign WEB EDITH chs eng - S01E12 [1080p][H264].mp4",
+                  absolutePath:
+                    "/data/library/tv/Scavengers Reign WEB EDITH chs eng/Season 01/Scavengers Reign WEB EDITH chs eng - S01E12 [1080p][H264].mp4",
+                },
+              ],
+            },
+          ],
+        },
+      ],
+    });
+    const xenon = mediaIdentity({
+      type: "TV",
+      primaryTitle: "Scavengers Reign XEN0N chs eng",
+      seasons: [
+        {
+          episodes: [
+            {
+              title: "Scavengers Reign XEN0N chs eng [X264]",
+              files: [
+                {
+                  originalName: "Scavengers Reign XEN0N chs eng - S01E06 [X264].mp4",
+                  absolutePath:
+                    "/data/library/tv/Scavengers Reign XEN0N chs eng/Season 01/Scavengers Reign XEN0N chs eng - S01E06 [X264].mp4",
+                },
+              ],
+            },
+          ],
+        },
+      ],
+    });
+
+    const edithKeys = createMediaIdentityKeys(edith);
+    const xenonKeys = createMediaIdentityKeys(xenon);
+
+    expect(edithKeys).toContain("scavengers reign");
+    expect(xenonKeys).toContain("scavengers reign");
+    expect([...edithKeys].filter((key) => xenonKeys.has(key))).toContain("scavengers reign");
+    expect(edithKeys).not.toContain("scavengers reign web edith eng");
+    expect(xenonKeys).not.toContain("scavengers reign xen0n eng");
   });
 });

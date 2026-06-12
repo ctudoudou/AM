@@ -45,6 +45,34 @@ describe("parseMediaReleaseTitle", () => {
     expect(parsed.sourceKind).toBe("WEB-DL");
   });
 
+  it("strips TV release groups and subtitle language suffixes from series titles", () => {
+    const edith = parseMediaReleaseTitle(
+      "Scavengers.Reign.S01E12.1080p.WEB.h264-EDITH.chs.eng",
+      "TV",
+    );
+    const xenon = parseMediaReleaseTitle(
+      "Scavengers.Reign.S01E06.WEBRip.x264-XEN0N.chs.eng",
+      "TV",
+    );
+
+    expect(edith.parsedTitle).toBe("Scavengers Reign");
+    expect(xenon.parsedTitle).toBe("Scavengers Reign");
+    expect(edith.normalizedTitle).toBe("scavengers reign");
+    expect(xenon.normalizedTitle).toBe("scavengers reign");
+    expect(edith.episodeNumber).toBe(12);
+    expect(xenon.episodeNumber).toBe(6);
+  });
+
+  it("cleans organizer-created TV filenames when deriving episode titles", () => {
+    const parsed = parseMediaReleaseTitle(
+      "Scavengers Reign WEB EDITH chs eng - S01E01 [1080p][H264].mp4",
+      "TV",
+    );
+
+    expect(parsed.parsedTitle).toBe("Scavengers Reign");
+    expect(parsed.normalizedTitle).toBe("scavengers reign");
+  });
+
   it("auto-detects obvious non-anime releases", () => {
     expect(detectMediaType("The.Studio.S01E03.1080p.WEB-DL")).toBe("TV");
     expect(detectMediaType("Oppenheimer.2023.2160p.BluRay.x265")).toBe("MOVIE");

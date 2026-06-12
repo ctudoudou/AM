@@ -10,7 +10,7 @@ import {
   reviewOrganizerPlansWithAi,
 } from "@/lib/organizer";
 import { scanLibraryRoots } from "@/lib/library-scan";
-import { mergeDuplicateAnimeTitles } from "@/lib/media-title-repair";
+import { mergeDuplicateAnimeTitles, mergeDuplicateTvTitles } from "@/lib/media-title-repair";
 import { cleanupNoisyMovieMetadataAliases } from "@/lib/metadata";
 import { repairAnimeEpisodeNumbering } from "@/lib/wanted-episodes";
 
@@ -29,6 +29,7 @@ export const jobNames = [
   "library.scan",
   "library.cleanupMovieMetadataAliases",
   "library.mergeDuplicateAnimeTitles",
+  "library.mergeDuplicateTvTitles",
   "library.repairEpisodeNumbering",
 ] as const;
 
@@ -69,6 +70,8 @@ export async function runJob(name: JobName) {
       return cleanupNoisyMovieMetadataAliases();
     case "library.mergeDuplicateAnimeTitles":
       return mergeDuplicateAnimeTitles();
+    case "library.mergeDuplicateTvTitles":
+      return mergeDuplicateTvTitles();
     case "library.repairEpisodeNumbering":
       return repairAnimeEpisodeNumbering();
   }
