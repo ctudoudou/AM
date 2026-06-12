@@ -30,6 +30,13 @@ type CalendarResponse = {
   year: number;
   quarter: AnimeCalendarQuarter;
   generatedAt: string;
+  cache?: {
+    hit: boolean;
+    stale: boolean;
+    fetchedAt: string;
+    expiresAt: string;
+    refreshFrequencyMinutes: number;
+  };
   providerNotice: string | null;
   items: AnimeCalendarItem[];
 };
@@ -66,7 +73,7 @@ export function AnimeCalendarClient({ locale }: { locale: Locale }) {
     return Array.from({ length: 6 }, (_item, index) => start + index);
   }, [current.year]);
 
-  const load = useCallback(async () => {
+  const load = useCallback(async (forceRefresh = false) => {
     setLoading(true);
     try {
       const params = new URLSearchParams({
@@ -74,6 +81,9 @@ export function AnimeCalendarClient({ locale }: { locale: Locale }) {
         quarter,
         year: String(year),
       });
+      if (forceRefresh) {
+        params.set("refresh", "1");
+      }
       const response = await fetch(`/api/anime-season-calendar?${params.toString()}`);
       if (!response.ok) {
         throw new Error(t.animeCalendarLoadError);
@@ -178,7 +188,7 @@ export function AnimeCalendarClient({ locale }: { locale: Locale }) {
             </select>
           </label>
         </div>
-        <button className="anime-calendar-refresh" disabled={loading} onClick={() => void load()} type="button">
+        <button className="anime-calendar-refresh" disabled={loading} onClick={() => void load(true)} type="button">
           {loading ? <Loader2 size={14} /> : <RefreshCw size={14} />}
           {t.refresh}
         </button>
