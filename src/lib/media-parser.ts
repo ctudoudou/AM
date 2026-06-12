@@ -27,7 +27,10 @@ const mediaTypes = new Set<MediaType>(["ANIME", "MOVIE", "TV"]);
 const resolutionPattern = /\b(2160p|4k|1080p|720p|480p)\b/i;
 const codecPattern = /\b(x265|x264|h\.?265|h\.?264|hevc|avc|av1)\b/i;
 const audioPattern = /\b(aac|flac|opus|mp3|truehd|dts|ddp?5\.1|ddp?7\.1)\b/i;
-const sourcePattern = /\b(web\s?-?dl|webrip|hdtv|bdrip|bdremux|blu\s?-?ray|bluray|netflix|amazon|disney\+|hulu)\b/i;
+const sourcePattern = /\b(web\s?-?dl|webrip|web|hdtv|bdrip|bdremux|blu\s?-?ray|bluray|netflix|amazon|disney\+|hulu)\b/i;
+const languageTokenPattern = /\b(chs|cht|sc|tc|gb|big5|jpn|japanese|eng|english|multi)\b/gi;
+const trailingReleaseGroupPattern =
+  /(?:^|[\s._-])(?:edith|xen0n|eztv|rarbg|ntb|amzn|dsnp|flux|successfulcrab)(?=$|[\s._-])/gi;
 const animeMoviePattern = /(?:劇場版|剧场版|映画|the\s+movie|\bmovie\b|\bfilm\b|\btheatrical\b)/i;
 const tvPatterns = [
   /\bS(?<season>\d{1,2})E(?<episode>\d{1,4})(?:\b|[^\d])/i,
@@ -179,6 +182,8 @@ function cleanReleaseTitle(value: string) {
     .replace(codecPattern, " ")
     .replace(audioPattern, " ")
     .replace(sourcePattern, " ")
+    .replace(trailingReleaseGroupPattern, " ")
+    .replace(languageTokenPattern, " ")
     .replace(/\b(complete|proper|repack|multi|internal|remux|extended|theatrical)\b/gi, " ")
     .replace(/[._-]+/g, " ")
     .replace(/\b(?:mkv|mp4|avi|mov|webm|m4v|ts)\b$/i, " ")
@@ -198,6 +203,9 @@ function normalizeSourceKind(value: string | undefined) {
   const normalized = value.toLowerCase().replace(/[\s-]+/g, "");
   if (normalized === "webdl") {
     return "WEB-DL";
+  }
+  if (normalized === "web") {
+    return "WEB";
   }
   if (normalized === "bluray" || normalized === "bluray") {
     return "Blu-ray";
@@ -235,7 +243,7 @@ function looksAnimeMovie(value: string) {
 }
 
 function isTechnicalTag(value: string) {
-  return /^(2160p|4k|1080p|720p|480p|x265|x264|h265|h264|hevc|avc|av1|aac|flac|opus|web-?dl|webrip|hdtv|blu-?ray|bluray|bdrip|bdremux)$/i.test(
+  return /^(2160p|4k|1080p|720p|480p|x265|x264|h265|h264|hevc|avc|av1|aac|flac|opus|web-?dl|webrip|web|hdtv|blu-?ray|bluray|bdrip|bdremux|chs|cht|sc|tc|gb|big5|jpn|japanese|eng|english|multi|eztv\.re)$/i.test(
     value.trim(),
   );
 }

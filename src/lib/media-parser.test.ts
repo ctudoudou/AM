@@ -45,6 +45,20 @@ describe("parseMediaReleaseTitle", () => {
     expect(parsed.sourceKind).toBe("WEB-DL");
   });
 
+  it("drops TV release groups and subtitle language tails from parsed titles", () => {
+    const parsed = parseMediaReleaseTitle(
+      "Scavengers.Reign.S01E01.1080p.WEB.h264-EDITH[eztv.re].chs.eng",
+      "TV",
+    );
+
+    expect(parsed.mediaType).toBe("TV");
+    expect(parsed.parsedTitle).toBe("Scavengers Reign");
+    expect(parsed.season).toBe(1);
+    expect(parsed.episodeNumber).toBe(1);
+    expect(parsed.resolution).toBe("1080p");
+    expect(parsed.codec).toBe("H264");
+  });
+
   it("auto-detects obvious non-anime releases", () => {
     expect(detectMediaType("The.Studio.S01E03.1080p.WEB-DL")).toBe("TV");
     expect(detectMediaType("Oppenheimer.2023.2160p.BluRay.x265")).toBe("MOVIE");
