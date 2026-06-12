@@ -1,5 +1,25 @@
 import { describe, expect, it } from "vitest";
-import { parseLibraryIdentity, shouldPromoteScannedTitle } from "./library-scan";
+import { cleanScannedLibraryTitle, parseLibraryIdentity, shouldPromoteScannedTitle } from "./library-scan";
+
+describe("cleanScannedLibraryTitle", () => {
+  it("cleans TV release noise from scanned directory and file titles", () => {
+    expect(cleanScannedLibraryTitle("Scavengers Reign WEB EDITH chs eng", "TV")).toBe(
+      "Scavengers Reign",
+    );
+    expect(
+      cleanScannedLibraryTitle(
+        "Scavengers Reign XEN0N chs eng - S01E06 [X264].mp4",
+        "TV",
+      ),
+    ).toBe("Scavengers Reign");
+  });
+
+  it("keeps anime scanned title behavior unchanged", () => {
+    expect(cleanScannedLibraryTitle("Some Anime - 03 [1080p].mkv", "ANIME")).toBe(
+      "Some Anime 03 [1080p]",
+    );
+  });
+});
 
 describe("parseLibraryIdentity", () => {
   it("uses the series directory for videos stored under season extras", () => {

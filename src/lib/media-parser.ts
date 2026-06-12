@@ -38,6 +38,9 @@ const tvPatterns = [
 ];
 const animeEpisodeSignalPattern =
   /(?:\bS\d{1,2}E\d{1,4}\b|\bEP?\s?\d{1,4}\b|第\s?\d{1,4}\s?[话話集]|(?:^|[\s_\-[({])\d{1,3}(?:v\d)?(?:$|[\s_\-\])}]))/i;
+const languageSuffixPattern = /^(?:chs|cht|chi|zho|zh|cn|gb|big5|sc|tc|eng|en|sub|subs)$/i;
+const releaseGroupAfterTechnicalPattern =
+  /\b(?:x265|x264|h\.?265|h\.?264|hevc|avc|av1|web\s?-?dl|webrip|hdtv|bdrip|bdremux|blu\s?-?ray|bluray|web)[-._\s]+(?<group>[a-z0-9][a-z0-9._-]{1,24})(?=(?:[._\-\s]+(?:chs|cht|chi|zho|zh|cn|gb|big5|sc|tc|eng|en|sub|subs)\b)|(?:\.[^.]+$)|$)/i;
 
 export function normalizeIntakeMediaType(value: unknown): IntakeMediaType {
   if (value === "AUTO") {
@@ -93,12 +96,7 @@ function parseTvReleaseTitle(rawTitle: string): ParsedMediaRelease {
     .find((match) => match?.groups?.episode);
   const season = Number(tvMatch?.groups?.season ?? 1);
   const episodeNumber = Number(tvMatch?.groups?.episode ?? 1);
-  const parsedTitle = cleanReleaseTitle(
-    rawTitle
-      .replace(tvPatterns[0], " ")
-      .replace(tvPatterns[1], " ")
-      .replace(/\b(19\d{2}|20\d{2})\b/, " "),
-  );
+  const parsedTitle = cleanTvSeriesTitle(rawTitle);
   const signals = [
     parsedTitle.length > 0,
     Boolean(tvMatch),
@@ -115,6 +113,27 @@ function parseTvReleaseTitle(rawTitle: string): ParsedMediaRelease {
     season,
     confidence: Math.min(0.92, 0.35 + signals * 0.14),
   };
+}
+
+export function cleanTvSeriesTitle(value: string) {
+  const releaseGroup = extractReleaseGroupAfterTechnicalTag(value);
+  const hadReleaseNoise =
+    Boolean(releaseGroup) ||
+    resolutionPattern.test(value) ||
+    codecPattern.test(value) ||
+    sourcePattern.test(value) ||
+    /\b(?:chs|cht|chi|zho|zh|cn|gb|big5|sc|tc|eng|en|sub|subs)\b/i.test(value);
+  const cleaned = cleanReleaseTitle(
+    value
+      .replace(tvPatterns[0], " ")
+      .replace(tvPatterns[1], " ")
+      .replace(/\b(19\d{2}|20\d{2})\b/, " "),
+  );
+
+  return stripTrailingTvReleaseNoise(cleaned, {
+    releaseGroup,
+    stripFallbackReleaseGroup: hadReleaseNoise,
+  });
 }
 
 function parseMovieReleaseTitle(rawTitle: string): ParsedMediaRelease {
@@ -189,6 +208,49 @@ function cleanReleaseTitle(value: string) {
     .replace(/\b(?:mkv|mp4|avi|mov|webm|m4v|ts)\b$/i, " ")
     .replace(/\s+/g, " ")
     .trim();
+}
+
+function extractReleaseGroupAfterTechnicalTag(value: string) {
+  const match = value.match(releaseGroupAfterTechnicalPattern);
+  return match?.groups?.group?.replace(/[._-]+/g, " ").trim();
+}
+
+function stripTrailingTvReleaseNoise(
+  value: string,
+  options: { releaseGroup?: string; stripFallbackReleaseGroup: boolean },
+) {
+  let current = value;
+  current = stripTrailingTokens(current, languageSuffixPattern);
+  if (options.releaseGroup) {
+    current = stripTrailingReleaseGroup(current, options.releaseGroup);
+  }
+  current = stripTrailingTokens(current, languageSuffixPattern);
+  if (options.stripFallbackReleaseGroup) {
+    current = stripTrailingTokens(current, /^[a-z0-9]*\d[a-z0-9]*$/i);
+    current = stripTrailingTokens(current, /^[A-Z][A-Z0-9]{2,}$/);
+  }
+  return current.replace(/\s+/g, " ").trim();
+}
+
+function stripTrailingReleaseGroup(value: string, releaseGroup: string) {
+  const normalizedGroup = normalizeAtom(releaseGroup);
+  if (!normalizedGroup) {
+    return value;
+  }
+  const parts = value.split(/\s+/);
+  const tail = parts.slice(-normalizedGroup.split(/\s+/).length).join(" ");
+  if (normalizeAtom(tail) === normalizedGroup) {
+    return parts.slice(0, parts.length - normalizedGroup.split(/\s+/).length).join(" ");
+  }
+  return value;
+}
+
+function stripTrailingTokens(value: string, pattern: RegExp) {
+  const parts = value.split(/\s+/).filter(Boolean);
+  while (parts.length > 1 && pattern.test(parts[parts.length - 1])) {
+    parts.pop();
+  }
+  return parts.join(" ");
 }
 
 function extractYear(value: string) {
