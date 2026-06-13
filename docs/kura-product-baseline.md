@@ -2,11 +2,12 @@
 
 ## Product Positioning
 
-Kura is an anime-first NAS media application with secondary support for movies,
-TV, music, photos, and general files. It combines media library management,
-RSS-driven acquisition, aria2 download orchestration, metadata aggregation,
-AI-assisted title matching, online playback, watch progress tracking, and safe
-NAS directory organization.
+Kura is an anime-first NAS media automation system with secondary support for
+movies, TV, and read-only NAS file browsing. It combines RSS-driven acquisition,
+candidate grouping, subscription strategy, aria2 download orchestration,
+organizer plans, metadata repair, AI-assisted matching, local artwork caching,
+browser playback, watch progress tracking, data health checks, and safe NAS
+directory organization.
 
 The product should feel like a modern NAS media console, not a marketing site or
 a generic streaming clone. The interface should be dense, calm, image-led, and
@@ -172,6 +173,7 @@ Automation
 
 System
 - Files
+- Data Health
 - Settings
 ```
 
@@ -188,6 +190,7 @@ Home:
 - Subscription updates
 - Download status summary
 - Storage overview
+- Recent worker job status
 
 Anime library:
 
@@ -225,6 +228,13 @@ Files:
 - Breadcrumb path
 - Search/sort/view controls
 - Table rows with name, size, modified date, type, and item count
+
+Data Health:
+
+- Parser replay summary
+- Candidate grouping drift
+- Polluted organizer plans and media paths
+- Safe repair actions with review for low-confidence changes
 
 Settings:
 
