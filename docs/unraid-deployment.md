@@ -4,12 +4,14 @@ This guide covers deploying Kura on Unraid when PostgreSQL and aria2 are already
 
 ## Containers
 
-Deploy two Kura containers:
+Deploy two long-running Kura containers and run the migrator image when setting
+up or upgrading the database:
 
 | Container | Image | Purpose |
 | --- | --- | --- |
 | `kura-web` | `your-registry/kura:latest` | Web UI and API |
 | `kura-worker` | `your-registry/kura-worker:latest` | RSS jobs, download sync, organizer jobs, library scan |
+| `kura-migrator` | `your-registry/kura-migrator:latest` | One-shot Prisma database migration |
 
 `kura-web` can open the UI by itself, but background automation requires `kura-worker`.
 
@@ -62,12 +64,6 @@ OPENROUTER_API_KEY=your-openrouter-key
 OPENROUTER_MODEL=glm5.1
 
 NEXT_PUBLIC_DEFAULT_LOCALE=zh-Hans
-```
-
-Optional web startup setting:
-
-```env
-KURA_AUTO_MIGRATE=true
 ```
 
 Optional metadata sources:
@@ -129,14 +125,8 @@ Volume mapping:
 
 Add all environment variables listed above.
 
-`kura-web` runs database migrations during container startup by default. Keep this enabled for normal single-container
-web deployments:
-
-```text
-KURA_AUTO_MIGRATE=true
-```
-
-Set `KURA_AUTO_MIGRATE=false` only if you want to run migrations manually or through a separate migration container.
+The slim `kura-web` image does not run database migrations. Run the
+`kura-migrator` image before starting or updating `kura-web`.
 
 ## kura-worker Container
 
@@ -160,10 +150,7 @@ Add the same environment variables as `kura-web`.
 
 ## Database Migration
 
-`kura-web` runs `npm run prisma:migrate:deploy` automatically before the web server starts when
-`KURA_AUTO_MIGRATE=true`, which is the image default.
-
-If you disabled automatic migrations, run database migration once before starting Kura for the first time, and again
+Run database migration once before starting Kura for the first time, and again
 after image updates that include schema changes.
 
 From Unraid Terminal:
@@ -171,8 +158,7 @@ From Unraid Terminal:
 ```bash
 docker run --rm \
   -e DATABASE_URL='postgresql://kura:your-password@your-postgres-host:5432/kura?schema=public' \
-  your-registry/kura-worker:latest \
-  npm run prisma:migrate:deploy
+  your-registry/kura-migrator:latest
 ```
 
 If your database requires network access through a custom Docker network:
@@ -181,17 +167,17 @@ If your database requires network access through a custom Docker network:
 docker run --rm \
   --network your-docker-network \
   -e DATABASE_URL='postgresql://kura:your-password@postgres:5432/kura?schema=public' \
-  your-registry/kura-worker:latest \
-  npm run prisma:migrate:deploy
+  your-registry/kura-migrator:latest
 ```
 
 ## Startup Order
 
 1. Start PostgreSQL.
 2. Start aria2.
-3. Start `kura-web`.
-4. Start `kura-worker`.
-5. Open:
+3. Run `kura-migrator`.
+4. Start `kura-web`.
+5. Start `kura-worker`.
+6. Open:
 
 ```text
 http://your-unraid-ip:3000/zh-Hans
@@ -247,6 +233,7 @@ Put `/mnt/user/Kura/transcodes` on SSD/cache storage if possible. HLS preparatio
 ```bash
 docker pull your-registry/kura:latest
 docker pull your-registry/kura-worker:latest
+docker pull your-registry/kura-migrator:latest
 ```
 
 2. Run migration:
@@ -254,8 +241,7 @@ docker pull your-registry/kura-worker:latest
 ```bash
 docker run --rm \
   -e DATABASE_URL='postgresql://kura:your-password@your-postgres-host:5432/kura?schema=public' \
-  your-registry/kura-worker:latest \
-  npm run prisma:migrate:deploy
+  your-registry/kura-migrator:latest
 ```
 
 3. Restart `kura-web`.

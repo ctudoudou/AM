@@ -4,7 +4,7 @@ This document keeps operational details out of the product README.
 
 ## Docker Compose
 
-Compose starts PostgreSQL, aria2, the Kura web app, a one-shot migration
+Compose starts PostgreSQL, aria2, the Kura web app, a one-shot migrator
 container, and the worker:
 
 ```bash
@@ -47,10 +47,11 @@ http://localhost:3000/zh-Hans
 
 ## Existing PostgreSQL And aria2
 
-Kura can be deployed as only `web` and `worker` containers when PostgreSQL and
-aria2 are already provided by your NAS or another Compose stack. Set
-`DATABASE_URL`, `ARIA2_RPC_URL`, and the `/data` directory variables to values
-reachable from both Kura containers.
+Kura can run as `web` and `worker` containers when PostgreSQL and aria2 are
+already provided by your NAS or another Compose stack. Run the `migrator`
+target/image before the first start and before upgrades that include schema
+changes. Set `DATABASE_URL`, `ARIA2_RPC_URL`, and the `/data` directory
+variables to values reachable from all Kura containers.
 
 Do not use `localhost` for PostgreSQL or aria2 unless the service runs in the
 same container. Inside Docker, `localhost` is the current container.
@@ -61,7 +62,7 @@ For Unraid-style deployments, see [unraid-deployment.md](unraid-deployment.md).
 
 The repository includes `.github/workflows/docker-image.yml` for automated
 multi-arch image publishing to Docker Hub. On every branch push, GitHub Actions
-builds and pushes both images with three tags: `latest`, the branch name, and a
+builds and pushes three images with three tags: `latest`, the branch name, and a
 Shanghai-time date tag in `YYYYMMDDHHMMSS` format:
 
 ```text
@@ -71,6 +72,9 @@ Shanghai-time date tag in `YYYYMMDDHHMMSS` format:
 <dockerhub-namespace>/kura-worker:latest
 <dockerhub-namespace>/kura-worker:<branch>
 <dockerhub-namespace>/kura-worker:<YYYYMMDDHHMMSS>
+<dockerhub-namespace>/kura-migrator:latest
+<dockerhub-namespace>/kura-migrator:<branch>
+<dockerhub-namespace>/kura-migrator:<YYYYMMDDHHMMSS>
 ```
 
 If several commits are pushed to the same branch quickly, the workflow cancels
@@ -83,6 +87,7 @@ Dockerfile targets:
 ```text
 runner  -> Kura web app
 worker  -> Kura background worker
+migrator -> Prisma migration runner
 ```
 
 Before the first run, configure the GitHub repository:
@@ -100,6 +105,7 @@ pulling:
 docker login
 docker pull <dockerhub-namespace>/kura:latest
 docker pull <dockerhub-namespace>/kura-worker:latest
+docker pull <dockerhub-namespace>/kura-migrator:latest
 ```
 
 Do not commit Docker Hub credentials or private registry names. Keep real
@@ -136,7 +142,7 @@ or your container platform secrets.
 | `ANIDB_CLIENT_VERSION` | Optional | Registered AniDB client version number. | `1` |
 | `ARIA2_RPC_URL` | Yes | aria2 JSON-RPC endpoint reachable from Kura. | `http://aria2:6800/jsonrpc` |
 | `ARIA2_RPC_SECRET` | Recommended | aria2 RPC secret; must match aria2. Use a strong value outside local development. | `change-me` |
-| `KURA_AUTO_MIGRATE` | Container | When `true`, the web image runs `prisma:migrate:deploy` at startup. | `true` |
+| `KURA_AUTO_MIGRATE` | Deprecated | The slim web image no longer runs migrations. Use the Compose `migrate` service or the `kura-migrator` image. | `false` |
 | `NEXT_PUBLIC_DEFAULT_LOCALE` | Optional | Default UI locale. | `zh-Hans` |
 
 All configured file roots should stay under `DATA_ROOT` for predictable NAS

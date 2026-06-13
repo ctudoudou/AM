@@ -6,8 +6,10 @@
   "scripts": {
     "dev": "next dev",
     "build": "next build",
+    "build:worker": "node scripts/build-worker.mjs",
     "start": "node .next/standalone/server.js",
     "worker": "tsx src/worker.ts",
+    "worker:prod": "node dist/worker.cjs",
     "lint": "eslint .",
     "test": "vitest run",
     "test:watch": "vitest",
@@ -35,6 +37,7 @@
     "@types/node": "^24.10.0",
     "@types/react": "^19.2.0",
     "@types/react-dom": "^19.2.0",
+    "esbuild": "^0.27.7",
     "eslint": "^9.39.0",
     "eslint-config-next": "^16.2.4",
     "prisma": "^7.2.0",
