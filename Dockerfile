@@ -44,33 +44,41 @@ COPY --from=build-prisma /app/node_modules ./node_modules
 COPY --from=source /app ./
 RUN --mount=type=cache,target=/app/.next/cache npm run build
 
+FROM --platform=$BUILDPLATFORM node:24-alpine AS worker-builder
+WORKDIR /app
+COPY --from=build-prisma /app/node_modules ./node_modules
+COPY --from=source /app ./
+RUN npm run build:worker
+
 FROM node:24-alpine AS runner
 WORKDIR /app
 ENV NODE_ENV=production
 ENV HOSTNAME=0.0.0.0
 ENV PORT=3000
-ENV KURA_AUTO_MIGRATE=true
+ENV KURA_AUTO_MIGRATE=false
 RUN apk add --no-cache ffmpeg
-COPY package.json package-lock.json* prisma.config.ts ./
-COPY prisma ./prisma
 COPY --from=builder /app/public ./public
 COPY --from=builder /app/.next/standalone ./
 COPY --from=builder /app/.next/static ./.next/static
-# Use target-platform node_modules so Prisma engines generated/downloaded during
-# the image build match the runtime architecture without runtime downloads.
-COPY --from=prisma /app/node_modules ./node_modules
 COPY docker-entrypoint.sh ./docker-entrypoint.sh
 RUN chmod +x ./docker-entrypoint.sh
 EXPOSE 3000
 ENTRYPOINT ["./docker-entrypoint.sh"]
 CMD ["node", "server.js"]
 
+FROM node:24-alpine AS migrator
+WORKDIR /app
+ENV NODE_ENV=production
+COPY --from=prisma /app/node_modules ./node_modules
+COPY --from=source /app/package.json /app/package-lock.json* /app/prisma.config.ts ./
+COPY --from=source /app/prisma ./prisma
+CMD ["npm", "run", "prisma:migrate:deploy"]
+
 FROM node:24-alpine AS worker
 WORKDIR /app
 ENV NODE_ENV=production
-RUN apk add --no-cache ffmpeg
-COPY --from=prisma /app/node_modules ./node_modules
-COPY --from=source /app/package.json /app/package-lock.json* /app/prisma.config.ts /app/tsconfig.json ./
-COPY --from=source /app/prisma ./prisma
-COPY --from=source /app/src ./src
-CMD ["npm", "run", "worker"]
+COPY --from=worker-builder /app/dist ./dist
+COPY --from=prisma /app/node_modules/.prisma ./node_modules/.prisma
+COPY --from=prisma /app/node_modules/@prisma/client ./node_modules/@prisma/client
+COPY --from=prisma /app/node_modules/@prisma/client-runtime-utils ./node_modules/@prisma/client-runtime-utils
+CMD ["node", "dist/worker.cjs"]

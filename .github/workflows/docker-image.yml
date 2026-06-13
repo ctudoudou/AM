@@ -27,6 +27,9 @@ jobs:
           - name: worker
             target: worker
             cache-scope: kura-worker
+          - name: migrator
+            target: migrator
+            cache-scope: kura-migrator
 
     steps:
       - name: Check out repository
@@ -47,16 +50,27 @@ jobs:
           image_name="${image_name#docker.io/}"
           echo "web=${image_name}" >> "$GITHUB_OUTPUT"
           echo "worker=${image_name}-worker" >> "$GITHUB_OUTPUT"
+          echo "migrator=${image_name}-migrator" >> "$GITHUB_OUTPUT"
 
       - name: Select image
         id: selected-image
         shell: bash
         run: |
-          if [ "${{ matrix.name }}" = "web" ]; then
-            echo "name=${{ steps.image.outputs.web }}" >> "$GITHUB_OUTPUT"
-          else
-            echo "name=${{ steps.image.outputs.worker }}" >> "$GITHUB_OUTPUT"
-          fi
+          case "${{ matrix.name }}" in
+            web)
+              echo "name=${{ steps.image.outputs.web }}" >> "$GITHUB_OUTPUT"
+              ;;
+            worker)
+              echo "name=${{ steps.image.outputs.worker }}" >> "$GITHUB_OUTPUT"
+              ;;
+            migrator)
+              echo "name=${{ steps.image.outputs.migrator }}" >> "$GITHUB_OUTPUT"
+              ;;
+            *)
+              echo "::error::Unknown image matrix entry: ${{ matrix.name }}"
+              exit 1
+              ;;
+          esac
 
       - name: Generate date tag
         id: tag
