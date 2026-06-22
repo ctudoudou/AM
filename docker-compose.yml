@@ -63,7 +63,7 @@ services:
       OPENROUTER_MODEL: ${OPENROUTER_MODEL:-glm5.1}
       NEXT_PUBLIC_DEFAULT_LOCALE: ${NEXT_PUBLIC_DEFAULT_LOCALE:-zh-Hans}
     ports:
-      - "3000:3000"
+      - "${KURA_WEB_PORT:-3000}:3000"
     volumes:
       - ${KURA_DATA_ROOT:-./data}:/data
 
@@ -127,6 +127,22 @@ services:
       NEXT_PUBLIC_DEFAULT_LOCALE: ${NEXT_PUBLIC_DEFAULT_LOCALE:-zh-Hans}
     volumes:
       - ${KURA_DATA_ROOT:-./data}:/data
+
+  mdns:
+    build:
+      context: .
+      target: mdns
+    container_name: kura-mdns
+    profiles:
+      - mdns
+    restart: unless-stopped
+    network_mode: host
+    environment:
+      KURA_MDNS_HOSTNAME: ${KURA_MDNS_HOSTNAME:-kura}
+      KURA_MDNS_SERVICE_NAME: ${KURA_MDNS_SERVICE_NAME:-Kura}
+      KURA_MDNS_PORT: ${KURA_MDNS_PORT:-3000}
+      KURA_MDNS_PATH: ${KURA_MDNS_PATH:-/zh-Hans}
+      KURA_MDNS_INTERFACE: ${KURA_MDNS_INTERFACE:-}
 
 volumes:
   postgres-data:

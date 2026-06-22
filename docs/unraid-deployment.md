@@ -4,16 +4,19 @@ This guide covers deploying Kura on Unraid when PostgreSQL and aria2 are already
 
 ## Containers
 
-Deploy two long-running Kura containers and run the migrator image when setting
-up or upgrading the database:
+Deploy two required long-running Kura containers, optionally deploy the mDNS
+advertiser, and run the migrator image when setting up or upgrading the
+database:
 
 | Container | Image | Purpose |
 | --- | --- | --- |
 | `kura-web` | `your-registry/kura:latest` | Web UI and API |
 | `kura-worker` | `your-registry/kura-worker:latest` | RSS jobs, download sync, organizer jobs, library scan |
 | `kura-migrator` | `your-registry/kura-migrator:latest` | One-shot Prisma database migration |
+| `kura-mdns` | `your-registry/kura-mdns:latest` | Optional LAN discovery for `kura.local` |
 
 `kura-web` can open the UI by itself, but background automation requires `kura-worker`.
+`kura-mdns` only publishes the LAN name; it does not proxy or serve the web UI.
 
 ## Recommended Host Directories
 
@@ -64,6 +67,16 @@ OPENROUTER_API_KEY=your-openrouter-key
 OPENROUTER_MODEL=glm5.1
 
 NEXT_PUBLIC_DEFAULT_LOCALE=zh-Hans
+```
+
+Optional LAN discovery variables for `kura-mdns`:
+
+```env
+KURA_MDNS_HOSTNAME=kura
+KURA_MDNS_SERVICE_NAME=Kura
+KURA_MDNS_PORT=3000
+KURA_MDNS_PATH=/zh-Hans
+KURA_MDNS_INTERFACE=
 ```
 
 Optional metadata sources:
@@ -128,6 +141,51 @@ Add all environment variables listed above.
 The slim `kura-web` image does not run database migrations. Run the
 `kura-migrator` image before starting or updating `kura-web`.
 
+## kura-mdns Container
+
+Use this optional container when you want devices on the same LAN to resolve
+`kura.local`.
+
+Unraid Docker template:
+
+```text
+Name:        kura-mdns
+Repository:  your-registry/kura-mdns:latest
+Network:     host
+```
+
+No port mapping or volume mapping is required. Add these environment variables:
+
+```text
+KURA_MDNS_HOSTNAME=kura
+KURA_MDNS_SERVICE_NAME=Kura
+KURA_MDNS_PORT=3000
+KURA_MDNS_PATH=/zh-Hans
+KURA_MDNS_INTERFACE=
+```
+
+With the default `kura-web` port mapping, open:
+
+```text
+http://kura.local:3000/zh-Hans
+```
+
+For a no-port URL, change `kura-web` to publish host port `80` to container port
+`3000`, then set:
+
+```text
+KURA_MDNS_PORT=80
+```
+
+After that, open:
+
+```text
+http://kura.local/zh-Hans
+```
+
+Browsers resolve `kura.local` through mDNS, but they do not use the advertised
+service port from `_http._tcp` when you type a normal URL.
+
 ## kura-worker Container
 
 Unraid Docker template:
@@ -177,10 +235,17 @@ docker run --rm \
 3. Run `kura-migrator`.
 4. Start `kura-web`.
 5. Start `kura-worker`.
-6. Open:
+6. Optional: start `kura-mdns`.
+7. Open:
 
 ```text
 http://your-unraid-ip:3000/zh-Hans
+```
+
+If `kura-mdns` is running:
+
+```text
+http://kura.local:3000/zh-Hans
 ```
 
 ## Initial Checks
@@ -226,6 +291,18 @@ With the recommended mapping, paths should stay under:
 
 Put `/mnt/user/Kura/transcodes` on SSD/cache storage if possible. HLS preparation writes many small files.
 
+### kura.local does not resolve
+
+Check that `kura-mdns` uses host networking and that the LAN allows UDP
+multicast on port `5353`.
+
+If Unraid or another container already runs Avahi, Bonjour, or another mDNS
+responder, it may already own UDP `5353`. Use the existing responder to publish
+`kura.local`, or stop the conflicting responder before starting `kura-mdns`.
+
+`.local` only works on the same LAN/VLAN. It is not public DNS and will not
+work through normal remote access unless that network carries mDNS traffic.
+
 ## Update Flow
 
 1. Pull the latest images:
@@ -234,6 +311,7 @@ Put `/mnt/user/Kura/transcodes` on SSD/cache storage if possible. HLS preparatio
 docker pull your-registry/kura:latest
 docker pull your-registry/kura-worker:latest
 docker pull your-registry/kura-migrator:latest
+docker pull your-registry/kura-mdns:latest
 ```
 
 2. Run migration:
@@ -246,6 +324,7 @@ docker run --rm \
 
 3. Restart `kura-web`.
 4. Restart `kura-worker`.
+5. Optional: restart `kura-mdns`.
 
 ## Backup
 

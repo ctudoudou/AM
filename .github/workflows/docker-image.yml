@@ -30,6 +30,9 @@ jobs:
           - name: migrator
             target: migrator
             cache-scope: kura-migrator
+          - name: mdns
+            target: mdns
+            cache-scope: kura-mdns
 
     steps:
       - name: Check out repository
@@ -51,6 +54,7 @@ jobs:
           echo "web=${image_name}" >> "$GITHUB_OUTPUT"
           echo "worker=${image_name}-worker" >> "$GITHUB_OUTPUT"
           echo "migrator=${image_name}-migrator" >> "$GITHUB_OUTPUT"
+          echo "mdns=${image_name}-mdns" >> "$GITHUB_OUTPUT"
 
       - name: Select image
         id: selected-image
@@ -65,6 +69,9 @@ jobs:
               ;;
             migrator)
               echo "name=${{ steps.image.outputs.migrator }}" >> "$GITHUB_OUTPUT"
+              ;;
+            mdns)
+              echo "name=${{ steps.image.outputs.mdns }}" >> "$GITHUB_OUTPUT"
               ;;
             *)
               echo "::error::Unknown image matrix entry: ${{ matrix.name }}"

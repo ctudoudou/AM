@@ -82,3 +82,9 @@ COPY --from=prisma /app/node_modules/.prisma ./node_modules/.prisma
 COPY --from=prisma /app/node_modules/@prisma/client ./node_modules/@prisma/client
 COPY --from=prisma /app/node_modules/@prisma/client-runtime-utils ./node_modules/@prisma/client-runtime-utils
 CMD ["node", "dist/worker.cjs"]
+
+FROM alpine:3.22 AS mdns
+RUN apk add --no-cache avahi
+COPY docker-mdns-entrypoint.sh /usr/local/bin/docker-mdns-entrypoint.sh
+RUN chmod +x /usr/local/bin/docker-mdns-entrypoint.sh
+ENTRYPOINT ["/usr/local/bin/docker-mdns-entrypoint.sh"]
