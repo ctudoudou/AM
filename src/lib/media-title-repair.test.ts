@@ -166,3 +166,44 @@ describe("rankMediaIdentityMatches", () => {
     expect(matches).toHaveLength(0);
   });
 });
+
+describe("rankMediaIdentityMatches", () => {
+  it("treats localized base anime titles as strong matches across season years", () => {
+    const keys = createMediaIdentityKeys(mediaIdentity({
+      primaryTitle: "葬送的芙莉莲 第二季",
+      aliases: [{ title: "葬送的芙莉莲 第二季 [jibaketa合成][1080p][AVC]" }],
+    }));
+    const matches = rankMediaIdentityMatches(
+      keys,
+      [
+        mediaIdentity({
+          primaryTitle: "葬送的芙莉莲",
+          originalTitle: "葬送のフリーレン",
+          aliases: [{ title: "Sousou no Frieren" }],
+          posterUrl: "/covers/frieren.jpeg",
+          year: 2023,
+        }),
+      ],
+      { minimumScore: 3 },
+    );
+
+    expect(matches).toHaveLength(1);
+    expect(matches[0].media.primaryTitle).toBe("葬送的芙莉莲");
+  });
+
+  it("does not promote weak incidental keys for cross-year matches", () => {
+    const matches = rankMediaIdentityMatches(
+      new Set(["sp01"]),
+      [
+        mediaIdentity({
+          primaryTitle: "SP01",
+          aliases: [{ title: "SP01" }],
+          year: 2013,
+        }),
+      ],
+      { minimumScore: 3 },
+    );
+
+    expect(matches).toHaveLength(0);
+  });
+});
