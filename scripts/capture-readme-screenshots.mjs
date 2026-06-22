@@ -10,24 +10,44 @@ const outDir = path.resolve("docs/images");
 
 const pages = [
   {
+    path: "/zh-Hans",
+    file: "kura-home.png",
+    waitFor: "继续观看",
+  },
+  {
     path: "/zh-Hans/anime",
     file: "kura-anime-library.png",
-    waitFor: "24 部作品",
+    waitFor: "动漫库",
+  },
+  {
+    path: "/zh-Hans/tv",
+    file: "kura-tv-library.png",
+    waitFor: "电视剧库",
   },
   {
     path: "/zh-Hans/subscriptions",
     file: "kura-subscriptions.png",
-    waitFor: "订阅",
+    waitFor: "RSS 源",
   },
   {
     path: "/zh-Hans/organizer",
     file: "kura-organizer.png",
-    waitFor: "整理",
+    waitFor: "整理计划",
   },
   {
     path: "/zh-Hans/downloads",
     file: "kura-downloads.png",
-    waitFor: "下载",
+    waitFor: "下载任务",
+  },
+  {
+    path: "/zh-Hans/files",
+    file: "kura-files.png",
+    waitFor: "只读浏览",
+  },
+  {
+    path: "/zh-Hans/data-health",
+    file: "kura-data-health.png",
+    waitFor: "数据健康",
   },
 ];
 
@@ -100,7 +120,9 @@ async function waitForContent(ws, expectedText) {
     const result = await send(ws, "Runtime.evaluate", {
       expression: `(() => {
         const text = document.body?.innerText || "";
-        return text.includes(${JSON.stringify(expectedText)}) && !text.includes("正在加载...");
+        return text.includes(${JSON.stringify(expectedText)})
+          && !text.includes("正在加载...")
+          && !text.includes("无法加载");
       })()`,
       returnByValue: true,
     });

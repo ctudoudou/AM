@@ -70,13 +70,12 @@ services:
   migrate:
     build:
       context: .
-      target: worker
+      target: migrator
     container_name: kura-migrate
     restart: "no"
     depends_on:
       postgres:
         condition: service_healthy
-    command: ["npm", "run", "prisma:migrate:deploy"]
     environment:
       DATABASE_URL: postgresql://kura:${POSTGRES_PASSWORD:-change-me}@postgres:5432/kura?schema=public
       DATA_ROOT: /data
@@ -109,7 +108,7 @@ services:
         condition: service_started
       migrate:
         condition: service_completed_successfully
-    command: ["npm", "run", "worker"]
+    command: ["node", "dist/worker.cjs"]
     environment:
       DATABASE_URL: postgresql://kura:${POSTGRES_PASSWORD:-change-me}@postgres:5432/kura?schema=public
       DATA_ROOT: /data
