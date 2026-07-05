@@ -173,6 +173,19 @@ type PendingSubscription = {
   candidate?: Candidate;
   strategy: SubscriptionStrategyDraft;
 };
+type CandidateVariant = {
+  key: string;
+  candidate: Candidate;
+  candidates: Candidate[];
+  sourceNames: string[];
+  latestCreatedAt?: string | null;
+};
+type CandidateEpisodeGroup = {
+  key: string;
+  label: string;
+  candidateCount: number;
+  variants: CandidateVariant[];
+};
 
 export function SubscriptionsClient({ locale }: { locale: Locale }) {
   const t = getMessages(locale);
@@ -499,7 +512,7 @@ export function SubscriptionsClient({ locale }: { locale: Locale }) {
     });
   }
 
-function updatePendingStrategy(patch: Partial<SubscriptionStrategyDraft>) {
+  function updatePendingStrategy(patch: Partial<SubscriptionStrategyDraft>) {
     setPendingSubscription((current) =>
       current
         ? {
@@ -1067,21 +1080,28 @@ function updatePendingStrategy(patch: Partial<SubscriptionStrategyDraft>) {
                               {t.episode} {episode.label}
                             </span>
                             <small>
-                              {episode.candidates.length} {t.candidates}
+                              {episode.variants.length} {t.uniqueVariants} ·{" "}
+                              {episode.candidateCount} {t.rssItems}
                             </small>
                           </div>
-                          {episode.candidates.map((candidate) => {
-                            const isSubscribed = groupSubscriptions.some((subscription) =>
-                              candidateMatchesSubscription(candidate, subscription),
+                          {episode.variants.map((variant) => {
+                            const candidate = variant.candidate;
+                            const isSubscribed = variant.candidates.some((variantCandidate) =>
+                              groupSubscriptions.some((subscription) =>
+                                candidateMatchesSubscription(variantCandidate, subscription),
+                              ),
                             );
                             const hasOtherSubscription = hasAnySubscription && !isSubscribed;
 
                             return (
-                              <div className="candidate-row" key={candidate.id}>
+                              <div className="candidate-row" key={variant.key}>
                                 <div>
                                   <strong>{candidate.rawTitle}</strong>
                                   <span className="candidate-row-meta">
                                     {formatCandidateMeta(candidate, locale)}
+                                  </span>
+                                  <span className="candidate-row-sources">
+                                    {formatVariantSourceSummary(variant, locale, t)}
                                   </span>
                                 </div>
                                 <div className="candidate-actions">
@@ -1413,7 +1433,9 @@ function buildSubscriptionPreview(
   draft: SubscriptionStrategyDraft,
 ) {
   const strategy = toEvaluationStrategy(draft, candidate);
-  const strategyCandidates = group.candidates.map(toStrategyCandidate);
+  const strategyCandidates = groupCandidatesByEpisode(group.candidates)
+    .flatMap((episode) => episode.variants.map((variant) => variant.candidate))
+    .map(toStrategyCandidate);
   const selection = selectSubscriptionCandidate(strategyCandidates, strategy);
   const evaluations = evaluateSubscriptionCandidates(strategyCandidates, strategy)
     .map((evaluation) =>
@@ -1587,11 +1609,8 @@ function formatStrategyKey(key: string, t: ReturnType<typeof getMessages>) {
   }
 }
 
-function groupCandidatesByEpisode(candidates: Candidate[]) {
-  const grouped = new Map<
-    string,
-    { key: string; label: string; candidates: Candidate[] }
-  >();
+function groupCandidatesByEpisode(candidates: Candidate[]): CandidateEpisodeGroup[] {
+  const grouped = new Map<string, CandidateEpisodeGroup & { variantMap: Map<string, Candidate[]> }>();
 
   for (const candidate of candidates) {
     const label =
@@ -1599,12 +1618,97 @@ function groupCandidatesByEpisode(candidates: Candidate[]) {
         ? "-"
         : String(candidate.episodeNumber).padStart(2, "0");
     const key = label === "-" ? `unknown-${candidate.id}` : label;
-    const group = grouped.get(key) ?? { key, label, candidates: [] };
-    group.candidates.push(candidate);
+    const group =
+      grouped.get(key) ??
+      { key, label, candidateCount: 0, variants: [], variantMap: new Map<string, Candidate[]>() };
+    const variantKey = candidateVariantKey(candidate);
+    const variantCandidates = group.variantMap.get(variantKey) ?? [];
+    variantCandidates.push(candidate);
+    group.variantMap.set(variantKey, variantCandidates);
+    group.candidateCount += 1;
     grouped.set(key, group);
   }
 
-  return [...grouped.values()];
+  return [...grouped.values()].map((group) => {
+    const variants = [...group.variantMap.entries()]
+      .map(([key, variantCandidates]) => buildCandidateVariant(key, variantCandidates))
+      .sort((a, b) => candidateTimeValue(b.candidate.createdAt) - candidateTimeValue(a.candidate.createdAt));
+    return {
+      key: group.key,
+      label: group.label,
+      candidateCount: group.candidateCount,
+      variants,
+    };
+  });
+}
+
+function buildCandidateVariant(key: string, candidates: Candidate[]): CandidateVariant {
+  const sorted = [...candidates].sort(
+    (a, b) => candidateTimeValue(b.createdAt) - candidateTimeValue(a.createdAt),
+  );
+  const candidate = sorted[0];
+  return {
+    key,
+    candidate,
+    candidates: sorted,
+    sourceNames: uniqueSourceNames(sorted),
+    latestCreatedAt: candidate.createdAt ?? null,
+  };
+}
+
+function candidateVariantKey(candidate: Candidate) {
+  if (candidate.variantKey) {
+    return `variant:${candidate.variantKey}`;
+  }
+  return [
+    candidate.subtitleGroup,
+    normalizeMetaAtom(candidate.releaseProfile ?? ""),
+    candidate.subtitleLanguage,
+    candidate.sourceKind,
+    normalizeMetaAtom(candidate.resolution ?? ""),
+    normalizeMetaAtom(candidate.codec ?? ""),
+    normalizeMetaAtom(candidate.audio ?? ""),
+    candidate.episodeNumber ?? "unknown",
+    normalizeMetaAtom(candidate.rawTitle),
+  ]
+    .filter(Boolean)
+    .join("|");
+}
+
+function uniqueSourceNames(candidates: Candidate[]) {
+  const names = new Map<string, string>();
+  for (const candidate of candidates) {
+    const name = candidate.rssItem?.source?.name ?? candidate.sourceKind ?? candidate.rssItem?.origin ?? null;
+    if (name) {
+      names.set(name.toLowerCase(), name);
+    }
+  }
+  return [...names.values()];
+}
+
+function candidateTimeValue(value?: string | null) {
+  if (!value) {
+    return 0;
+  }
+  const time = new Date(value).getTime();
+  return Number.isFinite(time) ? time : 0;
+}
+
+function formatVariantSourceSummary(
+  variant: CandidateVariant,
+  locale: Locale,
+  t: ReturnType<typeof getMessages>,
+) {
+  const sources = variant.sourceNames.slice(0, 3).join(", ");
+  const sourceSummary = sources ? `${t.candidateSources}: ${sources}` : t.candidateSources;
+  const duplicateSummary =
+    variant.candidates.length > 1
+      ? ` · ${variant.candidates.length} ${t.rssItems}`
+      : "";
+  const latest = variant.latestCreatedAt
+    ? ` · ${t.latestCandidate}: ${formatShortDate(variant.latestCreatedAt, locale)}`
+    : "";
+  return `${sourceSummary}${duplicateSummary}${latest}`;
 }
 
 function formatCandidateMeta(candidate: Candidate, locale: Locale) {

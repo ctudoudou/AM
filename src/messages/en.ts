@@ -99,6 +99,7 @@ export const en = {
   noCandidates: "No candidate titles yet. Add an RSS source or import a magnet link first.",
   noMatchingResults: "No results match the current filters.",
   candidates: "versions",
+  uniqueVariants: "variants",
   needsReview: "Needs review",
   ready: "Ready",
   subscribe: "Subscribe",
