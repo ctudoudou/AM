@@ -1,9 +1,27 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Download, Loader2, Play, Plus, RefreshCw, Trash2, WandSparkles } from "lucide-react";
+import {
+  AlertTriangle,
+  CheckCircle2,
+  Download,
+  Loader2,
+  Play,
+  Plus,
+  RefreshCw,
+  Trash2,
+  WandSparkles,
+  X,
+} from "lucide-react";
 import { getMessages } from "@/messages";
 import type { Locale } from "@/lib/i18n";
+import {
+  evaluateSubscriptionCandidates,
+  selectSubscriptionCandidate,
+  type StrategyCandidate,
+  type SubscriptionCandidateEvaluation,
+  type SubscriptionStrategy,
+} from "@/lib/subscription-strategy";
 import type {
   SubscriptionQueueDescription,
   SubscriptionQueueReason,
@@ -150,6 +168,11 @@ type SubscriptionStrategyDraft = {
   batchPolicy: "reject" | "review" | "allow";
   autoDownload: boolean;
 };
+type PendingSubscription = {
+  group: CandidateGroup;
+  candidate?: Candidate;
+  strategy: SubscriptionStrategyDraft;
+};
 
 export function SubscriptionsClient({ locale }: { locale: Locale }) {
   const t = getMessages(locale);
@@ -201,6 +224,8 @@ export function SubscriptionsClient({ locale }: { locale: Locale }) {
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(true);
   const [selectedGroupId, setSelectedGroupId] = useState<string | null>(null);
+  const [pendingSubscription, setPendingSubscription] = useState<PendingSubscription | null>(null);
+  const [subscriptionSubmitting, setSubscriptionSubmitting] = useState(false);
   const groupsWithVersions = Math.max(0, candidateStats.totalGroups - candidateStats.emptyGroups);
   const visibleSubscriptions = useMemo(() => {
     const needle = subscriptionQuery.trim().toLowerCase();
@@ -261,6 +286,17 @@ export function SubscriptionsClient({ locale }: { locale: Locale }) {
   const selectedGroup = useMemo(
     () => visibleGroups.find((group) => group.id === selectedGroupId) ?? visibleGroups[0] ?? null,
     [selectedGroupId, visibleGroups],
+  );
+  const subscriptionPreview = useMemo(
+    () =>
+      pendingSubscription
+        ? buildSubscriptionPreview(
+            pendingSubscription.group,
+            pendingSubscription.candidate,
+            pendingSubscription.strategy,
+          )
+        : null,
+    [pendingSubscription],
   );
 
   const load = useCallback(async () => {
@@ -453,52 +489,87 @@ export function SubscriptionsClient({ locale }: { locale: Locale }) {
     await load();
   }
 
-  async function createSubscription(group: CandidateGroup, candidate?: Candidate) {
+  function openSubscriptionDialog(group: CandidateGroup, candidate?: Candidate) {
     setStatus("");
     setError("");
-    const strategy = buildSubscriptionStrategy(group, candidate);
-    if (!window.confirm(formatSubscriptionConfirmation(strategy, locale))) {
+    setPendingSubscription({
+      group,
+      candidate,
+      strategy: buildSubscriptionStrategy(group, candidate),
+    });
+  }
+
+function updatePendingStrategy(patch: Partial<SubscriptionStrategyDraft>) {
+    setPendingSubscription((current) =>
+      current
+        ? {
+            ...current,
+            strategy: {
+              ...normalizeSubscriptionStrategyDraft({
+                ...current.strategy,
+                ...patch,
+              }),
+              autoDownload: current.candidate ? (patch.autoDownload ?? current.strategy.autoDownload) : false,
+            },
+          }
+        : current,
+    );
+  }
+
+  async function submitPendingSubscription() {
+    if (!pendingSubscription || subscriptionSubmitting) {
       return;
     }
-    const response = await fetch("/api/subscriptions", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        candidateId: candidate?.id,
-        candidateGroupId: group.id,
-        seasonMode: strategy.seasonMode,
-        seasonNumber: strategy.seasonNumber,
-        episodeMode: strategy.episodeMode,
-        episodeStart: strategy.episodeStart,
-        episodeEnd: strategy.episodeEnd,
-        batchPolicy: strategy.batchPolicy,
-        preferredGroup: candidatePreferredGroup(candidate) ?? undefined,
-        preferredResolution: candidate?.resolution ?? undefined,
-        preferredCodec: candidate?.codec ?? undefined,
-        preferredAudio: candidate?.audio ?? undefined,
-        preferredSubtitleLanguage: candidate?.subtitleLanguage ?? undefined,
-        preferredReleaseProfile: candidate?.releaseProfile ?? undefined,
-        preferredSourceKind: candidate?.sourceKind ?? undefined,
-        preferredVariantKey: candidate?.variantKey ?? undefined,
-        autoDownload: Boolean(candidate),
-        fallbackPolicy: "manual_review",
-      }),
-    });
-    if (response.ok) {
-      const body = (await response.json().catch(() => null)) as {
-        downloadError?: string;
-        replaced?: boolean;
-      } | null;
-      const message = body?.replaced ? t.subscriptionUpdated : t.subscriptionCreated;
-      setStatus(
-        body?.downloadError
-          ? `${message} ${t.downloadCreateError}: ${body.downloadError}`
-          : message,
-      );
-      await load();
-    } else {
-      const body = await response.json().catch(() => null);
-      setError(body?.message || t.subscriptionCreateError);
+    setStatus("");
+    setError("");
+    setSubscriptionSubmitting(true);
+    const { group, candidate, strategy } = pendingSubscription;
+    try {
+      const response = await fetch("/api/subscriptions", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          candidateId: candidate?.id,
+          candidateGroupId: group.id,
+          seasonMode: strategy.seasonMode,
+          seasonNumber: strategy.seasonNumber,
+          episodeMode: strategy.episodeMode,
+          episodeStart: strategy.episodeStart,
+          episodeEnd: strategy.episodeEnd,
+          batchPolicy: strategy.batchPolicy,
+          preferredGroup: candidatePreferredGroup(candidate) ?? undefined,
+          preferredResolution: candidate?.resolution ?? undefined,
+          preferredCodec: candidate?.codec ?? undefined,
+          preferredAudio: candidate?.audio ?? undefined,
+          preferredSubtitleLanguage: candidate?.subtitleLanguage ?? undefined,
+          preferredReleaseProfile: candidate?.releaseProfile ?? undefined,
+          preferredSourceKind: candidate?.sourceKind ?? undefined,
+          preferredVariantKey: candidate?.variantKey ?? undefined,
+          autoDownload: strategy.autoDownload,
+          fallbackPolicy: "manual_review",
+        }),
+      });
+      if (response.ok) {
+        const body = (await response.json().catch(() => null)) as {
+          downloadError?: string;
+          replaced?: boolean;
+        } | null;
+        const message = body?.replaced ? t.subscriptionUpdated : t.subscriptionCreated;
+        setStatus(
+          body?.downloadError
+            ? `${message} ${t.downloadCreateError}: ${body.downloadError}`
+            : message,
+        );
+        setPendingSubscription(null);
+        await load();
+      } else {
+        const body = await response.json().catch(() => null);
+        setError(body?.message || t.subscriptionCreateError);
+      }
+    } catch (submitError) {
+      setError(submitError instanceof Error ? submitError.message : t.subscriptionCreateError);
+    } finally {
+      setSubscriptionSubmitting(false);
     }
   }
 
@@ -960,7 +1031,7 @@ export function SubscriptionsClient({ locale }: { locale: Locale }) {
                         {formatQueueState(queueStatus.state, t)}
                       </span>
                       {!hasFutureOnlySubscription ? (
-                        <button onClick={() => void createSubscription(group)} type="button">
+                        <button onClick={() => openSubscriptionDialog(group)} type="button">
                           <Plus size={14} />
                           {t.futureOnlySubscribe}
                         </button>
@@ -1016,7 +1087,7 @@ export function SubscriptionsClient({ locale }: { locale: Locale }) {
                                 <div className="candidate-actions">
                                   <button
                                     disabled={isSubscribed}
-                                    onClick={() => void createSubscription(group, candidate)}
+                                    onClick={() => openSubscriptionDialog(group, candidate)}
                                     type="button"
                                   >
                                     <Play size={14} />
@@ -1066,8 +1137,454 @@ export function SubscriptionsClient({ locale }: { locale: Locale }) {
           </div>
         </div>
       </section>
+      {pendingSubscription ? (
+        <div
+          className="strategy-dialog-backdrop"
+          onMouseDown={() => {
+            if (!subscriptionSubmitting) {
+              setPendingSubscription(null);
+            }
+          }}
+          role="presentation"
+        >
+          <section
+            aria-labelledby="subscription-strategy-dialog-title"
+            aria-modal="true"
+            className="strategy-dialog"
+            onMouseDown={(event) => event.stopPropagation()}
+            role="dialog"
+          >
+            <div className="strategy-dialog-heading">
+              <div>
+                <h2 id="subscription-strategy-dialog-title">{t.subscriptionStrategyDialogTitle}</h2>
+                <p>{t.subscriptionStrategyDialogDescription}</p>
+              </div>
+              <button
+                aria-label={t.strategyCancel}
+                className="strategy-dialog-close"
+                disabled={subscriptionSubmitting}
+                onClick={() => setPendingSubscription(null)}
+                type="button"
+              >
+                <X size={16} />
+              </button>
+            </div>
+
+            <div className="strategy-summary-grid">
+              <StrategySummaryItem label={t.strategyTitle} value={pendingSubscription.group.displayTitle} />
+              <StrategySummaryItem
+                label={t.mediaType}
+                value={formatMediaType(pendingSubscription.group.mediaType, t)}
+              />
+              <StrategySummaryItem
+                label={t.strategySelectedVersion}
+                value={
+                  pendingSubscription.candidate
+                    ? formatCandidateMeta(pendingSubscription.candidate, locale) || pendingSubscription.candidate.rawTitle
+                    : t.strategyFutureOnlyMode
+                }
+              />
+              <StrategySummaryItem
+                label={t.strategyFallback}
+                value={t.strategyFallbackManualReview}
+              />
+            </div>
+
+            <div className="strategy-form-grid">
+              <label>
+                <span>{t.strategySeasonMode}</span>
+                <select
+                  disabled={subscriptionSubmitting}
+                  onChange={(event) =>
+                    updatePendingStrategy({
+                      seasonMode: event.target.value as SubscriptionStrategyDraft["seasonMode"],
+                    })
+                  }
+                  value={pendingSubscription.strategy.seasonMode}
+                >
+                  <option value="specific">{t.strategySeasonSpecific}</option>
+                  <option value="latest">{t.strategySeasonLatest}</option>
+                  <option value="unknown_review">{t.strategySeasonUnknown}</option>
+                </select>
+              </label>
+              <label>
+                <span>{t.strategySeasonNumber}</span>
+                <input
+                  disabled={subscriptionSubmitting || pendingSubscription.strategy.seasonMode !== "specific"}
+                  min={1}
+                  onChange={(event) =>
+                    updatePendingStrategy({
+                      seasonNumber: parseOptionalPositiveNumber(event.target.value),
+                    })
+                  }
+                  type="number"
+                  value={pendingSubscription.strategy.seasonNumber ?? ""}
+                />
+              </label>
+              <label>
+                <span>{t.strategyEpisodeMode}</span>
+                <select
+                  disabled={subscriptionSubmitting}
+                  onChange={(event) =>
+                    updatePendingStrategy({
+                      episodeMode: event.target.value as SubscriptionStrategyDraft["episodeMode"],
+                    })
+                  }
+                  value={pendingSubscription.strategy.episodeMode}
+                >
+                  <option value="future_only">{t.strategyEpisodeFuture}</option>
+                  <option value="missing_only">{t.strategyEpisodeMissingOnly}</option>
+                  <option value="range">{t.strategyEpisodeRange}</option>
+                  <option value="all">{t.strategyEpisodeAll}</option>
+                </select>
+              </label>
+              <label>
+                <span>{t.strategyEpisodeStart}</span>
+                <input
+                  disabled={
+                    subscriptionSubmitting ||
+                    (pendingSubscription.strategy.episodeMode !== "future_only" &&
+                      pendingSubscription.strategy.episodeMode !== "range")
+                  }
+                  min={1}
+                  onChange={(event) =>
+                    updatePendingStrategy({
+                      episodeStart: parseOptionalPositiveNumber(event.target.value),
+                    })
+                  }
+                  type="number"
+                  value={pendingSubscription.strategy.episodeStart ?? ""}
+                />
+              </label>
+              <label>
+                <span>{t.strategyEpisodeEnd}</span>
+                <input
+                  disabled={subscriptionSubmitting || pendingSubscription.strategy.episodeMode !== "range"}
+                  min={1}
+                  onChange={(event) =>
+                    updatePendingStrategy({
+                      episodeEnd: parseOptionalPositiveNumber(event.target.value),
+                    })
+                  }
+                  type="number"
+                  value={pendingSubscription.strategy.episodeEnd ?? ""}
+                />
+              </label>
+              <label>
+                <span>{t.strategyBatchPolicy}</span>
+                <select
+                  disabled={subscriptionSubmitting}
+                  onChange={(event) =>
+                    updatePendingStrategy({
+                      batchPolicy: event.target.value as SubscriptionStrategyDraft["batchPolicy"],
+                    })
+                  }
+                  value={pendingSubscription.strategy.batchPolicy}
+                >
+                  <option value="review">{t.strategyBatchReview}</option>
+                  <option value="reject">{t.strategyBatchReject}</option>
+                  <option value="allow">{t.strategyBatchAllow}</option>
+                </select>
+              </label>
+            </div>
+
+            <label className={pendingSubscription.candidate ? "strategy-toggle" : "strategy-toggle disabled"}>
+              <input
+                checked={pendingSubscription.strategy.autoDownload}
+                disabled={subscriptionSubmitting || !pendingSubscription.candidate}
+                onChange={(event) =>
+                  updatePendingStrategy({
+                    autoDownload: event.target.checked,
+                  })
+                }
+                type="checkbox"
+              />
+              <span>{t.strategyAutoDownload}</span>
+            </label>
+
+            <div className="strategy-preview">
+              <div className="strategy-preview-heading">
+                <h3>{t.strategyPreviewTitle}</h3>
+                {subscriptionPreview?.selection.candidate ? (
+                  <span>
+                    {t.strategyPreviewSelected}: {subscriptionPreview.selection.candidate.rawTitle}
+                  </span>
+                ) : (
+                  <span>{t.strategyNoCandidatePreview}</span>
+                )}
+              </div>
+              {subscriptionPreview && subscriptionPreview.evaluations.length > 0 ? (
+                <div className="strategy-preview-list">
+                  {subscriptionPreview.evaluations.slice(0, 6).map((evaluation) => (
+                    <StrategyEvaluationRow
+                      evaluation={evaluation}
+                      isSelected={subscriptionPreview.selection.candidate?.id === evaluation.candidate.id}
+                      key={evaluation.candidate.id}
+                      locale={locale}
+                      t={t}
+                    />
+                  ))}
+                </div>
+              ) : (
+                <p>{t.strategyNoCandidatePreview}</p>
+              )}
+            </div>
+
+            <div className="strategy-dialog-actions">
+              <button
+                disabled={subscriptionSubmitting}
+                onClick={() => setPendingSubscription(null)}
+                type="button"
+              >
+                {t.strategyCancel}
+              </button>
+              <button
+                className="strategy-confirm-button"
+                disabled={subscriptionSubmitting}
+                onClick={() => void submitPendingSubscription()}
+                type="button"
+              >
+                {subscriptionSubmitting ? <Loader2 size={14} /> : <CheckCircle2 size={14} />}
+                {t.strategyConfirm}
+              </button>
+            </div>
+          </section>
+        </div>
+      ) : null}
     </div>
   );
+}
+
+function StrategySummaryItem({ label, value }: { label: string; value: string }) {
+  return (
+    <div>
+      <span>{label}</span>
+      <strong>{value}</strong>
+    </div>
+  );
+}
+
+function StrategyEvaluationRow({
+  evaluation,
+  isSelected,
+  locale,
+  t,
+}: {
+  evaluation: SubscriptionCandidateEvaluation;
+  isSelected: boolean;
+  locale: Locale;
+  t: ReturnType<typeof getMessages>;
+}) {
+  const state = !evaluation.eligible
+    ? "rejected"
+    : evaluation.needsReview
+      ? "review"
+      : "eligible";
+  const stateLabel = !evaluation.eligible
+    ? t.strategyPreviewRejected
+    : evaluation.needsReview
+      ? t.strategyPreviewReview
+      : t.strategyPreviewEligible;
+
+  return (
+    <article className={`strategy-evaluation-row ${state}`}>
+      <div className="strategy-evaluation-main">
+        <div className="strategy-evaluation-title">
+          {state === "eligible" ? <CheckCircle2 size={14} /> : <AlertTriangle size={14} />}
+          <strong>{evaluation.candidate.rawTitle}</strong>
+        </div>
+        <span>
+          {formatCandidateMetaFromStrategyCandidate(evaluation.candidate, locale)}
+        </span>
+        <p>{formatEvaluationDetail(evaluation, t)}</p>
+      </div>
+      <div className="strategy-evaluation-side">
+        {isSelected ? <span className="strategy-selected-pill">{t.strategyEvaluationSelected}</span> : null}
+        <span>{stateLabel}</span>
+        <small>{t.strategyScore}: {evaluation.score}</small>
+      </div>
+    </article>
+  );
+}
+
+function buildSubscriptionPreview(
+  group: CandidateGroup,
+  candidate: Candidate | undefined,
+  draft: SubscriptionStrategyDraft,
+) {
+  const strategy = toEvaluationStrategy(draft, candidate);
+  const strategyCandidates = group.candidates.map(toStrategyCandidate);
+  const selection = selectSubscriptionCandidate(strategyCandidates, strategy);
+  const evaluations = evaluateSubscriptionCandidates(strategyCandidates, strategy)
+    .map((evaluation) =>
+      selection.evaluation?.candidate.id === evaluation.candidate.id
+        ? {
+            ...evaluation,
+            needsReview: selection.needsReview,
+            reasons: selection.evaluation.reasons,
+          }
+        : evaluation,
+    )
+    .sort((a, b) => {
+      const selectedSort =
+        Number(selection.candidate?.id === b.candidate.id) -
+        Number(selection.candidate?.id === a.candidate.id);
+      if (selectedSort !== 0) {
+        return selectedSort;
+      }
+      return (
+        Number(b.eligible) - Number(a.eligible) ||
+        b.score - a.score ||
+        b.candidate.createdAt.getTime() - a.candidate.createdAt.getTime()
+      );
+    });
+  return { evaluations, selection };
+}
+
+function toEvaluationStrategy(
+  draft: SubscriptionStrategyDraft,
+  candidate?: Candidate,
+): SubscriptionStrategy {
+  return {
+    seasonMode: draft.seasonMode,
+    seasonNumber: draft.seasonNumber,
+    episodeMode: draft.episodeMode,
+    episodeStart: draft.episodeStart,
+    episodeEnd: draft.episodeEnd,
+    batchPolicy: draft.batchPolicy,
+    preferredGroup: candidatePreferredGroup(candidate),
+    preferredResolution: candidate?.resolution ?? null,
+    preferredCodec: candidate?.codec ?? null,
+    preferredAudio: candidate?.audio ?? null,
+    preferredSubtitleLanguage: candidate?.subtitleLanguage ?? null,
+    preferredReleaseProfile: candidate?.releaseProfile ?? null,
+    preferredSourceKind: candidate?.sourceKind ?? null,
+    preferredVariantKey: candidate?.variantKey ?? null,
+    fallbackPolicy: "manual_review",
+  };
+}
+
+function toStrategyCandidate(candidate: Candidate): StrategyCandidate {
+  const createdAt = candidate.createdAt ? new Date(candidate.createdAt) : new Date(0);
+  return {
+    id: candidate.id,
+    mediaType: candidate.mediaType,
+    rawTitle: candidate.rawTitle,
+    season: candidate.season ?? null,
+    episodeNumber: candidate.episodeNumber ?? null,
+    subtitleGroup: candidate.subtitleGroup ?? null,
+    resolution: candidate.resolution ?? null,
+    codec: candidate.codec ?? null,
+    audio: candidate.audio ?? null,
+    subtitleLanguage: candidate.subtitleLanguage ?? null,
+    releaseProfile: candidate.releaseProfile ?? null,
+    sourceKind: candidate.sourceKind ?? null,
+    variantKey: candidate.variantKey ?? null,
+    createdAt: Number.isFinite(createdAt.getTime()) ? createdAt : new Date(0),
+  };
+}
+
+function normalizeSubscriptionStrategyDraft(
+  draft: SubscriptionStrategyDraft,
+): SubscriptionStrategyDraft {
+  const next = { ...draft };
+  if (next.seasonMode !== "specific") {
+    next.seasonNumber = null;
+  }
+  if (next.episodeMode === "all" || next.episodeMode === "missing_only") {
+    next.episodeStart = null;
+    next.episodeEnd = null;
+  }
+  if (next.episodeMode === "future_only") {
+    next.episodeEnd = null;
+  }
+  if (
+    next.episodeMode === "range" &&
+    next.episodeStart !== null &&
+    next.episodeEnd !== null &&
+    next.episodeEnd < next.episodeStart
+  ) {
+    next.episodeEnd = next.episodeStart;
+  }
+  return next;
+}
+
+function parseOptionalPositiveNumber(value: string) {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
+}
+
+function formatCandidateMetaFromStrategyCandidate(candidate: StrategyCandidate, locale: Locale) {
+  return formatCandidateMeta(
+    {
+      id: candidate.id,
+      mediaType: (candidate.mediaType as MediaType | null) ?? "ANIME",
+      rawTitle: candidate.rawTitle ?? "",
+      season: candidate.season,
+      episodeNumber: candidate.episodeNumber,
+      subtitleGroup: candidate.subtitleGroup,
+      resolution: candidate.resolution,
+      codec: candidate.codec,
+      audio: candidate.audio,
+      subtitleLanguage: candidate.subtitleLanguage,
+      releaseProfile: candidate.releaseProfile,
+      sourceKind: candidate.sourceKind,
+      variantKey: candidate.variantKey,
+      status: "",
+    },
+    locale,
+  );
+}
+
+function formatEvaluationDetail(
+  evaluation: SubscriptionCandidateEvaluation,
+  t: ReturnType<typeof getMessages>,
+) {
+  if (!evaluation.eligible && evaluation.rejectedBy.length > 0) {
+    return `${t.strategyRejectedBy}: ${evaluation.rejectedBy.map((key) => formatStrategyKey(key, t)).join(" · ")}`;
+  }
+  if (evaluation.needsReview) {
+    return evaluation.reasons.length > 0
+      ? `${t.strategyNeedsReviewReason}: ${evaluation.reasons[0]}`
+      : t.strategyNeedsReviewReason;
+  }
+  if (evaluation.matchedPreferences.length > 0) {
+    return `${t.strategyMatchedPreferences}: ${evaluation.matchedPreferences
+      .map((key) => formatStrategyKey(key, t))
+      .join(" · ")}`;
+  }
+  return t.strategyNoEvaluationReasons;
+}
+
+function formatStrategyKey(key: string, t: ReturnType<typeof getMessages>) {
+  switch (key) {
+    case "preferredVariantKey":
+      return t.strategyPreferredVariant;
+    case "preferredGroup":
+      return t.strategyPreferredGroup;
+    case "preferredSubtitleLanguage":
+      return t.strategyPreferredSubtitleLanguage;
+    case "preferredResolution":
+      return t.strategyPreferredResolution;
+    case "preferredCodec":
+      return t.strategyPreferredCodec;
+    case "preferredAudio":
+      return t.strategyPreferredAudio;
+    case "preferredReleaseProfile":
+      return t.strategyPreferredReleaseProfile;
+    case "preferredSourceKind":
+      return t.strategyPreferredSourceKind;
+    case "batchPolicy":
+      return t.strategyBatchPolicy;
+    case "seasonNumber":
+      return t.strategySeasonNumber;
+    case "episodeStart":
+      return t.strategyEpisodeStart;
+    case "episodeEnd":
+      return t.strategyEpisodeEnd;
+    default:
+      return key;
+  }
 }
 
 function groupCandidatesByEpisode(candidates: Candidate[]) {
@@ -1208,30 +1725,6 @@ function buildSubscriptionStrategy(group: CandidateGroup, candidate?: Candidate)
     batchPolicy: "review",
     autoDownload: Boolean(candidate),
   };
-}
-
-function formatSubscriptionConfirmation(strategy: SubscriptionStrategyDraft, locale: Locale) {
-  const lines =
-    locale === "en"
-      ? [
-          "Create subscription strategy?",
-          "",
-          `Title: ${strategy.title}`,
-          `Season: ${formatSeasonScope(strategy)}`,
-          `Episodes: ${formatEpisodeScope(strategy)}`,
-          `Batch releases: ${formatBatchPolicy(strategy.batchPolicy)}`,
-          `Mode: ${strategy.autoDownload ? "auto download selected version" : "match future releases only"}`,
-        ]
-      : [
-          "确认创建订阅策略？",
-          "",
-          `作品：${strategy.title}`,
-          `季度：${formatSeasonScope(strategy)}`,
-          `集数：${formatEpisodeScope(strategy)}`,
-          `合集：${formatBatchPolicy(strategy.batchPolicy)}`,
-          `模式：${strategy.autoDownload ? "自动下载当前选择版本" : "仅匹配后续更新"}`,
-        ];
-  return lines.join("\n");
 }
 
 function formatSubscriptionScope(subscription: Subscription) {
