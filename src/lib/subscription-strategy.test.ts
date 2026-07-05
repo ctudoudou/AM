@@ -91,4 +91,22 @@ describe("subscription strategy evaluation", () => {
     expect(selection.needsReview).toBe(true);
     expect(selection.evaluation?.reasons.join(" ")).toContain("tie");
   });
+
+  it("keeps batch releases eligible but review-gated when policy is review", () => {
+    const evaluation = evaluateSubscriptionCandidate(
+      {
+        ...baseCandidate,
+        rawTitle: "[ANi] Example Anime - 01-12 Complete [1080P][CHT]",
+        episodeNumber: 1,
+      },
+      {
+        ...baseStrategy,
+        batchPolicy: "review",
+      },
+    );
+
+    expect(evaluation.eligible).toBe(true);
+    expect(evaluation.needsReview).toBe(true);
+    expect(evaluation.reasons.join(" ")).toContain("Batch release");
+  });
 });
