@@ -21,6 +21,31 @@ http://localhost:3000/zh-Hans
 The Compose setup stores app data under `${KURA_DATA_ROOT:-./data}` and mounts
 it at `/data` inside the Kura containers.
 
+To also advertise Kura on the local network as `kura.local`, enable the
+optional mDNS profile:
+
+```bash
+docker compose --profile mdns up -d --build
+```
+
+The default mDNS settings advertise the web UI as `kura.local` on port `3000`,
+so the browser URL is:
+
+```text
+http://kura.local:3000/zh-Hans
+```
+
+If you want `http://kura.local/zh-Hans` without a port, publish Kura on host
+port `80` and advertise port `80`:
+
+```env
+KURA_WEB_PORT=80
+KURA_MDNS_PORT=80
+```
+
+Browsers resolve `kura.local` through mDNS, but they do not use the advertised
+`_http._tcp` service port when you type a normal URL.
+
 ## Local Development
 
 Use this mode when PostgreSQL and aria2 already exist on your machine or
@@ -62,7 +87,7 @@ For Unraid-style deployments, see [unraid-deployment.md](unraid-deployment.md).
 
 The repository includes `.github/workflows/docker-image.yml` for automated
 multi-arch image publishing to Docker Hub. On every branch push, GitHub Actions
-builds and pushes three images with three tags: `latest`, the branch name, and a
+builds and pushes four images with three tags: `latest`, the branch name, and a
 Shanghai-time date tag in `YYYYMMDDHHMMSS` format:
 
 ```text
@@ -75,6 +100,9 @@ Shanghai-time date tag in `YYYYMMDDHHMMSS` format:
 <dockerhub-namespace>/kura-migrator:latest
 <dockerhub-namespace>/kura-migrator:<branch>
 <dockerhub-namespace>/kura-migrator:<YYYYMMDDHHMMSS>
+<dockerhub-namespace>/kura-mdns:latest
+<dockerhub-namespace>/kura-mdns:<branch>
+<dockerhub-namespace>/kura-mdns:<YYYYMMDDHHMMSS>
 ```
 
 If several commits are pushed to the same branch quickly, the workflow cancels
@@ -88,6 +116,7 @@ Dockerfile targets:
 runner  -> Kura web app
 worker  -> Kura background worker
 migrator -> Prisma migration runner
+mdns    -> LAN mDNS advertiser for kura.local
 ```
 
 Before the first run, configure the GitHub repository:
@@ -106,6 +135,7 @@ docker login
 docker pull <dockerhub-namespace>/kura:latest
 docker pull <dockerhub-namespace>/kura-worker:latest
 docker pull <dockerhub-namespace>/kura-migrator:latest
+docker pull <dockerhub-namespace>/kura-mdns:latest
 ```
 
 Do not commit Docker Hub credentials or private registry names. Keep real
@@ -122,6 +152,7 @@ or your container platform secrets.
 | `DATABASE_URL` | Yes | PostgreSQL connection string used by web, worker, and Prisma. | `postgresql://kura:password@postgres:5432/kura?schema=public` |
 | `POSTGRES_PASSWORD` | Compose | PostgreSQL password used by the bundled Compose database. Change it before exposing the database. | `change-me` |
 | `KURA_DATA_ROOT` | Compose | Host-side data root used by `docker-compose.yml` volume mappings. | `./data` |
+| `KURA_WEB_PORT` | Compose | Host port mapped to the web container's internal port `3000`. Set to `80` when you need `http://kura.local` without a port. | `3000` |
 | `DATA_ROOT` | Yes | Container-visible root for all Kura-managed files. | `/data` |
 | `ANIME_LIBRARY_DIR` | Yes | Anime library directory. | `/data/library/anime` |
 | `MOVIES_LIBRARY_DIR` | Yes | Movie library directory. | `/data/library/movies` |
@@ -143,10 +174,40 @@ or your container platform secrets.
 | `ARIA2_RPC_URL` | Yes | aria2 JSON-RPC endpoint reachable from Kura. | `http://aria2:6800/jsonrpc` |
 | `ARIA2_RPC_SECRET` | Recommended | aria2 RPC secret; must match aria2. Use a strong value outside local development. | `change-me` |
 | `KURA_AUTO_MIGRATE` | Deprecated | The slim web image no longer runs migrations. Use the Compose `migrate` service or the `kura-migrator` image. | `false` |
+| `KURA_MDNS_HOSTNAME` | Optional | Hostname advertised by the optional mDNS sidecar. `.local` is stripped if supplied. | `kura` |
+| `KURA_MDNS_SERVICE_NAME` | Optional | Bonjour service name shown by service browsers. | `Kura` |
+| `KURA_MDNS_PORT` | Optional | HTTP port advertised through `_http._tcp`; keep it aligned with `KURA_WEB_PORT`. | `3000` |
+| `KURA_MDNS_PATH` | Optional | Path advertised in the mDNS TXT record. | `/zh-Hans` |
+| `KURA_MDNS_INTERFACE` | Optional | Comma-separated network interfaces that Avahi may publish on. Leave empty to let Avahi choose. | empty |
 | `NEXT_PUBLIC_DEFAULT_LOCALE` | Optional | Default UI locale. | `zh-Hans` |
 
 All configured file roots should stay under `DATA_ROOT` for predictable NAS
 safety checks.
+
+## LAN mDNS Discovery
+
+The optional `mdns` Compose service runs Avahi in a small sidecar container. It
+does not proxy traffic; it only publishes the host's LAN address as
+`kura.local` and advertises Kura as an `_http._tcp` service.
+
+```bash
+docker compose --profile mdns up -d
+```
+
+Requirements and limits:
+
+- The mDNS sidecar uses `network_mode: host`, so it is intended for Linux NAS
+  hosts. Docker Desktop on macOS/Windows may not publish multicast DNS to the
+  physical LAN reliably.
+- UDP port `5353` multicast must be allowed on the host and LAN.
+- If the host already runs another mDNS responder such as Avahi, Bonjour, or an
+  Unraid plugin, only one process may be able to bind UDP `5353`. In that case,
+  either use the host responder to publish `kura.local` or stop the conflicting
+  responder before starting the sidecar.
+- `.local` names are link-local. They are for the same LAN/VLAN, not public DNS
+  or remote access.
+- To use `http://kura.local/zh-Hans`, the Kura web service must be reachable on
+  host port `80`, or a reverse proxy on port `80` must forward to Kura.
 
 RSS candidates are resource evidence only. Season and episode ranges should come
 from confirmed library files, subscriptions, manual catalog entries, or trusted
