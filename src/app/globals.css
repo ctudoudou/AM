@@ -1112,6 +1112,14 @@ a {
   gap: 10px;
 }
 
+.candidate-filter-bar {
+  grid-template-columns:
+    minmax(260px, 1.45fr)
+    minmax(140px, 0.55fr)
+    minmax(140px, 0.55fr)
+    minmax(180px, 0.7fr);
+}
+
 .settings-search-field {
   min-width: 0;
 }
@@ -1263,11 +1271,11 @@ a {
 }
 
 .candidate-board-heading {
-  display: flex;
+  display: grid;
   grid-column: 1 / -1;
+  grid-template-columns: minmax(260px, 0.68fr) minmax(560px, 1.32fr);
   align-items: flex-start;
-  justify-content: space-between;
-  gap: 16px;
+  gap: 18px;
   padding: 2px 2px 0;
 }
 
@@ -1286,8 +1294,9 @@ a {
 }
 
 .candidate-board-tools {
-  display: flex;
-  min-width: min(620px, 100%);
+  display: grid;
+  min-width: 0;
+  width: 100%;
   flex-direction: column;
   gap: 10px;
 }
@@ -1297,7 +1306,7 @@ a {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  justify-content: space-between;
+  justify-content: flex-start;
   gap: 10px;
 }
 
@@ -1319,7 +1328,7 @@ a {
 
 .subscription-workbench {
   display: grid;
-  grid-template-columns: minmax(280px, 0.42fr) minmax(0, 1fr);
+  grid-template-columns: minmax(300px, 0.34fr) minmax(0, 1fr);
   gap: 14px;
   align-items: start;
 }
@@ -1336,7 +1345,6 @@ a {
 
 .queue-master-item {
   display: grid;
-  min-height: 104px;
   grid-template-columns: minmax(0, 1fr);
   gap: 5px;
   border: 0;
@@ -1569,7 +1577,7 @@ a {
 .candidate-list {
   display: flex;
   flex-direction: column;
-  max-height: 520px;
+  max-height: min(620px, 72svh);
   margin-top: 14px;
   overflow: auto;
   border: 1px solid rgba(255, 255, 255, 0.04);
@@ -1606,10 +1614,10 @@ a {
 
 .candidate-row {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-columns: minmax(0, 1fr) minmax(214px, auto);
   align-items: center;
   gap: 12px;
-  min-height: 58px;
+  min-height: 68px;
   border-bottom: 1px solid rgba(255, 255, 255, 0.04);
   padding: 10px 12px;
 }
@@ -1644,6 +1652,12 @@ a {
 }
 
 .candidate-row .candidate-row-meta {
+  white-space: normal;
+}
+
+.candidate-row .candidate-row-sources {
+  margin-top: 3px;
+  color: var(--text-muted);
   white-space: normal;
 }
 

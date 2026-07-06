@@ -99,6 +99,7 @@ export const zhHans = {
   noCandidates: "还没有候选作品。请先添加 RSS 源或手动导入磁力链接。",
   noMatchingResults: "没有匹配当前筛选条件的结果。",
   candidates: "个版本",
+  uniqueVariants: "个版本",
   needsReview: "需确认",
   ready: "可订阅",
   subscribe: "订阅",
