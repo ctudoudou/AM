@@ -437,6 +437,16 @@ export async function executeOrganizerPlan(planId: string, automatic = false) {
   for (const item of plan.items) {
     const sourcePath = assertInsideConfiguredRoots(item.sourcePath, allowedRoots);
     const targetPath = assertInsideConfiguredRoots(item.targetPath, allowedRoots);
+    if (plan.mediaType !== "MOVIE" && item.fileType === "video" && !parseTargetPathEpisodeIdentity(targetPath)) {
+      await prisma.organizerPlan.update({
+        where: { id: plan.id },
+        data: {
+          status: "NEEDS_REVIEW",
+          reason: "Organizer plan has unresolved episode identity.",
+        },
+      });
+      throw new Error("Organizer plan has unresolved episode identity.");
+    }
     if (!(await exists(sourcePath))) {
       await prisma.organizerPlan.update({
         where: { id: plan.id },
@@ -492,6 +502,7 @@ export function isAutoExecutableOrganizerPlan(plan: {
 }
 
 export function assessOrganizerPlanAutomation(plan: {
+  mediaType?: MediaType;
   status: string;
   confidence: number;
   autoExecutable?: boolean;
@@ -501,7 +512,13 @@ export function assessOrganizerPlanAutomation(plan: {
     normalizedTitle: string;
     group: { displayTitle: string; normalizedTitle: string; aliases: unknown } | null;
   } | null;
-  items: Array<{ sourcePath?: string; conflict: boolean; sourceExists?: boolean }>;
+  items: Array<{
+    sourcePath?: string;
+    targetPath?: string;
+    fileType?: string;
+    conflict: boolean;
+    sourceExists?: boolean;
+  }>;
 }): OrganizerAutomationAssessment {
   const reasons: string[] = [];
   const terminal = ["EXECUTED", "AUTO_ARCHIVED", "REJECTED"].includes(plan.status);
@@ -523,6 +540,21 @@ export function assessOrganizerPlanAutomation(plan: {
   }
   if (plan.items.some((item) => item.sourceExists === false)) {
     reasons.push("One or more source files are missing.");
+  }
+  if (plan.items.some((item) => item.targetPath && organizerTargetPathLooksPolluted(item.targetPath))) {
+    reasons.push("Plan has a polluted target path.");
+  }
+  const mediaType = plan.mediaType ?? plan.candidate?.mediaType;
+  if (
+    mediaType !== "MOVIE" &&
+    plan.items.some((item) => {
+      if (!item.targetPath || (item.fileType && item.fileType !== "video")) {
+        return false;
+      }
+      return !parseTargetPathEpisodeIdentity(item.targetPath);
+    })
+  ) {
+    reasons.push("Plan has unresolved episode identity.");
   }
 
   const executable = reasons.length === 0;
@@ -1000,7 +1032,27 @@ function isPollutedOrganizerPlan(plan: {
 export function organizerTargetPathLooksPolluted(targetPath: string) {
   const filename = path.basename(targetPath, path.extname(targetPath));
   const episodeCodes = filename.match(/\bS\d{1,2}E\d{1,4}\b/gi) ?? [];
-  return new Set(episodeCodes.map((code) => code.toUpperCase())).size < episodeCodes.length;
+  if (episodeCodes.some((code) => code.toUpperCase() === "S00E00")) {
+    return true;
+  }
+  if (new Set(episodeCodes.map((code) => code.toUpperCase())).size < episodeCodes.length) {
+    return true;
+  }
+  const directorySegments = path.dirname(targetPath).split(path.sep).filter(Boolean);
+  const seasonIndex = findLastSeasonDirectoryIndex(directorySegments);
+  const seriesSegment =
+    seasonIndex > 0 ? directorySegments[seasonIndex - 1] : directorySegments[directorySegments.length - 1];
+  const filenameTitle = filename.split(/\s+-\s+S\d{1,2}E\d{1,4}\b/i)[0] ?? "";
+  return [seriesSegment, filenameTitle].some((segment) => Boolean(segment && isLanguageOnlyTitleSegment(segment)));
+}
+
+function findLastSeasonDirectoryIndex(segments: string[]) {
+  for (let index = segments.length - 1; index >= 0; index -= 1) {
+    if (/^Season \d{1,2}$/i.test(segments[index])) {
+      return index;
+    }
+  }
+  return -1;
 }
 
 function sourcePathMatchesCandidate(
@@ -1146,6 +1198,14 @@ function buildTargetPath(input: {
   const title = sanitizeSegment(input.title);
   const seriesDir = input.year ? `${title} (${input.year})` : title;
   const seasonDir = `Season ${String(input.season).padStart(2, "0")}`;
+  if (input.mediaType !== "MOVIE" && !input.episode) {
+    return path.join(
+      input.mediaType === "TV" ? input.roots.tvLibraryDir : input.roots.animeLibraryDir,
+      "_Needs Review",
+      seriesDir,
+      sanitizeSegment(path.basename(input.sourcePath)),
+    );
+  }
   const episode = input.episode
     ? `S${String(input.season).padStart(2, "0")}E${String(Math.floor(input.episode)).padStart(2, "0")}`
     : "S00E00";
@@ -1525,6 +1585,18 @@ function cleanMediaTitle(value: string) {
     .replace(/\s*\[\s*\]\s*/g, " ")
     .replace(/\s+/g, " ")
     .trim();
+}
+
+const languageOnlyTitleTokenPattern =
+  /^(?:国|國|日|中|英|粤|粵|简|簡|繁|chs|cht|sc|tc|gb|big5|jpn|japanese|eng|english|multi|双语|雙語|简体|簡體|繁体|繁體|日语|日語|国语|國語|英语|英語)$/i;
+
+function isLanguageOnlyTitleSegment(value: string) {
+  const normalized = value.replace(/\(\d{4}\)$/, "").trim();
+  const tokens = normalized
+    .split(/[\/╱\\+&|｜,，、\s._-]+/)
+    .map((token) => token.trim())
+    .filter(Boolean);
+  return tokens.length > 0 && tokens.length <= 4 && tokens.every((token) => languageOnlyTitleTokenPattern.test(token));
 }
 
 function sanitizeSegment(value: string) {
