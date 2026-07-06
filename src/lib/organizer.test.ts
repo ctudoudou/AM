@@ -213,6 +213,22 @@ describe("organizerTargetPathLooksPolluted", () => {
     ).toBe(true);
   });
 
+  it("flags unresolved S00E00 target paths from polluted import plans", () => {
+    expect(
+      organizerTargetPathLooksPolluted(
+        "/data/library/anime/國╱日/Season 01/國╱日 - S00E00 [國╱日][1080p][H265].mkv",
+      ),
+    ).toBe(true);
+  });
+
+  it("flags language-only series directories even when an episode code is present", () => {
+    expect(
+      organizerTargetPathLooksPolluted(
+        "/data/library/anime/國╱日/Season 01/國╱日 - S01E07 [1080p][H265].mkv",
+      ),
+    ).toBe(true);
+  });
+
   it("allows normal target paths with one episode code", () => {
     expect(
       organizerTargetPathLooksPolluted(
@@ -389,6 +405,7 @@ describe("assessOrganizerPlanAutomation", () => {
 
   it("blocks execution when a source file is known missing", () => {
     const assessment = assessOrganizerPlanAutomation({
+      mediaType: "ANIME",
       status: "PENDING",
       confidence: 0.95,
       autoExecutable: true,
@@ -405,6 +422,63 @@ describe("assessOrganizerPlanAutomation", () => {
     expect(assessment.executable).toBe(false);
     expect(assessment.autoExecutable).toBe(false);
     expect(assessment.reasons).toContain("One or more source files are missing.");
+  });
+
+  it("blocks polluted import targets that would archive to S00E00", () => {
+    const assessment = assessOrganizerPlanAutomation({
+      mediaType: "ANIME",
+      status: "NEEDS_REVIEW",
+      confidence: 0.55,
+      autoExecutable: false,
+      candidate: {
+        mediaType: "ANIME",
+        parsedTitle: "國╱日",
+        normalizedTitle: "国╱日",
+        group: {
+          displayTitle: "國╱日",
+          normalizedTitle: "国╱日",
+          aliases: ["国╱日"],
+        },
+      },
+      items: [
+        {
+          sourcePath: "/data/import/龍王的工作/龍王的工作 #7 [國╱日] (TVRip 1920x1080 H265 AAC).mkv",
+          targetPath: "/data/library/anime/國╱日/Season 01/國╱日 - S00E00 [國╱日][1080p][H265].mkv",
+          fileType: "video",
+          conflict: false,
+        },
+      ],
+    });
+
+    expect(assessment.executable).toBe(false);
+    expect(assessment.autoExecutable).toBe(false);
+    expect(assessment.reasons).toContain("Plan has a polluted target path.");
+    expect(assessment.reasons).toContain("Plan has unresolved episode identity.");
+  });
+
+  it("does not require episode identity for movie targets", () => {
+    const assessment = assessOrganizerPlanAutomation({
+      mediaType: "MOVIE",
+      status: "PENDING",
+      confidence: 0.95,
+      autoExecutable: true,
+      candidate: {
+        mediaType: "MOVIE",
+        parsedTitle: "Some Movie",
+        normalizedTitle: "some movie",
+        group: null,
+      },
+      items: [
+        {
+          sourcePath: "/data/downloads/Some Movie.mkv",
+          targetPath: "/data/library/movies/Some Movie/Some Movie.mkv",
+          fileType: "video",
+          conflict: false,
+        },
+      ],
+    });
+
+    expect(assessment.executable).toBe(true);
   });
 });
 
