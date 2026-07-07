@@ -1098,48 +1098,83 @@ a {
   overflow: auto;
 }
 
-.subscription-management-workbench {
+.subscription-table {
   display: grid;
-  grid-template-columns: minmax(280px, 0.34fr) minmax(0, 1fr);
-  gap: 14px;
-  align-items: start;
-}
-
-.subscription-master-list {
-  max-height: 430px;
-}
-
-.subscription-detail-panel {
-  min-height: 360px;
-}
-
-.subscription-detail-grid {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 10px;
-  margin-top: 14px;
-}
-
-.subscription-detail-grid span {
-  display: grid;
-  gap: 4px;
-  min-width: 0;
+  max-height: 520px;
+  overflow: auto;
   border: 1px solid rgba(255, 255, 255, 0.055);
-  border-radius: 10px;
-  background: rgba(255, 255, 255, 0.028);
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.018);
+}
+
+.subscription-table-row {
+  display: grid;
+  grid-template-columns:
+    minmax(280px, 1.45fr)
+    minmax(140px, 0.55fr)
+    minmax(160px, 0.65fr)
+    minmax(220px, 1fr)
+    auto;
+  gap: 12px;
+  align-items: center;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.045);
+  padding: 10px 12px;
+}
+
+.subscription-table-row:last-child {
+  border-bottom: 0;
+}
+
+.subscription-table-title {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 10px;
+  align-items: center;
+  min-width: 0;
+}
+
+.subscription-table-title h3,
+.subscription-table-title p,
+.subscription-table-cell strong {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.subscription-table-title h3 {
+  margin: 0;
+  color: rgba(255, 255, 255, 0.86);
+  font-size: 14px;
+  line-height: 20px;
+}
+
+.subscription-table-title p,
+.subscription-table-cell span {
+  margin: 0;
+  color: var(--text-faint);
+  font-size: 11px;
+  line-height: 15px;
+}
+
+.subscription-table-cell {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.subscription-table-cell strong {
   color: var(--text-muted);
-  padding: 10px;
   font-size: 12px;
   line-height: 17px;
 }
 
-.subscription-detail-grid strong {
-  overflow: hidden;
-  color: rgba(255, 255, 255, 0.82);
-  font-size: 11px;
-  line-height: 15px;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+.subscription-table-version strong {
+  color: rgba(255, 255, 255, 0.76);
+}
+
+.subscription-table-actions {
+  display: flex;
+  justify-content: flex-end;
 }
 
 .panel-count {
@@ -4368,7 +4403,6 @@ a {
   .rss-draft,
   .subscription-controls,
   .candidate-filter-bar,
-  .subscription-management-workbench,
   .subscription-workbench,
   .candidate-board,
   .strategy-summary-grid,
@@ -4417,12 +4451,32 @@ a {
     max-height: 360px;
   }
 
-  .subscription-detail-grid {
+  .queue-detail-panel {
+    min-height: auto;
+  }
+
+  .subscription-table-row {
+    grid-template-columns: 1fr;
+    align-items: stretch;
+  }
+
+  .subscription-table-title {
     grid-template-columns: 1fr;
   }
 
-  .queue-detail-panel {
-    min-height: auto;
+  .subscription-table-title h3,
+  .subscription-table-title p,
+  .subscription-table-cell strong {
+    white-space: normal;
+  }
+
+  .subscription-table-actions {
+    justify-content: stretch;
+  }
+
+  .subscription-table-actions .danger-button {
+    width: 100%;
+    justify-content: center;
   }
 
   .watch-heading {
