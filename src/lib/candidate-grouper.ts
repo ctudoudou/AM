@@ -2,7 +2,11 @@ import { CandidateStatus, Prisma, RssItemStatus, type MediaType } from "@prisma/
 import { prisma } from "@/lib/db";
 import { groupCandidatesWithOpenRouter } from "@/lib/openrouter";
 import { parseMediaReleaseTitle } from "@/lib/media-parser";
-import { normalizeTitleAliases } from "@/lib/anime-parser";
+import {
+  createMediaIdentityKeys,
+  jsonStringList,
+  mediaIdentitiesOverlap,
+} from "@/lib/media-identity";
 import { classifyReleaseResource, nonVideoReleaseParseError } from "@/lib/release-resource";
 
 type CandidateGroupProposal = {
@@ -130,34 +134,7 @@ export async function groupUngroupedCandidates(
 
   let grouped = 0;
   for (const group of groups) {
-    const season = group.season ?? 1;
-    const record = await prisma.releaseCandidateGroup.upsert({
-      where: {
-        mediaType_normalizedTitle_season: {
-          mediaType: group.mediaType,
-          normalizedTitle: group.normalizedTitle,
-          season,
-        },
-      },
-      create: {
-        mediaType: group.mediaType,
-        normalizedTitle: group.normalizedTitle,
-        displayTitle: group.displayTitle,
-        season,
-        confidence: group.confidence,
-        reviewRequired: group.confidence < 0.82,
-        aiSummary: group.summary,
-        aliases: group.aliases as Prisma.InputJsonValue,
-      },
-      update: {
-        mediaType: group.mediaType,
-        displayTitle: group.displayTitle,
-        confidence: group.confidence,
-        reviewRequired: group.confidence < 0.82,
-        aiSummary: group.summary,
-        aliases: group.aliases as Prisma.InputJsonValue,
-      },
-    });
+    const record = await resolveIntakeTargetGroup(group);
 
     const updated = await prisma.releaseCandidate.updateMany({
       where: { id: { in: group.candidateIds } },
@@ -190,6 +167,54 @@ export async function groupUngroupedCandidates(
   }
 
   return { grouped, ignored };
+}
+
+async function resolveIntakeTargetGroup(group: CandidateGroupProposal & { mediaType: MediaType }) {
+  const season = group.season ?? 1;
+  const exactGroup = await prisma.releaseCandidateGroup.findUnique({
+    where: {
+      mediaType_normalizedTitle_season: {
+        mediaType: group.mediaType,
+        normalizedTitle: group.normalizedTitle,
+        season,
+      },
+    },
+    include: {
+      _count: { select: { candidates: true, subscriptions: true } },
+    },
+  });
+
+  const canonicalGroup =
+    exactGroup ??
+    (await findCanonicalCandidateGroup(group, {
+      excludeIds: [],
+    }));
+
+  if (canonicalGroup) {
+    return prisma.releaseCandidateGroup.update({
+      where: { id: canonicalGroup.id },
+      data: {
+        displayTitle: chooseStableDisplayTitle(canonicalGroup.displayTitle, group.displayTitle),
+        confidence: Math.max(canonicalGroup.confidence, group.confidence),
+        reviewRequired: canonicalGroup.reviewRequired && group.confidence < 0.82,
+        aiSummary: group.summary,
+        aliases: mergeGroupAliases(canonicalGroup.aliases, group.aliases, group.displayTitle) as Prisma.InputJsonValue,
+      },
+    });
+  }
+
+  return prisma.releaseCandidateGroup.create({
+    data: {
+      mediaType: group.mediaType,
+      normalizedTitle: group.normalizedTitle,
+      displayTitle: group.displayTitle,
+      season,
+      confidence: group.confidence,
+      reviewRequired: group.confidence < 0.82,
+      aiSummary: group.summary,
+      aliases: group.aliases as Prisma.InputJsonValue,
+    },
+  });
 }
 
 export async function repairCandidateGroups(batchSize = 200) {
@@ -430,6 +455,12 @@ async function resolveRepairTargetGroup(
       _count: { select: { candidates: true, subscriptions: true } },
     },
   });
+  const canonicalIdentityGroup = await findCanonicalCandidateGroup(group, {
+    excludeIds: [
+      ...currentGroups.map((currentGroup) => currentGroup.id),
+      ...(canonicalGroup ? [canonicalGroup.id] : []),
+    ],
+  });
   const subscribedGroup = currentGroups
     .filter(
       (currentGroup) =>
@@ -445,6 +476,7 @@ async function resolveRepairTargetGroup(
 
   const targetGroup =
     subscribedGroup ??
+    canonicalIdentityGroup ??
     canonicalGroup ??
     reusableGroup ??
     (await prisma.releaseCandidateGroup.create({
@@ -468,6 +500,15 @@ async function resolveRepairTargetGroup(
     });
     await moveMatchingRepairSubscriptions(canonicalGroup.subscriptions, targetGroupId, group, candidates);
     await deleteGroupIfEmpty(canonicalGroup.id);
+  }
+
+  if (canonicalIdentityGroup && canonicalIdentityGroup.id !== targetGroupId) {
+    await prisma.releaseCandidate.updateMany({
+      where: { groupId: canonicalIdentityGroup.id },
+      data: { groupId: targetGroupId },
+    });
+    await moveMatchingRepairSubscriptions(canonicalIdentityGroup.subscriptions, targetGroupId, group, candidates);
+    await deleteGroupIfEmpty(canonicalIdentityGroup.id);
   }
 
   for (const currentGroup of currentGroups) {
@@ -495,7 +536,7 @@ async function resolveRepairTargetGroup(
       confidence: group.confidence,
       reviewRequired: group.confidence < 0.82,
       aiSummary: group.summary,
-      aliases: group.aliases as Prisma.InputJsonValue,
+      aliases: mergeGroupAliases(targetGroup.aliases, group.aliases, group.displayTitle) as Prisma.InputJsonValue,
     },
   });
 }
@@ -505,6 +546,75 @@ function repairGroupIsFullyCovered(
   candidateCountsByGroup: Map<string, number>,
 ) {
   return group._count.candidates === (candidateCountsByGroup.get(group.id) ?? 0);
+}
+
+async function findCanonicalCandidateGroup(
+  group: CandidateGroupProposal & { mediaType: MediaType },
+  options: { excludeIds: string[] },
+) {
+  const season = group.season ?? 1;
+  const candidates = await prisma.releaseCandidateGroup.findMany({
+    where: {
+      mediaType: group.mediaType,
+      season,
+      id: options.excludeIds.length > 0 ? { notIn: options.excludeIds } : undefined,
+    },
+    include: {
+      subscriptions: {
+        select: {
+          id: true,
+          mediaType: true,
+          title: true,
+          preferredVariantKey: true,
+        },
+      },
+      _count: { select: { candidates: true, subscriptions: true } },
+    },
+  });
+
+  return candidates
+    .filter((candidateGroup) =>
+      mediaIdentitiesOverlap(groupIdentityInput(group), groupIdentityInput(candidateGroup)),
+    )
+    .sort(
+      (a, b) =>
+        b._count.subscriptions - a._count.subscriptions ||
+        b._count.candidates - a._count.candidates ||
+        b.confidence - a.confidence ||
+        b.updatedAt.getTime() - a.updatedAt.getTime(),
+    )[0];
+}
+
+function groupIdentityInput(group: {
+  mediaType: MediaType;
+  displayTitle: string;
+  normalizedTitle: string;
+  aliases?: unknown;
+  season?: number | null;
+}) {
+  return {
+    mediaType: group.mediaType,
+    displayTitle: group.displayTitle,
+    normalizedTitle: group.normalizedTitle,
+    aliases: group.aliases,
+    season: group.season ?? 1,
+  };
+}
+
+function mergeGroupAliases(existing: unknown, next: string[], displayTitle: string) {
+  return [...new Set([...jsonStringList(existing), ...next, displayTitle].filter(Boolean))];
+}
+
+function chooseStableDisplayTitle(existing: string, next: string) {
+  const existingHasCjk = /[\u3400-\u9fff]/.test(existing);
+  const nextHasCjk = /[\u3400-\u9fff]/.test(next);
+  if (nextHasCjk && !existingHasCjk) {
+    return next;
+  }
+  if (existing.length > 80 && next.length <= 80) {
+    return next;
+  }
+  return existing || next;
 }
 
 async function moveMatchingRepairSubscriptions(
@@ -544,10 +654,13 @@ function subscriptionBelongsToRepairGroup(
     return true;
   }
 
-  const parsedSubscription = parseMediaReleaseTitle(subscription.title, subscription.mediaType);
-  return (
-    parsedSubscription.normalizedTitle === group.normalizedTitle &&
-    (parsedSubscription.season ?? 1) === (group.season ?? 1)
+  return mediaIdentitiesOverlap(
+    {
+      mediaType: subscription.mediaType,
+      title: subscription.title,
+      season: group.season ?? 1,
+    },
+    groupIdentityInput(group),
   );
 }
 
@@ -626,7 +739,14 @@ function groupCandidatesByNormalizedTitle(mediaType: MediaType, candidates: Grou
   const grouped = new Map<string, GroupableCandidate[]>();
   for (const candidate of candidates) {
     const season = candidate.season ?? 1;
-    const key = `${mediaType}::${candidate.normalizedTitle}::${season}`;
+    const identityKey = createMediaIdentityKeys({
+      mediaType,
+      parsedTitle: candidate.parsedTitle,
+      normalizedTitle: candidate.normalizedTitle,
+      rawTitle: candidate.rawTitle,
+      season,
+    })[0] ?? candidate.normalizedTitle;
+    const key = `${mediaType}::${identityKey}::${season}`;
     grouped.set(key, [...(grouped.get(key) ?? []), candidate]);
   }
   return grouped;
@@ -670,11 +790,12 @@ function groupAnimeCandidatesByAlias(mediaType: MediaType, candidates: Groupable
 }
 
 function candidateAliasKeys(candidate: GroupableCandidate) {
-  return [
-    candidate.normalizedTitle,
-    ...normalizeTitleAliases(candidate.parsedTitle),
-    ...normalizeTitleAliases(candidate.rawTitle),
-  ]
+  return createMediaIdentityKeys({
+    parsedTitle: candidate.parsedTitle,
+    normalizedTitle: candidate.normalizedTitle,
+    rawTitle: candidate.rawTitle,
+    season: candidate.season ?? 1,
+  })
     .map((alias) => alias.trim())
     .filter((alias) => alias.length >= 3);
 }
