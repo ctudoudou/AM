@@ -275,16 +275,22 @@ export async function createOrganizerPlanForCandidateSource(input: {
     files.map(async (file) => {
       const sourcePath = file.sourcePath;
       const stat = await fs.stat(sourcePath);
-      const isMainVideo = file.fileType === "video" && path.resolve(sourcePath) === mainSourcePath;
       const identity = resolveOrganizerItemIdentity({
         candidate: effectiveCandidate,
         sourcePath,
       });
+      const matchesCandidate =
+        file.fileType === "video" ? sourcePathMatchesCandidate(sourcePath, effectiveCandidate) : false;
+      const archiveAsVideo =
+        file.fileType === "video" &&
+        (effectiveCandidate.mediaType === "MOVIE"
+          ? path.resolve(sourcePath) === mainSourcePath
+          : identity.episodeNumber !== null && matchesCandidate);
       const title =
         planMetadata.title ||
         effectiveCandidate.group?.displayTitle ||
         effectiveCandidate.parsedTitle;
-      const targetPath = isMainVideo
+      const targetPath = archiveAsVideo
         ? buildTargetPath({
             mediaType: effectiveCandidate.mediaType,
             roots: settings.directories,
@@ -317,13 +323,14 @@ export async function createOrganizerPlanForCandidateSource(input: {
           });
       const conflict = await exists(targetPath);
       return {
-        hasPlayableIdentity: isMainVideo ? identity.episodeNumber !== null : true,
-        sourceMatchesCandidate: isMainVideo ? sourcePathMatchesCandidate(sourcePath, candidate) : true,
+        archiveAsVideo,
+        hasPlayableIdentity: archiveAsVideo ? identity.episodeNumber !== null : true,
+        sourceMatchesCandidate: archiveAsVideo ? matchesCandidate : true,
         item: {
           sourcePath,
           targetPath,
           originalName: path.basename(sourcePath),
-          fileType: isMainVideo ? "video" : `extra_${file.fileType}`,
+          fileType: archiveAsVideo ? "video" : `extra_${file.fileType}`,
           sizeBytes: BigInt(stat.size),
           conflict,
           conflictReason: conflict ? "Target path already exists" : undefined,
@@ -332,11 +339,14 @@ export async function createOrganizerPlanForCandidateSource(input: {
     }),
   );
   const itemInputs = plannedItems.map((plannedItem) => plannedItem.item);
+  markDuplicateTargetConflicts(itemInputs);
 
   const hasConflict = itemInputs.some((item) => item.conflict);
   const hasPlayableIdentity =
-    effectiveCandidate.mediaType === "MOVIE" ||
-    plannedItems.every((item) => item.hasPlayableIdentity);
+    effectiveCandidate.mediaType === "MOVIE"
+      ? plannedItems.some((item) => item.archiveAsVideo)
+      : plannedItems.some((item) => item.archiveAsVideo) &&
+        plannedItems.every((item) => item.hasPlayableIdentity);
   const readyForConfirmation =
     metadataReliable && confidence >= 0.82 && hasPlayableIdentity && !hasConflict;
   const readyForAutoExecution =
@@ -376,6 +386,22 @@ export async function createOrganizerPlanForCandidateSource(input: {
 
 export function hasBlockingOrganizerPlan(plans: Array<{ status: string; items: Array<unknown> }>) {
   return plans.some((plan) => plan.status !== "REJECTED" && plan.items.length > 0);
+}
+
+function markDuplicateTargetConflicts(
+  items: Array<{ targetPath: string; conflict: boolean; conflictReason?: string | null }>,
+) {
+  const counts = new Map<string, number>();
+  for (const item of items) {
+    counts.set(item.targetPath, (counts.get(item.targetPath) ?? 0) + 1);
+  }
+  for (const item of items) {
+    if ((counts.get(item.targetPath) ?? 0) <= 1) {
+      continue;
+    }
+    item.conflict = true;
+    item.conflictReason = item.conflictReason ?? "Duplicate target path in organizer plan";
+  }
 }
 
 function isReliableMetadataMatch(metadata: MetadataMatch) {
@@ -1006,11 +1032,13 @@ export async function applyOrganizerAiReview(
 
 function isPollutedOrganizerPlan(plan: {
   downloadId?: string | null;
-  items: Array<{ sourcePath: string; targetPath: string }>;
+  items: Array<{ sourcePath: string; targetPath: string; fileType?: string | null }>;
   candidate: {
     mediaType: MediaType;
     parsedTitle: string;
     normalizedTitle: string;
+    episodeNumber: number | null;
+    season: number | null;
     group: { displayTitle: string; normalizedTitle: string; aliases: unknown } | null;
   } | null;
 }) {
@@ -1022,11 +1050,26 @@ function isPollutedOrganizerPlan(plan: {
   const targetPaths = plan.items.map((item) => item.targetPath).filter(Boolean);
   const hasDuplicateTargets = targetPaths.length > 1 && new Set(targetPaths).size < targetPaths.length;
   const hasPollutedTargets = plan.items.some((item) => organizerTargetPathLooksPolluted(item.targetPath));
+  const hasEpisodeVideosInExtras = plan.items.some((item) => {
+    if (item.fileType !== "extra_video") {
+      return false;
+    }
+    const identity = resolveOrganizerItemIdentity({
+      sourcePath: item.sourcePath,
+      candidate,
+    });
+    return identity.episodeNumber !== null && sourcePathMatchesCandidate(item.sourcePath, candidate);
+  });
   const mismatchedItems = plan.items.filter(
     (item) => !sourcePathMatchesCandidate(item.sourcePath, candidate),
   );
 
-  return hasDuplicateTargets || hasPollutedTargets || mismatchedItems.length === plan.items.length;
+  return (
+    hasDuplicateTargets ||
+    hasPollutedTargets ||
+    hasEpisodeVideosInExtras ||
+    mismatchedItems.length === plan.items.length
+  );
 }
 
 export function organizerTargetPathLooksPolluted(targetPath: string) {
