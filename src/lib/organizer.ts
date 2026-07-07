@@ -96,15 +96,71 @@ export async function inspectCompletedDownloads() {
     },
   });
   const results = [];
+  const failures = [];
 
   for (const download of downloads) {
     if (hasBlockingOrganizerPlan(download.organizerPlans)) {
       continue;
     }
-    results.push(await createOrganizerPlanForDownload(download.id));
+    try {
+      results.push(await createOrganizerPlanForDownload(download.id));
+    } catch (error) {
+      const failure = await recordOrganizerInspectionFailure(download, error);
+      failures.push(failure);
+    }
   }
 
-  return { inspected: results.length, plans: results.map((plan) => plan.id) };
+  return {
+    inspected: results.length,
+    failed: failures.length,
+    plans: results.map((plan) => plan.id),
+    failures,
+  };
+}
+
+async function recordOrganizerInspectionFailure(
+  download: {
+    id: string;
+    candidateId: string | null;
+    targetPath: string | null;
+    candidate: { mediaType: MediaType } | null;
+  },
+  error: unknown,
+) {
+  const message = error instanceof Error ? error.message : "Organizer inspection failed";
+  const plan = await prisma.organizerPlan.create({
+    data: {
+      downloadId: download.id,
+      candidateId: download.candidateId,
+      mediaType: download.candidate?.mediaType ?? "ANIME",
+      status: "FAILED",
+      confidence: 0,
+      reason: `Organizer inspection failed: ${message}`,
+      items: download.targetPath
+        ? {
+            create: [
+              {
+                sourcePath: download.targetPath,
+                targetPath: download.targetPath,
+                originalName: path.basename(download.targetPath),
+                fileType: "video",
+                sizeBytes: BigInt(0),
+                conflict: true,
+                conflictReason: "Source file is missing or unreadable",
+              },
+            ],
+          }
+        : undefined,
+    },
+  });
+  await prisma.download.update({
+    where: { id: download.id },
+    data: {
+      archiveStatus: "organizer_failed",
+      errorMessage: message,
+    },
+  });
+  return { downloadId: download.id, planId: plan.id, message };
 }
 
 export async function createOrganizerPlanForDownload(downloadId: string) {
