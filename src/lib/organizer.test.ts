@@ -1,10 +1,15 @@
+import fs from "node:fs/promises";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { prisma } from "@/lib/db";
+import { matchMetadataForGroup } from "@/lib/metadata";
+import { getAppSettings } from "@/lib/settings";
 import {
   assessOrganizerPlanAutomation,
   buildOrganizerExtraTargetPath,
   buildOrganizerEpisodeTitleSegment,
   classifyOrganizerFile,
+  cleanupPollutedOrganizerPlans,
+  createOrganizerPlanForCandidateSource,
   hasBlockingOrganizerPlan,
   isAutoExecutableOrganizerPlan,
   organizerTargetPathLooksPolluted,
@@ -13,12 +18,35 @@ import {
   resolveOrganizerMediaType,
 } from "./organizer";
 
+vi.mock("node:fs/promises", () => ({
+  default: {
+    access: vi.fn(),
+    mkdir: vi.fn(),
+    readdir: vi.fn(),
+    rename: vi.fn(),
+    stat: vi.fn(),
+  },
+}));
+
+vi.mock("@/lib/metadata", () => ({
+  matchMetadataForGroup: vi.fn(),
+}));
+
+vi.mock("@/lib/settings", () => ({
+  getAppSettings: vi.fn(),
+}));
+
 vi.mock("@/lib/db", () => ({
   prisma: {
     download: {
       findMany: vi.fn(),
       findUniqueOrThrow: vi.fn(),
       update: vi.fn(),
+      updateMany: vi.fn(),
+    },
+    releaseCandidate: {
+      findMany: vi.fn(),
+      findUniqueOrThrow: vi.fn(),
     },
     organizerPlan: {
       create: vi.fn(),
@@ -32,6 +60,29 @@ vi.mock("@/lib/db", () => ({
 
 beforeEach(() => {
   vi.clearAllMocks();
+  vi.mocked(getAppSettings).mockResolvedValue({
+    directories: {
+      dataRoot: "/data",
+      downloadsDir: "/data/downloads",
+      stagingDir: "/data/staging",
+      animeLibraryDir: "/data/library/anime",
+      moviesLibraryDir: "/data/library/movies",
+      tvLibraryDir: "/data/library/tv",
+      metadataDir: "/data/metadata",
+      transcodesDir: "/data/transcodes",
+    },
+  } as never);
+  vi.mocked(matchMetadataForGroup).mockResolvedValue({
+    provider: "kitsu",
+    externalId: "49372",
+    title: "Seihantai na Kimi to Boku",
+    originalTitle: "正反対な君と僕",
+    year: 2026,
+    score: 0.95,
+    relevance: 1,
+  } as never);
+  vi.mocked(fs.stat).mockResolvedValue({ size: 100 } as never);
+  vi.mocked(fs.access).mockRejectedValue(new Error("missing") as never);
 });
 
 describe("resolveOrganizerItemIdentity", () => {
@@ -153,6 +204,160 @@ describe("resolveOrganizerMediaType", () => {
         },
       }),
     ).toBe("ANIME");
+  });
+});
+
+describe("createOrganizerPlanForCandidateSource", () => {
+  it("archives every matching numbered video in an anime batch as an episode", async () => {
+    const sourcePaths = [
+      "/data/downloads/[SweetSub] Seihantai na Kimi to Boku [01-03][WebRip][1080P][AVC 8bit][CHS]/[SweetSub] Seihantai na Kimi to Boku - 01 [WebRip][1080P][AVC 8bit][CHS].mp4",
+      "/data/downloads/[SweetSub] Seihantai na Kimi to Boku [01-03][WebRip][1080P][AVC 8bit][CHS]/[SweetSub] Seihantai na Kimi to Boku - 02 [WebRip][1080P][AVC 8bit][CHS].mp4",
+      "/data/downloads/[SweetSub] Seihantai na Kimi to Boku [01-03][WebRip][1080P][AVC 8bit][CHS]/[SweetSub] Seihantai na Kimi to Boku - 03 [WebRip][1080P][AVC 8bit][CHS].mp4",
+    ];
+    vi.mocked(prisma.releaseCandidate.findUniqueOrThrow).mockResolvedValueOnce(
+      organizerReleaseCandidate({
+        rawTitle:
+          "[SweetSub][正相反的你与我][Seihantai na Kimi to Boku][01-03][WebRip][1080P][AVC 8bit][CHS]",
+        parsedTitle: "正相反的你与我 / Seihantai na Kimi to Boku",
+        normalizedTitle: "正相反的你与我",
+        episodeNumber: null,
+      }) as never,
+    );
+    vi.mocked(prisma.releaseCandidate.findMany).mockResolvedValueOnce([] as never);
+    vi.mocked(prisma.organizerPlan.create).mockResolvedValueOnce({ id: "plan-1" } as never);
+
+    await createOrganizerPlanForCandidateSource({
+      candidateId: "candidate-1",
+      downloadId: "download-1",
+      sourceRoot: sourcePaths[1],
+      sourcePaths,
+    });
+
+    const createArgs = vi.mocked(prisma.organizerPlan.create).mock.calls[0]?.[0] as {
+      data: { items: { create: Array<{ fileType: string; targetPath: string; conflict: boolean }> } };
+    };
+    const items = createArgs.data.items.create;
+
+    expect(items).toHaveLength(3);
+    expect(items.map((item) => item.fileType)).toEqual(["video", "video", "video"]);
+    expect(items.map((item) => item.targetPath)).toEqual(
+      expect.arrayContaining([
+        "/data/library/anime/Seihantai na Kimi to Boku (2026)/Season 01/Seihantai na Kimi to Boku - S01E01 [SweetSub][1080P][AVC].mp4",
+        "/data/library/anime/Seihantai na Kimi to Boku (2026)/Season 01/Seihantai na Kimi to Boku - S01E02 [SweetSub][1080P][AVC].mp4",
+        "/data/library/anime/Seihantai na Kimi to Boku (2026)/Season 01/Seihantai na Kimi to Boku - S01E03 [SweetSub][1080P][AVC].mp4",
+      ]),
+    );
+    expect(items.some((item) => item.targetPath.includes("/Extras/"))).toBe(false);
+    expect(items.some((item) => item.conflict)).toBe(false);
+  });
+
+  it("keeps unrelated videos in a package as extras", async () => {
+    const sourcePaths = [
+      "/data/downloads/Mixed Pack/[SweetSub] Seihantai na Kimi to Boku - 01 [WebRip][1080P][AVC 8bit][CHS].mp4",
+      "/data/downloads/Mixed Pack/Other Anime - 01 [1080P][AVC].mp4",
+    ];
+    vi.mocked(prisma.releaseCandidate.findUniqueOrThrow).mockResolvedValueOnce(
+      organizerReleaseCandidate({
+        rawTitle: "[SweetSub][正相反的你与我][Seihantai na Kimi to Boku][01][WebRip][1080P][AVC 8bit][CHS]",
+        parsedTitle: "正相反的你与我 / Seihantai na Kimi to Boku",
+        normalizedTitle: "正相反的你与我",
+        episodeNumber: null,
+      }) as never,
+    );
+    vi.mocked(prisma.releaseCandidate.findMany).mockResolvedValueOnce([] as never);
+    vi.mocked(prisma.organizerPlan.create).mockResolvedValueOnce({ id: "plan-1" } as never);
+
+    await createOrganizerPlanForCandidateSource({
+      candidateId: "candidate-1",
+      downloadId: "download-1",
+      sourceRoot: sourcePaths[0],
+      sourcePaths,
+    });
+
+    const createArgs = vi.mocked(prisma.organizerPlan.create).mock.calls[0]?.[0] as {
+      data: { items: { create: Array<{ originalName: string; fileType: string; targetPath: string }> } };
+    };
+    const unrelated = createArgs.data.items.create.find((item) => item.originalName.startsWith("Other Anime"));
+
+    expect(unrelated?.fileType).toBe("extra_video");
+    expect(unrelated?.targetPath).toContain("/Extras/");
+  });
+
+  it("marks duplicate episode targets inside the same package as conflicts", async () => {
+    const sourcePaths = [
+      "/data/downloads/Duplicate Pack/[SweetSub] Seihantai na Kimi to Boku - 01 [WebRip][1080P][AVC 8bit][CHS].mp4",
+      "/data/downloads/Duplicate Pack/[SweetSub] Seihantai na Kimi to Boku - 01v2 [WebRip][1080P][AVC 8bit][CHS].mp4",
+    ];
+    vi.mocked(prisma.releaseCandidate.findUniqueOrThrow).mockResolvedValueOnce(
+      organizerReleaseCandidate({
+        rawTitle: "[SweetSub][正相反的你与我][Seihantai na Kimi to Boku][01][WebRip][1080P][AVC 8bit][CHS]",
+        parsedTitle: "正相反的你与我 / Seihantai na Kimi to Boku",
+        normalizedTitle: "正相反的你与我",
+        episodeNumber: null,
+      }) as never,
+    );
+    vi.mocked(prisma.releaseCandidate.findMany).mockResolvedValueOnce([] as never);
+    vi.mocked(prisma.organizerPlan.create).mockResolvedValueOnce({ id: "plan-1" } as never);
+
+    await createOrganizerPlanForCandidateSource({
+      candidateId: "candidate-1",
+      downloadId: "download-1",
+      sourceRoot: sourcePaths[0],
+      sourcePaths,
+    });
+
+    const createArgs = vi.mocked(prisma.organizerPlan.create).mock.calls[0]?.[0] as {
+      data: {
+        status: string;
+        reason: string;
+        items: { create: Array<{ conflict: boolean; conflictReason?: string | null }> };
+      };
+    };
+
+    expect(createArgs.data.status).toBe("CONFLICT");
+    expect(createArgs.data.reason).toBe("Target path conflict");
+    expect(createArgs.data.items.create.every((item) => item.conflict)).toBe(true);
+    expect(createArgs.data.items.create[0].conflictReason).toBe("Duplicate target path in organizer plan");
+  });
+});
+
+describe("cleanupPollutedOrganizerPlans", () => {
+  it("removes legacy batch plans that placed episode videos under Extras", async () => {
+    vi.mocked(prisma.organizerPlan.findMany).mockResolvedValueOnce([
+      {
+        id: "plan-1",
+        downloadId: "download-1",
+        items: [
+          {
+            sourcePath:
+              "/data/downloads/[SweetSub] Seihantai na Kimi to Boku [01-03]/[SweetSub] Seihantai na Kimi to Boku - 01 [WebRip][1080P][AVC 8bit][CHS].mp4",
+            targetPath:
+              "/data/library/anime/Seihantai na Kimi to Boku (2026)/Season 01/Extras/[SweetSub] Seihantai na Kimi to Boku - 01 [WebRip][1080P][AVC 8bit][CHS].mp4",
+            fileType: "extra_video",
+          },
+        ],
+        candidate: organizerReleaseCandidate({
+          rawTitle:
+            "[SweetSub][正相反的你与我][Seihantai na Kimi to Boku][01-03][WebRip][1080P][AVC 8bit][CHS]",
+          parsedTitle: "正相反的你与我 / Seihantai na Kimi to Boku",
+          normalizedTitle: "正相反的你与我",
+          episodeNumber: null,
+        }),
+      },
+    ] as never);
+    vi.mocked(prisma.organizerPlan.delete).mockResolvedValueOnce({ id: "plan-1" } as never);
+    vi.mocked(prisma.download.updateMany).mockResolvedValueOnce({ count: 1 } as never);
+
+    await expect(cleanupPollutedOrganizerPlans()).resolves.toMatchObject({
+      inspected: 1,
+      deleted: 1,
+      plans: ["plan-1"],
+    });
+    expect(prisma.organizerPlan.delete).toHaveBeenCalledWith({ where: { id: "plan-1" } });
+    expect(prisma.download.updateMany).toHaveBeenCalledWith({
+      where: { id: { in: ["download-1"] } },
+      data: { archiveStatus: null },
+    });
   });
 });
 
@@ -491,6 +696,60 @@ function organizerCandidate() {
       displayTitle: "Some Anime",
       normalizedTitle: "some anime",
       aliases: [],
+    },
+  };
+}
+
+function organizerReleaseCandidate(input: {
+  rawTitle: string;
+  parsedTitle: string;
+  normalizedTitle: string;
+  episodeNumber: number | null;
+}) {
+  return {
+    id: "candidate-1",
+    groupId: "group-1",
+    rssItemId: "rss-1",
+    mediaType: "ANIME" as const,
+    rawTitle: input.rawTitle,
+    parsedTitle: input.parsedTitle,
+    normalizedTitle: input.normalizedTitle,
+    subtitleGroup: "SweetSub",
+    episodeNumber: input.episodeNumber,
+    season: null,
+    resolution: "1080P",
+    codec: "AVC",
+    audio: null,
+    subtitleLanguage: "CHS",
+    releaseProfile: "WEBRip / CHS",
+    sourceKind: "WEBRip",
+    variantKey: "sweetsub|webrip|chs|1080p|avc",
+    releaseTags: ["SweetSub", "01-03", "WebRip", "1080P", "AVC 8bit", "CHS"],
+    episodeIdentity: null,
+    magnetUrl: null,
+    torrentUrl: null,
+    torrentFilePath: null,
+    sourceUrl: "magnet:?xt=urn:btih:test",
+    confidence: 0.8,
+    status: "DOWNLOADED",
+    createdAt: new Date("2026-07-07T00:00:00.000Z"),
+    updatedAt: new Date("2026-07-07T00:00:00.000Z"),
+    group: {
+      id: "group-1",
+      mediaType: "ANIME" as const,
+      normalizedTitle: input.normalizedTitle,
+      displayTitle: input.parsedTitle,
+      season: 1,
+      confidence: 0.85,
+      reviewRequired: false,
+      aiSummary: "Test group",
+      aliases: [
+        input.parsedTitle,
+        "Seihantai na Kimi to Boku",
+        "正相反的你与我",
+      ],
+      createdAt: new Date("2026-07-07T00:00:00.000Z"),
+      updatedAt: new Date("2026-07-07T00:00:00.000Z"),
     },
   };
 }
