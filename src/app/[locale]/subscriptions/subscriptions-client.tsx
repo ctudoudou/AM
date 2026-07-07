@@ -16,6 +16,7 @@ import {
 import { getMessages } from "@/messages";
 import type { Locale } from "@/lib/i18n";
 import {
+  candidateIsBatch,
   evaluateSubscriptionCandidates,
   selectSubscriptionCandidate,
   type StrategyCandidate,
@@ -141,6 +142,7 @@ type Subscription = {
   preferredReleaseProfile?: string | null;
   preferredSourceKind?: string | null;
   preferredVariantKey?: string | null;
+  fallbackPolicy?: string | null;
   seasonMode?: string | null;
   seasonNumber?: number | null;
   episodeMode?: string | null;
@@ -154,7 +156,7 @@ type Subscription = {
   } | null;
 };
 
-type CandidateFilter = "ACTIVE" | "UNSUBSCRIBED" | "SUBSCRIBED" | "EMPTY" | "ALL";
+type CandidateFilter = "ACTIVE" | "BATCH" | "UNSUBSCRIBED" | "SUBSCRIBED" | "EMPTY" | "ALL";
 type MediaTypeFilter = MediaType | "ALL";
 type SubscriptionModeFilter = "ALL" | "AUTO" | "MANUAL";
 type CandidateStatusFilter = "ALL" | "ACTIONABLE" | "READY" | "REVIEW" | "SUBSCRIBED" | "EMPTY";
@@ -237,6 +239,7 @@ export function SubscriptionsClient({ locale }: { locale: Locale }) {
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(true);
   const [selectedGroupId, setSelectedGroupId] = useState<string | null>(null);
+  const [selectedSubscriptionId, setSelectedSubscriptionId] = useState<string | null>(null);
   const [pendingSubscription, setPendingSubscription] = useState<PendingSubscription | null>(null);
   const [subscriptionSubmitting, setSubscriptionSubmitting] = useState(false);
   const groupsWithVersions = Math.max(0, candidateStats.totalGroups - candidateStats.emptyGroups);
@@ -269,6 +272,9 @@ export function SubscriptionsClient({ locale }: { locale: Locale }) {
         if (candidateFilter === "ACTIVE" || candidateFilter === "UNSUBSCRIBED") {
           return group.candidates.length > 0;
         }
+        if (candidateFilter === "BATCH") {
+          return group.candidates.some(candidateIsBatch);
+        }
         if (candidateFilter === "SUBSCRIBED") {
           return subscriptionGroupIds.has(group.id);
         }
@@ -299,6 +305,13 @@ export function SubscriptionsClient({ locale }: { locale: Locale }) {
   const selectedGroup = useMemo(
     () => visibleGroups.find((group) => group.id === selectedGroupId) ?? visibleGroups[0] ?? null,
     [selectedGroupId, visibleGroups],
+  );
+  const selectedSubscription = useMemo(
+    () =>
+      visibleSubscriptions.find((subscription) => subscription.id === selectedSubscriptionId) ??
+      visibleSubscriptions[0] ??
+      null,
+    [selectedSubscriptionId, visibleSubscriptions],
   );
   const subscriptionPreview = useMemo(
     () =>
@@ -831,38 +844,98 @@ export function SubscriptionsClient({ locale }: { locale: Locale }) {
             <option value="MANUAL">{t.subscriptionModeManual}</option>
           </select>
         </div>
-        <div className="subscription-list compact">
+        <div className="subscription-management-workbench">
           {subscriptions.length === 0 ? (
-            <p>{t.noActiveSubscriptions}</p>
+            <div className="empty-panel">{t.noActiveSubscriptions}</div>
           ) : visibleSubscriptions.length === 0 ? (
-            <p>{t.noMatchingResults}</p>
+            <div className="empty-panel">{t.noMatchingResults}</div>
           ) : (
-            visibleSubscriptions.map((subscription) => (
-              <article key={subscription.id}>
-                <div>
-                  <h3>{subscription.title}</h3>
-                  <div className="subscription-row-tags">
-                    <span>{formatMediaType(subscription.mediaType, t)}</span>
-                    <span>
+            <>
+              <div className="queue-master-list subscription-master-list">
+                {visibleSubscriptions.map((subscription) => (
+                  <button
+                    className={
+                      selectedSubscription?.id === subscription.id
+                        ? "queue-master-item active"
+                        : "queue-master-item"
+                    }
+                    key={subscription.id}
+                    onClick={() => setSelectedSubscriptionId(subscription.id)}
+                    type="button"
+                  >
+                    <span className={subscription.autoDownload ? "candidate-policy active" : "candidate-policy"}>
                       {subscription.autoDownload ? t.subscriptionModeAuto : t.subscriptionModeManual}
                     </span>
-                    {subscription.candidateGroup?.displayTitle &&
-                    subscription.candidateGroup.displayTitle !== subscription.title ? (
-                      <span>{subscription.candidateGroup.displayTitle}</span>
+                    <strong>{subscription.title}</strong>
+                    <small>
+                      {formatMediaType(subscription.mediaType, t)}
+                      {subscription.candidateGroup?.displayTitle &&
+                      subscription.candidateGroup.displayTitle !== subscription.title
+                        ? ` · ${subscription.candidateGroup.displayTitle}`
+                        : ""}
+                    </small>
+                    <span className="queue-master-meta">
+                      {formatSubscriptionPolicy(subscription) || t.futureOnlyPolicy}
+                    </span>
+                  </button>
+                ))}
+              </div>
+              {selectedSubscription ? (
+                <article className="candidate-group queue-detail-panel subscription-detail-panel">
+                  <div className="candidate-heading">
+                    <div>
+                      <h2>{selectedSubscription.title}</h2>
+                      <p>
+                        {formatMediaType(selectedSubscription.mediaType, t)} ·{" "}
+                        {selectedSubscription.autoDownload
+                          ? t.subscriptionModeAuto
+                          : t.subscriptionModeManual}
+                      </p>
+                    </div>
+                    <div className="candidate-heading-actions">
+                      <span className="candidate-policy active">
+                        {selectedSubscription.enabled ? t.subscribed : t.queueStatusEmpty}
+                      </span>
+                      <button
+                        className="danger-button"
+                        onClick={() => void cancelSubscription(selectedSubscription)}
+                        type="button"
+                      >
+                        <Trash2 size={14} />
+                        {t.cancelSubscription}
+                      </button>
+                    </div>
+                  </div>
+                  <div className="queue-detail-status">
+                    <span>{formatSubscriptionPolicy(selectedSubscription) || t.futureOnlyPolicy}</span>
+                    <span>{formatBatchPolicy(selectedSubscription.batchPolicy)}</span>
+                    {selectedSubscription.candidateGroup?.displayTitle ? (
+                      <span>{selectedSubscription.candidateGroup.displayTitle}</span>
                     ) : null}
                   </div>
-                  <p>{formatSubscriptionPolicy(subscription) || t.futureOnlyPolicy}</p>
-                </div>
-                <button
-                  className="danger-button"
-                  onClick={() => void cancelSubscription(subscription)}
-                  type="button"
-                >
-                  <Trash2 size={14} />
-                  {t.cancelSubscription}
-                </button>
-              </article>
-            ))
+                  <div className="subscription-detail-grid">
+                    <span>
+                      <strong>{t.strategySeasonMode}</strong>
+                      {formatSeasonPolicy(selectedSubscription)}
+                    </span>
+                    <span>
+                      <strong>{t.strategyEpisodeMode}</strong>
+                      {formatEpisodePolicy(selectedSubscription)}
+                    </span>
+                    <span>
+                      <strong>{t.strategyFallback}</strong>
+                      {selectedSubscription.fallbackPolicy === "strict"
+                        ? t.strategyFallbackStrict
+                        : t.strategyFallbackManualReview}
+                    </span>
+                    <span>
+                      <strong>{t.strategySelectedVersion}</strong>
+                      {formatSubscriptionPreferences(selectedSubscription) || t.futureOnlyPolicy}
+                    </span>
+                  </div>
+                </article>
+              ) : null}
+            </>
           )}
         </div>
       </section>
@@ -881,6 +954,7 @@ export function SubscriptionsClient({ locale }: { locale: Locale }) {
             <div className="filter-tabs">
               {[
                 ["ACTIVE", t.currentCandidates],
+                ["BATCH", t.batchCandidates],
                 ["UNSUBSCRIBED", t.unsubscribed],
                 ["SUBSCRIBED", t.subscribed],
                 ["EMPTY", t.futureOnly],
@@ -1817,6 +1891,28 @@ function formatSubscriptionPolicy(subscription: Subscription) {
     .join(" · ");
 }
 
+function formatSeasonPolicy(subscription: Subscription) {
+  return formatSeasonScope(subscriptionStrategyView(subscription));
+}
+
+function formatEpisodePolicy(subscription: Subscription) {
+  return formatEpisodeScope(subscriptionStrategyView(subscription));
+}
+
+function formatSubscriptionPreferences(subscription: Subscription) {
+  return [
+    subscription.preferredGroup,
+    subscription.preferredReleaseProfile,
+    subscription.preferredSubtitleLanguage,
+    subscription.preferredSourceKind,
+    subscription.preferredResolution,
+    subscription.preferredCodec,
+    subscription.preferredAudio,
+  ]
+    .filter(Boolean)
+    .join(" · ");
+}
+
 function buildSubscriptionStrategy(group: CandidateGroup, candidate?: Candidate): SubscriptionStrategyDraft {
   const seasonNumber = candidate?.season ?? group.season ?? null;
   return {
@@ -1832,7 +1928,12 @@ function buildSubscriptionStrategy(group: CandidateGroup, candidate?: Candidate)
 }
 
 function formatSubscriptionScope(subscription: Subscription) {
-  const strategy = {
+  const strategy = subscriptionStrategyView(subscription);
+  return `${formatSeasonScope(strategy)} · ${formatEpisodeScope(strategy)}`;
+}
+
+function subscriptionStrategyView(subscription: Subscription) {
+  return {
     title: subscription.title,
     seasonMode: subscription.seasonMode === "latest" || subscription.seasonMode === "specific"
       ? subscription.seasonMode
@@ -1852,7 +1953,6 @@ function formatSubscriptionScope(subscription: Subscription) {
         : "review",
     autoDownload: subscription.autoDownload,
   } satisfies SubscriptionStrategyDraft;
-  return `${formatSeasonScope(strategy)} · ${formatEpisodeScope(strategy)}`;
 }
 
 function formatSeasonScope(strategy: Pick<SubscriptionStrategyDraft, "seasonMode" | "seasonNumber">) {
@@ -1949,15 +2049,6 @@ function candidateEligibleForSubscription(candidate: Candidate, subscription: Su
     }
   }
   return true;
-}
-
-function candidateIsBatch(candidate: Candidate) {
-  if (candidate.episodeNumber === null || candidate.episodeNumber === undefined) {
-    return true;
-  }
-  return /(?:^|[\s[\]()【】_-])\d{1,3}\s*[-~～]\s*\d{1,3}(?:\s*(?:fin|end|complete|合集|全集|全|完|完结|完結))?(?=$|[\s[\]()【】_-])/i.test(
-    candidate.rawTitle,
-  );
 }
 
 function matchesSubscriptionQuery(subscription: Subscription, needle: string) {
@@ -2201,6 +2292,9 @@ function subscriptionCandidateParams(input: {
     params.set("view", "all");
   } else {
     params.set("view", "active");
+  }
+  if (input.filter === "BATCH") {
+    params.set("category", "batch");
   }
   params.set("page", String(input.page));
   params.set("pageSize", "50");

@@ -1098,6 +1098,50 @@ a {
   overflow: auto;
 }
 
+.subscription-management-workbench {
+  display: grid;
+  grid-template-columns: minmax(280px, 0.34fr) minmax(0, 1fr);
+  gap: 14px;
+  align-items: start;
+}
+
+.subscription-master-list {
+  max-height: 430px;
+}
+
+.subscription-detail-panel {
+  min-height: 360px;
+}
+
+.subscription-detail-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+  margin-top: 14px;
+}
+
+.subscription-detail-grid span {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+  border: 1px solid rgba(255, 255, 255, 0.055);
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.028);
+  color: var(--text-muted);
+  padding: 10px;
+  font-size: 12px;
+  line-height: 17px;
+}
+
+.subscription-detail-grid strong {
+  overflow: hidden;
+  color: rgba(255, 255, 255, 0.82);
+  font-size: 11px;
+  line-height: 15px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .panel-count {
   flex: 0 0 auto;
   color: var(--text-muted);
@@ -4324,6 +4368,7 @@ a {
   .rss-draft,
   .subscription-controls,
   .candidate-filter-bar,
+  .subscription-management-workbench,
   .subscription-workbench,
   .candidate-board,
   .strategy-summary-grid,
@@ -4370,6 +4415,10 @@ a {
 
   .queue-master-list {
     max-height: 360px;
+  }
+
+  .subscription-detail-grid {
+    grid-template-columns: 1fr;
   }
 
   .queue-detail-panel {

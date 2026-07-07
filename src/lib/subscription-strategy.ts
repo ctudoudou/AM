@@ -19,6 +19,12 @@ export type StrategyCandidate = {
   createdAt: Date;
 };
 
+export type BatchCandidateInput = {
+  mediaType?: string | null;
+  rawTitle?: string | null;
+  episodeNumber?: number | null;
+};
+
 export type SubscriptionStrategy = {
   seasonMode?: string | null;
   seasonNumber?: number | null;
@@ -234,7 +240,7 @@ export function candidateEligibleForSubscription(
   return evaluateSubscriptionCandidate(candidate, subscription).eligible;
 }
 
-export function candidateIsBatch(candidate: StrategyCandidate) {
+export function candidateIsBatch(candidate: BatchCandidateInput) {
   if (candidate.mediaType === "MOVIE") {
     return false;
   }
