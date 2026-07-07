@@ -1,6 +1,11 @@
 import { prisma } from "@/lib/db";
 import { enqueueCandidateDownload } from "@/lib/downloads";
 import {
+  jsonStringList,
+  subscriptionCoversCandidateGroup,
+  type SubscriptionCoverageInput,
+} from "@/lib/media-identity";
+import {
   scoreSubscriptionCandidate,
   selectSubscriptionCandidate as selectStrategySubscriptionCandidate,
   type StrategyCandidate,
@@ -17,6 +22,7 @@ export async function matchSubscriptionsToCandidates() {
       mediaType: { in: ["ANIME", "MOVIE", "TV"] },
       candidateGroupId: { not: null },
     },
+    include: { candidateGroup: true },
   });
   let matched = 0;
   let enqueued = 0;
@@ -25,11 +31,15 @@ export async function matchSubscriptionsToCandidates() {
     if (!subscription.candidateGroupId) {
       continue;
     }
+    const coveredGroupIds = await findCoveredCandidateGroupIds(subscription);
+    if (coveredGroupIds.length === 0) {
+      continue;
+    }
 
     if (subscription.mediaType === "MOVIE") {
       const alreadyQueued = await prisma.releaseCandidate.findFirst({
         where: {
-          groupId: subscription.candidateGroupId,
+          groupId: { in: coveredGroupIds },
           downloads: { some: {} },
         },
         select: { id: true },
@@ -40,7 +50,7 @@ export async function matchSubscriptionsToCandidates() {
 
       const candidates = await prisma.releaseCandidate.findMany({
         where: {
-          groupId: subscription.candidateGroupId,
+          groupId: { in: coveredGroupIds },
           status: { in: ["READY", "REVIEW"] },
           createdAt: { gt: subscription.createdAt },
         },
@@ -80,7 +90,7 @@ export async function matchSubscriptionsToCandidates() {
       (
         await prisma.releaseCandidate.findMany({
           where: {
-            groupId: subscription.candidateGroupId,
+            groupId: { in: coveredGroupIds },
             downloads: { some: {} },
             episodeNumber: { not: null },
           },
@@ -93,7 +103,7 @@ export async function matchSubscriptionsToCandidates() {
 
     const candidates = await prisma.releaseCandidate.findMany({
       where: {
-        groupId: subscription.candidateGroupId,
+        groupId: { in: coveredGroupIds },
         status: { in: ["READY", "REVIEW"] },
         episodeNumber: { not: null },
         createdAt: { gt: subscription.createdAt },
@@ -157,6 +167,74 @@ export function scoreCandidate(
   subscription: MatchSubscription,
 ) {
   return scoreSubscriptionCandidate(candidate, subscription);
+}
+
+async function findCoveredCandidateGroupIds(subscription: {
+  mediaType: "ANIME" | "MOVIE" | "TV";
+  title: string;
+  seasonMode?: string | null;
+  seasonNumber?: number | null;
+  candidateGroup?: {
+    mediaType: "ANIME" | "MOVIE" | "TV";
+    displayTitle: string;
+    normalizedTitle: string;
+    aliases?: unknown;
+    season?: number | null;
+  } | null;
+}) {
+  const groups = await prisma.releaseCandidateGroup.findMany({
+    where: {
+      mediaType: subscription.mediaType,
+      ...(subscription.seasonMode === "specific" && subscription.seasonNumber
+        ? { season: subscription.seasonNumber }
+        : {}),
+    },
+  });
+  const input = subscriptionCoverageInput(subscription);
+
+  return groups
+    .filter((group) => subscriptionCoversCandidateGroup(input, candidateGroupCoverageInput(group)))
+    .map((group) => group.id);
+}
+
+function subscriptionCoverageInput(subscription: {
+  mediaType: string;
+  title: string;
+  seasonMode?: string | null;
+  seasonNumber?: number | null;
+  candidateGroup?: {
+    mediaType: string;
+    displayTitle: string;
+    normalizedTitle: string;
+    aliases?: unknown;
+    season?: number | null;
+  } | null;
+}): SubscriptionCoverageInput {
+  return {
+    mediaType: subscription.mediaType,
+    title: subscription.title,
+    seasonMode: subscription.seasonMode,
+    seasonNumber: subscription.seasonNumber,
+    candidateGroup: subscription.candidateGroup
+      ? candidateGroupCoverageInput(subscription.candidateGroup)
+      : null,
+  };
+}
+
+function candidateGroupCoverageInput(group: {
+  mediaType: string;
+  displayTitle: string;
+  normalizedTitle: string;
+  aliases?: unknown;
+  season?: number | null;
+}) {
+  return {
+    mediaType: group.mediaType,
+    displayTitle: group.displayTitle,
+    normalizedTitle: group.normalizedTitle,
+    aliases: jsonStringList(group.aliases),
+    season: group.season ?? null,
+  };
 }
 
 function groupCandidatesByEpisode(candidates: MatchCandidate[]) {

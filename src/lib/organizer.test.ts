@@ -11,6 +11,7 @@ import {
   cleanupPollutedOrganizerPlans,
   createOrganizerPlanForCandidateSource,
   hasBlockingOrganizerPlan,
+  inspectCompletedDownloads,
   isAutoExecutableOrganizerPlan,
   organizerTargetPathLooksPolluted,
   regenerateRejectedOrganizerPlan,
@@ -460,6 +461,80 @@ describe("hasBlockingOrganizerPlan", () => {
     expect(
       hasBlockingOrganizerPlan([{ status: "PENDING", items: [{ id: "item-1" }] }]),
     ).toBe(true);
+  });
+});
+
+describe("inspectCompletedDownloads", () => {
+  it("records one failed organizer plan without blocking later completed downloads", async () => {
+    vi.mocked(prisma.download.findMany).mockResolvedValueOnce([
+      {
+        id: "missing-download",
+        candidateId: "candidate-1",
+        targetPath: "/data/downloads/Missing Episode.mkv",
+        candidate: { mediaType: "ANIME" },
+        organizerPlans: [],
+      },
+      {
+        id: "next-download",
+        candidateId: "candidate-2",
+        targetPath: null,
+        candidate: { mediaType: "ANIME" },
+        organizerPlans: [],
+      },
+    ] as never);
+    vi.mocked(prisma.download.findUniqueOrThrow)
+      .mockResolvedValueOnce({
+        id: "missing-download",
+        candidateId: "candidate-1",
+        targetPath: "/data/downloads/Missing Episode.mkv",
+        candidate: organizerReleaseCandidate({
+          id: "candidate-1",
+          parsedTitle: "Missing Episode",
+          rawTitle: "Missing Episode - 01",
+        }),
+      } as never)
+      .mockResolvedValueOnce({
+        id: "next-download",
+        candidateId: "candidate-2",
+        targetPath: null,
+        candidate: organizerReleaseCandidate({
+          id: "candidate-2",
+          parsedTitle: "Seihantai na Kimi to Boku",
+          rawTitle: "[SweetSub] Seihantai na Kimi to Boku - 02 [1080P].mp4",
+        }),
+      } as never);
+    vi.mocked(prisma.releaseCandidate.findMany).mockResolvedValueOnce([] as never);
+    vi.mocked(fs.stat).mockRejectedValueOnce(new Error("ENOENT: no such file or directory"));
+    vi.mocked(prisma.organizerPlan.create)
+      .mockResolvedValueOnce({ id: "failed-plan" } as never)
+      .mockResolvedValueOnce({ id: "next-plan" } as never);
+    vi.mocked(prisma.download.update).mockResolvedValueOnce({ id: "missing-download" } as never);
+
+    await expect(inspectCompletedDownloads()).resolves.toMatchObject({
+      inspected: 1,
+      failed: 1,
+      plans: ["next-plan"],
+      failures: [{ downloadId: "missing-download", planId: "failed-plan" }],
+    });
+    expect(prisma.organizerPlan.create).toHaveBeenNthCalledWith(1, {
+      data: expect.objectContaining({
+        downloadId: "missing-download",
+        candidateId: "candidate-1",
+        status: "FAILED",
+        items: expect.any(Object),
+      }),
+    });
+    expect(prisma.download.update).toHaveBeenCalledWith({
+      where: { id: "missing-download" },
+      data: expect.objectContaining({ archiveStatus: "organizer_failed" }),
+    });
+    expect(prisma.organizerPlan.create).toHaveBeenNthCalledWith(2, {
+      data: expect.objectContaining({
+        downloadId: "next-download",
+        candidateId: "candidate-2",
+        status: "NEEDS_REVIEW",
+      }),
+    });
   });
 });
 

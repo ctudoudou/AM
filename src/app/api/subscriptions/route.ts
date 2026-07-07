@@ -1,7 +1,13 @@
+import type { MediaType } from "@prisma/client";
 import { z } from "zod";
 import { jsonError, jsonResponse } from "@/lib/api";
 import { prisma } from "@/lib/db";
 import { enqueueCandidateDownload } from "@/lib/downloads";
+import {
+  jsonStringList,
+  subscriptionCoversCandidateGroup,
+  type SubscriptionCoverageInput,
+} from "@/lib/media-identity";
 
 const subscriptionCreateSchema = z.object({
   candidateId: z.string().min(1).optional(),
@@ -71,22 +77,34 @@ export async function POST(request: Request) {
     const episodeEnd = input.episodeEnd ?? null;
     const episodeMode = input.episodeMode ?? "future_only";
     const preferredVariantKey = input.preferredVariantKey ?? selectedCandidate?.variantKey ?? null;
-    const existingSubscription = await prisma.subscription.findFirst({
+    const strategyWhere = {
+      seasonMode,
+      seasonNumber,
+      episodeMode,
+      episodeStart,
+      episodeEnd,
+      preferredVariantKey,
+    };
+    const exactSubscription = await prisma.subscription.findFirst({
       where: {
         candidateGroupId: group.id,
-        seasonMode,
-        seasonNumber,
-        episodeMode,
-        episodeStart,
-        episodeEnd,
-        preferredVariantKey,
+        ...strategyWhere,
       },
       orderBy: { updatedAt: "desc" },
+      include: { candidateGroup: true },
     });
+    const existingSubscription =
+      exactSubscription ??
+      (await findCanonicalSubscription({
+        mediaType: group.mediaType,
+        strategyWhere,
+        group,
+      }));
+    const targetGroup = existingSubscription?.candidateGroup ?? group;
     const subscriptionData = {
-      candidateGroupId: group.id,
-      mediaType: group.mediaType,
-      title: group.displayTitle,
+      candidateGroupId: targetGroup.id,
+      mediaType: targetGroup.mediaType,
+      title: targetGroup.displayTitle,
       seasonMode,
       seasonNumber,
       episodeMode,
@@ -149,4 +167,82 @@ export async function POST(request: Request) {
   } catch (error) {
     return jsonError(error);
   }
+}
+
+async function findCanonicalSubscription(input: {
+  mediaType: MediaType;
+  strategyWhere: {
+    seasonMode: string;
+    seasonNumber: number | null;
+    episodeMode: string;
+    episodeStart: number | null;
+    episodeEnd: number | null;
+    preferredVariantKey: string | null;
+  };
+  group: {
+    id: string;
+    mediaType: MediaType;
+    displayTitle: string;
+    normalizedTitle: string;
+    aliases?: unknown;
+    season?: number | null;
+  };
+}) {
+  const subscriptions = await prisma.subscription.findMany({
+    where: {
+      enabled: true,
+      mediaType: input.mediaType,
+      ...input.strategyWhere,
+    },
+    include: { candidateGroup: true },
+    orderBy: { updatedAt: "desc" },
+  });
+
+  return subscriptions.find((subscription) =>
+    subscription.candidateGroup &&
+    subscriptionCoversCandidateGroup(
+      subscriptionCoverageInput(subscription),
+      candidateGroupCoverageInput(input.group),
+    ),
+  );
+}
+
+function subscriptionCoverageInput(subscription: {
+  mediaType: string;
+  title: string;
+  seasonMode?: string | null;
+  seasonNumber?: number | null;
+  candidateGroup?: {
+    mediaType: string;
+    displayTitle: string;
+    normalizedTitle: string;
+    aliases?: unknown;
+    season?: number | null;
+  } | null;
+}): SubscriptionCoverageInput {
+  return {
+    mediaType: subscription.mediaType,
+    title: subscription.title,
+    seasonMode: subscription.seasonMode,
+    seasonNumber: subscription.seasonNumber,
+    candidateGroup: subscription.candidateGroup
+      ? candidateGroupCoverageInput(subscription.candidateGroup)
+      : null,
+  };
+}
+
+function candidateGroupCoverageInput(group: {
+  mediaType: string;
+  displayTitle: string;
+  normalizedTitle: string;
+  aliases?: unknown;
+  season?: number | null;
+}) {
+  return {
+    mediaType: group.mediaType,
+    displayTitle: group.displayTitle,
+    normalizedTitle: group.normalizedTitle,
+    aliases: jsonStringList(group.aliases),
+    season: group.season ?? null,
+  };
 }

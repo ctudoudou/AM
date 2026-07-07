@@ -1,6 +1,11 @@
 import type { MediaType, Prisma } from "@prisma/client";
 import { jsonError, jsonResponse } from "@/lib/api";
 import { prisma } from "@/lib/db";
+import {
+  jsonStringList,
+  subscriptionCoversCandidateGroup,
+  type SubscriptionCoverageInput,
+} from "@/lib/media-identity";
 import { describeSubscriptionQueueGroup } from "@/lib/subscription-queue-state";
 
 export const dynamic = "force-dynamic";
@@ -24,17 +29,22 @@ export async function GET(request: Request) {
     const query = url.searchParams.get("q")?.trim() ?? "";
     const sort = normalizeSort(url.searchParams.get("sort"));
     const viewWhere = whereForView(view);
+    const filterCanonicalCoverage = shouldFilterCanonicalCoverage(view, status);
     const where = mergeWhere(
       viewWhere,
       mediaType ? { mediaType } : {},
       whereForStatus(status),
       whereForQuery(query),
     );
-    const groups = await prisma.releaseCandidateGroup.findMany({
+    const enabledSubscriptions = await prisma.subscription.findMany({
+      where: { enabled: true, candidateGroupId: { not: null } },
+      include: { candidateGroup: true },
+    });
+    const rawGroups = await prisma.releaseCandidateGroup.findMany({
       where,
       orderBy: orderByForSort(sort),
-      skip,
-      take,
+      skip: filterCanonicalCoverage ? 0 : skip,
+      take: filterCanonicalCoverage ? undefined : take,
       include: {
         _count: { select: { candidates: true, subscriptions: true } },
         subscriptions: {
@@ -77,10 +87,35 @@ export async function GET(request: Request) {
         },
       },
     });
+    const annotatedGroups = rawGroups.map((group) => {
+      const coveredBySubscription = enabledSubscriptions.find((subscription) =>
+        subscription.candidateGroupId !== group.id &&
+        subscriptionCoversCandidateGroup(
+          subscriptionCoverageInput(subscription),
+          candidateGroupCoverageInput(group),
+        ),
+      );
+      return {
+        ...group,
+        coveredBySubscription: coveredBySubscription
+          ? {
+              id: coveredBySubscription.id,
+              title: coveredBySubscription.title,
+              candidateGroupId: coveredBySubscription.candidateGroupId,
+            }
+          : null,
+      };
+    });
+    const visibleGroups = filterCanonicalCoverage
+      ? annotatedGroups.filter((group) => !group.coveredBySubscription)
+      : annotatedGroups;
+    const groups = filterCanonicalCoverage
+      ? visibleGroups.slice(skip, skip + take)
+      : visibleGroups;
     const [
       totalGroups,
-      filteredGroups,
-      activeGroups,
+      databaseFilteredGroups,
+      databaseActiveGroups,
       subscribedGroups,
       emptyGroups,
       reviewGroups,
@@ -103,6 +138,10 @@ export async function GET(request: Request) {
         },
       }),
     ]);
+    const filteredGroupCount = filterCanonicalCoverage ? visibleGroups.length : databaseFilteredGroups;
+    const activeGroupCount = filterCanonicalCoverage
+      ? await countCanonicallyActiveGroups(enabledSubscriptions)
+      : databaseActiveGroups;
     return jsonResponse({
       groups: groups.map((group) => ({
         ...group,
@@ -115,8 +154,8 @@ export async function GET(request: Request) {
       })),
       stats: {
         totalGroups,
-        filteredGroups,
-        activeGroups,
+        filteredGroups: filteredGroupCount,
+        activeGroups: activeGroupCount,
         subscribedGroups,
         emptyGroups,
         reviewGroups,
@@ -125,9 +164,9 @@ export async function GET(request: Request) {
       page: {
         page,
         pageSize: take,
-        total: filteredGroups,
-        totalPages: Math.max(1, Math.ceil(filteredGroups / take)),
-        hasNext: skip + groups.length < filteredGroups,
+        total: filteredGroupCount,
+        totalPages: Math.max(1, Math.ceil(filteredGroupCount / take)),
+        hasNext: skip + groups.length < filteredGroupCount,
         hasPrevious: skip > 0,
       },
     });
@@ -147,6 +186,75 @@ function whereForView(view: string): Prisma.ReleaseCandidateGroupWhereInput {
     return {};
   }
   return { candidates: { some: {} }, subscriptions: { none: { enabled: true } } };
+}
+
+function shouldFilterCanonicalCoverage(view: string, status: string) {
+  return (view === "active" || view === "queue" || view === "") && status !== "SUBSCRIBED";
+}
+
+async function countCanonicallyActiveGroups(
+  enabledSubscriptions: Array<Parameters<typeof subscriptionCoverageInput>[0]>,
+) {
+  const activeGroups = await prisma.releaseCandidateGroup.findMany({
+    where: whereForView("active"),
+    include: {
+      subscriptions: {
+        where: { enabled: true },
+        select: { id: true },
+      },
+    },
+  });
+  return activeGroups.filter((group) =>
+    enabledSubscriptions.every(
+      (subscription) =>
+        subscription.candidateGroupId === group.id ||
+        !subscriptionCoversCandidateGroup(
+          subscriptionCoverageInput(subscription),
+          candidateGroupCoverageInput(group),
+        ),
+    ),
+  ).length;
+}
+
+function subscriptionCoverageInput(subscription: {
+  mediaType: MediaType;
+  title: string;
+  seasonMode?: string | null;
+  seasonNumber?: number | null;
+  candidateGroupId?: string | null;
+  candidateGroup?: {
+    mediaType: MediaType;
+    displayTitle: string;
+    normalizedTitle: string;
+    aliases?: unknown;
+    season?: number | null;
+  } | null;
+}): SubscriptionCoverageInput {
+  return {
+    mediaType: subscription.mediaType,
+    title: subscription.title,
+    seasonMode: subscription.seasonMode,
+    seasonNumber: subscription.seasonNumber,
+    candidateGroup: subscription.candidateGroup
+      ? candidateGroupCoverageInput(subscription.candidateGroup)
+      : null,
+  };
+}
+
+function candidateGroupCoverageInput(group: {
+  mediaType: MediaType;
+  displayTitle: string;
+  normalizedTitle: string;
+  aliases?: unknown;
+  season?: number | null;
+}) {
+  return {
+    mediaType: group.mediaType,
+    displayTitle: group.displayTitle,
+    normalizedTitle: group.normalizedTitle,
+    aliases: jsonStringList(group.aliases),
+    season: group.season ?? null,
+  };
 }
 
 function whereForStatus(status: string): Prisma.ReleaseCandidateGroupWhereInput {
