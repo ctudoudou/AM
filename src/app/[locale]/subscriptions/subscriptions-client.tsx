@@ -239,7 +239,6 @@ export function SubscriptionsClient({ locale }: { locale: Locale }) {
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(true);
   const [selectedGroupId, setSelectedGroupId] = useState<string | null>(null);
-  const [selectedSubscriptionId, setSelectedSubscriptionId] = useState<string | null>(null);
   const [pendingSubscription, setPendingSubscription] = useState<PendingSubscription | null>(null);
   const [subscriptionSubmitting, setSubscriptionSubmitting] = useState(false);
   const groupsWithVersions = Math.max(0, candidateStats.totalGroups - candidateStats.emptyGroups);
@@ -305,13 +304,6 @@ export function SubscriptionsClient({ locale }: { locale: Locale }) {
   const selectedGroup = useMemo(
     () => visibleGroups.find((group) => group.id === selectedGroupId) ?? visibleGroups[0] ?? null,
     [selectedGroupId, visibleGroups],
-  );
-  const selectedSubscription = useMemo(
-    () =>
-      visibleSubscriptions.find((subscription) => subscription.id === selectedSubscriptionId) ??
-      visibleSubscriptions[0] ??
-      null,
-    [selectedSubscriptionId, visibleSubscriptions],
   );
   const subscriptionPreview = useMemo(
     () =>
@@ -844,98 +836,53 @@ export function SubscriptionsClient({ locale }: { locale: Locale }) {
             <option value="MANUAL">{t.subscriptionModeManual}</option>
           </select>
         </div>
-        <div className="subscription-management-workbench">
+        <div className="subscription-table">
           {subscriptions.length === 0 ? (
             <div className="empty-panel">{t.noActiveSubscriptions}</div>
           ) : visibleSubscriptions.length === 0 ? (
             <div className="empty-panel">{t.noMatchingResults}</div>
           ) : (
-            <>
-              <div className="queue-master-list subscription-master-list">
-                {visibleSubscriptions.map((subscription) => (
-                  <button
-                    className={
-                      selectedSubscription?.id === subscription.id
-                        ? "queue-master-item active"
-                        : "queue-master-item"
-                    }
-                    key={subscription.id}
-                    onClick={() => setSelectedSubscriptionId(subscription.id)}
-                    type="button"
-                  >
-                    <span className={subscription.autoDownload ? "candidate-policy active" : "candidate-policy"}>
-                      {subscription.autoDownload ? t.subscriptionModeAuto : t.subscriptionModeManual}
-                    </span>
-                    <strong>{subscription.title}</strong>
-                    <small>
+            visibleSubscriptions.map((subscription) => (
+              <article className="subscription-table-row" key={subscription.id}>
+                <div className="subscription-table-title">
+                  <span className={subscription.autoDownload ? "candidate-policy active" : "candidate-policy"}>
+                    {subscription.autoDownload ? t.subscriptionModeAuto : t.subscriptionModeManual}
+                  </span>
+                  <div>
+                    <h3>{subscription.title}</h3>
+                    <p>
                       {formatMediaType(subscription.mediaType, t)}
                       {subscription.candidateGroup?.displayTitle &&
                       subscription.candidateGroup.displayTitle !== subscription.title
                         ? ` · ${subscription.candidateGroup.displayTitle}`
                         : ""}
-                    </small>
-                    <span className="queue-master-meta">
-                      {formatSubscriptionPolicy(subscription) || t.futureOnlyPolicy}
-                    </span>
+                    </p>
+                  </div>
+                </div>
+                <div className="subscription-table-cell">
+                  <span>{t.strategySeasonMode}</span>
+                  <strong>{formatSeasonPolicy(subscription)}</strong>
+                </div>
+                <div className="subscription-table-cell">
+                  <span>{t.strategyEpisodeMode}</span>
+                  <strong>{formatEpisodePolicy(subscription)}</strong>
+                </div>
+                <div className="subscription-table-cell subscription-table-version">
+                  <span>{t.strategySelectedVersion}</span>
+                  <strong>{formatSubscriptionPreferences(subscription) || formatBatchPolicy(subscription.batchPolicy)}</strong>
+                </div>
+                <div className="subscription-table-actions">
+                  <button
+                    className="danger-button"
+                    onClick={() => void cancelSubscription(subscription)}
+                    type="button"
+                  >
+                    <Trash2 size={14} />
+                    {t.cancelSubscription}
                   </button>
-                ))}
-              </div>
-              {selectedSubscription ? (
-                <article className="candidate-group queue-detail-panel subscription-detail-panel">
-                  <div className="candidate-heading">
-                    <div>
-                      <h2>{selectedSubscription.title}</h2>
-                      <p>
-                        {formatMediaType(selectedSubscription.mediaType, t)} ·{" "}
-                        {selectedSubscription.autoDownload
-                          ? t.subscriptionModeAuto
-                          : t.subscriptionModeManual}
-                      </p>
-                    </div>
-                    <div className="candidate-heading-actions">
-                      <span className="candidate-policy active">
-                        {selectedSubscription.enabled ? t.subscribed : t.queueStatusEmpty}
-                      </span>
-                      <button
-                        className="danger-button"
-                        onClick={() => void cancelSubscription(selectedSubscription)}
-                        type="button"
-                      >
-                        <Trash2 size={14} />
-                        {t.cancelSubscription}
-                      </button>
-                    </div>
-                  </div>
-                  <div className="queue-detail-status">
-                    <span>{formatSubscriptionPolicy(selectedSubscription) || t.futureOnlyPolicy}</span>
-                    <span>{formatBatchPolicy(selectedSubscription.batchPolicy)}</span>
-                    {selectedSubscription.candidateGroup?.displayTitle ? (
-                      <span>{selectedSubscription.candidateGroup.displayTitle}</span>
-                    ) : null}
-                  </div>
-                  <div className="subscription-detail-grid">
-                    <span>
-                      <strong>{t.strategySeasonMode}</strong>
-                      {formatSeasonPolicy(selectedSubscription)}
-                    </span>
-                    <span>
-                      <strong>{t.strategyEpisodeMode}</strong>
-                      {formatEpisodePolicy(selectedSubscription)}
-                    </span>
-                    <span>
-                      <strong>{t.strategyFallback}</strong>
-                      {selectedSubscription.fallbackPolicy === "strict"
-                        ? t.strategyFallbackStrict
-                        : t.strategyFallbackManualReview}
-                    </span>
-                    <span>
-                      <strong>{t.strategySelectedVersion}</strong>
-                      {formatSubscriptionPreferences(selectedSubscription) || t.futureOnlyPolicy}
-                    </span>
-                  </div>
-                </article>
-              ) : null}
-            </>
+                </div>
+              </article>
+            ))
           )}
         </div>
       </section>
