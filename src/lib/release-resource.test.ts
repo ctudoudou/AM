@@ -18,6 +18,16 @@ describe("classifyReleaseResource", () => {
         "[JMAX] TVアニメ「Some Anime」オリジナルサウンドトラック [CD][FLAC]",
       ).kind,
     ).toBe("NON_VIDEO");
+    expect(
+      classifyReleaseResource(
+        "[Nipponsei] Heroine Seijo Iie, All Works Maid desu (Hokori)! ED Single - Handmade [Nakamura Shuugo].zip",
+      ).kind,
+    ).toBe("NON_VIDEO");
+    expect(
+      classifyReleaseResource(
+        "[Nipponsei] Mahou Shoujo Lyrical Nanoha EXCEEDS Gun Blaze Vengeance OP Single - CRIMSON BULLET [Mizuki Nana].zip",
+      ).kind,
+    ).toBe("NON_VIDEO");
   });
 
   it("keeps playable anime releases that contain FLAC or MKV metadata", () => {
@@ -31,5 +41,6 @@ describe("classifyReleaseResource", () => {
         "[Dynamis One] IyaPan R - 06 (B-Global 1920x1080 HEVC AAC MKV)",
       ).kind,
     ).toBe("VIDEO");
+    expect(classifyReleaseResource("Some Anime Complete.zip").kind).toBe("UNKNOWN");
   });
 });

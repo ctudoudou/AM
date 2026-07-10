@@ -189,6 +189,8 @@ type CandidateEpisodeGroup = {
   variants: CandidateVariant[];
 };
 
+const SUBSCRIPTIONS_PAGE_SIZE = 12;
+
 export function SubscriptionsClient({ locale }: { locale: Locale }) {
   const t = getMessages(locale);
   const [groups, setGroups] = useState<CandidateGroup[]>([]);
@@ -202,6 +204,7 @@ export function SubscriptionsClient({ locale }: { locale: Locale }) {
   const [subscriptionQuery, setSubscriptionQuery] = useState("");
   const [subscriptionMediaType, setSubscriptionMediaType] = useState<MediaTypeFilter>("ALL");
   const [subscriptionMode, setSubscriptionMode] = useState<SubscriptionModeFilter>("ALL");
+  const [subscriptionPage, setSubscriptionPage] = useState(1);
   const [candidateQuery, setCandidateQuery] = useState("");
   const [candidateMediaType, setCandidateMediaType] = useState<MediaTypeFilter>("ALL");
   const [candidateStatus, setCandidateStatus] = useState<CandidateStatusFilter>("ALL");
@@ -238,6 +241,8 @@ export function SubscriptionsClient({ locale }: { locale: Locale }) {
   const [status, setStatus] = useState("");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(true);
+  const [candidateLoading, setCandidateLoading] = useState(true);
+  const [candidateError, setCandidateError] = useState("");
   const [selectedGroupId, setSelectedGroupId] = useState<string | null>(null);
   const [pendingSubscription, setPendingSubscription] = useState<PendingSubscription | null>(null);
   const [subscriptionSubmitting, setSubscriptionSubmitting] = useState(false);
@@ -259,6 +264,15 @@ export function SubscriptionsClient({ locale }: { locale: Locale }) {
       })
       .sort((a, b) => a.title.localeCompare(b.title, locale));
   }, [locale, subscriptionMediaType, subscriptionMode, subscriptionQuery, subscriptions]);
+  const subscriptionTotalPages = Math.max(
+    1,
+    Math.ceil(visibleSubscriptions.length / SUBSCRIPTIONS_PAGE_SIZE),
+  );
+  const currentSubscriptionPage = Math.min(subscriptionPage, subscriptionTotalPages);
+  const pagedSubscriptions = useMemo(() => {
+    const start = (currentSubscriptionPage - 1) * SUBSCRIPTIONS_PAGE_SIZE;
+    return visibleSubscriptions.slice(start, start + SUBSCRIPTIONS_PAGE_SIZE);
+  }, [currentSubscriptionPage, visibleSubscriptions]);
   const visibleGroups = useMemo(() => {
     const subscriptionGroupIds = new Set(
       subscriptions
@@ -317,29 +331,15 @@ export function SubscriptionsClient({ locale }: { locale: Locale }) {
     [pendingSubscription],
   );
 
-  const load = useCallback(async () => {
+  const loadBaseData = useCallback(async () => {
     try {
-      const params = subscriptionCandidateParams({
-        filter: candidateFilter,
-        mediaType: candidateMediaType,
-        page: candidatePage,
-        query: candidateQuery,
-        sort: candidateSort,
-        status: candidateStatus,
-      });
-      const [candidateResponse, rssResponse, subscriptionsResponse] = await Promise.all([
-        fetch(`/api/subscription-candidates?${params}`),
+      const [rssResponse, subscriptionsResponse] = await Promise.all([
         fetch("/api/rss-sources"),
         fetch("/api/subscriptions"),
       ]);
-      if (!candidateResponse.ok || !rssResponse.ok || !subscriptionsResponse.ok) {
+      if (!rssResponse.ok || !subscriptionsResponse.ok) {
         throw new Error(t.subscriptionsLoadError);
       }
-      const candidateBody = (await candidateResponse.json()) as {
-        groups: CandidateGroup[];
-        stats?: CandidateStats;
-        page?: CandidatePage;
-      };
       const rssBody = (await rssResponse.json()) as {
         sources: RssSource[];
         queueStatus?: {
@@ -350,28 +350,6 @@ export function SubscriptionsClient({ locale }: { locale: Locale }) {
       const subscriptionsBody = (await subscriptionsResponse.json()) as {
         subscriptions: Subscription[];
       };
-      setGroups(candidateBody.groups);
-      setCandidateStats(
-        candidateBody.stats ?? {
-          totalGroups: candidateBody.groups.length,
-          filteredGroups: candidateBody.groups.length,
-          activeGroups: candidateBody.groups.filter((group) => group.candidates.length > 0).length,
-          subscribedGroups: 0,
-          emptyGroups: candidateBody.groups.filter((group) => group.candidates.length === 0).length,
-          reviewGroups: candidateBody.groups.filter((group) => group.reviewRequired).length,
-          ungroupedCandidates: 0,
-        },
-      );
-      setCandidatePageInfo(
-        candidateBody.page ?? {
-          page: candidatePage,
-          pageSize: candidateBody.groups.length,
-          total: candidateBody.groups.length,
-          totalPages: 1,
-          hasNext: false,
-          hasPrevious: candidatePage > 1,
-        },
-      );
       setRssSources(rssBody.sources);
       setQueueRuns(rssBody.queueStatus ?? { lastFetchRun: null, lastGroupRun: null });
       setSubscriptions(subscriptionsBody.subscriptions);
@@ -380,6 +358,61 @@ export function SubscriptionsClient({ locale }: { locale: Locale }) {
       setError(loadError instanceof Error ? loadError.message : t.subscriptionsLoadError);
     } finally {
       setLoading(false);
+    }
+  }, [t.subscriptionsLoadError]);
+
+  const loadCandidates = useCallback(async (signal?: AbortSignal) => {
+    setCandidateLoading(true);
+    try {
+      const params = subscriptionCandidateParams({
+        filter: candidateFilter,
+        mediaType: candidateMediaType,
+        page: candidatePage,
+        query: candidateQuery,
+        sort: candidateSort,
+        status: candidateStatus,
+      });
+      const response = await fetch(`/api/subscription-candidates?${params}`, { signal });
+      if (!response.ok) {
+        throw new Error(t.subscriptionsLoadError);
+      }
+      const body = (await response.json()) as {
+        groups: CandidateGroup[];
+        stats?: CandidateStats;
+        page?: CandidatePage;
+      };
+      setGroups(body.groups);
+      setCandidateStats(
+        body.stats ?? {
+          totalGroups: body.groups.length,
+          filteredGroups: body.groups.length,
+          activeGroups: body.groups.filter((group) => group.candidates.length > 0).length,
+          subscribedGroups: 0,
+          emptyGroups: body.groups.filter((group) => group.candidates.length === 0).length,
+          reviewGroups: body.groups.filter((group) => group.reviewRequired).length,
+          ungroupedCandidates: 0,
+        },
+      );
+      setCandidatePageInfo(
+        body.page ?? {
+          page: candidatePage,
+          pageSize: body.groups.length,
+          total: body.groups.length,
+          totalPages: 1,
+          hasNext: false,
+          hasPrevious: candidatePage > 1,
+        },
+      );
+      setCandidateError("");
+    } catch (loadError) {
+      if (signal?.aborted) {
+        return;
+      }
+      setCandidateError(loadError instanceof Error ? loadError.message : t.subscriptionsLoadError);
+    } finally {
+      if (!signal?.aborted) {
+        setCandidateLoading(false);
+      }
     }
   }, [
     candidateFilter,
@@ -391,12 +424,26 @@ export function SubscriptionsClient({ locale }: { locale: Locale }) {
     t.subscriptionsLoadError,
   ]);
 
+  const refreshData = useCallback(async () => {
+    await Promise.all([loadBaseData(), loadCandidates()]);
+  }, [loadBaseData, loadCandidates]);
+
   useEffect(() => {
-    const timeout = window.setTimeout(() => {
-      void load();
-    }, 0);
+    const timeout = window.setTimeout(() => void loadBaseData(), 0);
     return () => window.clearTimeout(timeout);
-  }, [load]);
+  }, [loadBaseData]);
+
+  useEffect(() => {
+    const controller = new AbortController();
+    const timeout = window.setTimeout(
+      () => void loadCandidates(controller.signal),
+      candidateQuery ? 250 : 0,
+    );
+    return () => {
+      window.clearTimeout(timeout);
+      controller.abort();
+    };
+  }, [candidateQuery, loadCandidates]);
 
   async function runJob(job: string) {
     setStatus("");
@@ -411,7 +458,7 @@ export function SubscriptionsClient({ locale }: { locale: Locale }) {
       return;
     }
     setStatus(t.jobQueued);
-    await load();
+    await refreshData();
   }
 
   async function addRssSource() {
@@ -431,7 +478,7 @@ export function SubscriptionsClient({ locale }: { locale: Locale }) {
 
     setRssDraft({ name: "", url: "", mediaType: "ANIME" });
     setStatus(t.rssSourceAdded);
-    await load();
+    await refreshData();
   }
 
   async function toggleRssSource(source: RssSource) {
@@ -441,7 +488,7 @@ export function SubscriptionsClient({ locale }: { locale: Locale }) {
       body: JSON.stringify({ enabled: !source.enabled }),
     });
     if (response.ok) {
-      await load();
+      await refreshData();
     }
   }
 
@@ -450,7 +497,7 @@ export function SubscriptionsClient({ locale }: { locale: Locale }) {
       method: "DELETE",
     });
     if (response.ok) {
-      await load();
+      await refreshData();
     }
   }
 
@@ -475,7 +522,7 @@ export function SubscriptionsClient({ locale }: { locale: Locale }) {
     setMagnetUrl("");
     setMagnetMediaType("");
     setStatus(t.manualIntakeCreated);
-    await load();
+    await refreshData();
   }
 
   async function addTorrent() {
@@ -504,7 +551,7 @@ export function SubscriptionsClient({ locale }: { locale: Locale }) {
     setTorrentMediaType("");
     setTorrentFile(null);
     setStatus(t.manualIntakeCreated);
-    await load();
+    await refreshData();
   }
 
   function openSubscriptionDialog(group: CandidateGroup, candidate?: Candidate) {
@@ -579,7 +626,7 @@ export function SubscriptionsClient({ locale }: { locale: Locale }) {
             : message,
         );
         setPendingSubscription(null);
-        await load();
+        await refreshData();
       } else {
         const body = await response.json().catch(() => null);
         setError(body?.message || t.subscriptionCreateError);
@@ -597,7 +644,7 @@ export function SubscriptionsClient({ locale }: { locale: Locale }) {
     });
     if (response.ok) {
       setStatus(t.downloadCreated);
-      await load();
+      await refreshData();
     } else {
       setError(t.downloadCreateError);
     }
@@ -611,7 +658,7 @@ export function SubscriptionsClient({ locale }: { locale: Locale }) {
     });
     if (response.ok) {
       setStatus(t.subscriptionCanceled);
-      await load();
+      await refreshData();
     } else {
       setError(t.subscriptionCancelError);
     }
@@ -809,14 +856,20 @@ export function SubscriptionsClient({ locale }: { locale: Locale }) {
         <div className="subscription-controls">
           <label className="settings-search-field">
             <input
-              onChange={(event) => setSubscriptionQuery(event.target.value)}
+              onChange={(event) => {
+                setSubscriptionPage(1);
+                setSubscriptionQuery(event.target.value);
+              }}
               placeholder={t.filterSubscriptions}
               value={subscriptionQuery}
             />
           </label>
           <select
             aria-label={t.mediaType}
-            onChange={(event) => setSubscriptionMediaType(event.target.value as MediaTypeFilter)}
+            onChange={(event) => {
+              setSubscriptionPage(1);
+              setSubscriptionMediaType(event.target.value as MediaTypeFilter);
+            }}
             value={subscriptionMediaType}
           >
             <option value="ALL">{t.allMediaTypes}</option>
@@ -828,7 +881,10 @@ export function SubscriptionsClient({ locale }: { locale: Locale }) {
           </select>
           <select
             aria-label={t.subscriptionMode}
-            onChange={(event) => setSubscriptionMode(event.target.value as SubscriptionModeFilter)}
+            onChange={(event) => {
+              setSubscriptionPage(1);
+              setSubscriptionMode(event.target.value as SubscriptionModeFilter);
+            }}
             value={subscriptionMode}
           >
             <option value="ALL">{t.subscriptionModeAll}</option>
@@ -842,7 +898,7 @@ export function SubscriptionsClient({ locale }: { locale: Locale }) {
           ) : visibleSubscriptions.length === 0 ? (
             <div className="empty-panel">{t.noMatchingResults}</div>
           ) : (
-            visibleSubscriptions.map((subscription) => (
+            pagedSubscriptions.map((subscription) => (
               <article className="subscription-table-row" key={subscription.id}>
                 <div className="subscription-table-title">
                   <span className={subscription.autoDownload ? "candidate-policy active" : "candidate-policy"}>
@@ -861,33 +917,62 @@ export function SubscriptionsClient({ locale }: { locale: Locale }) {
                 </div>
                 <div className="subscription-table-cell">
                   <span>{t.strategySeasonMode}</span>
-                  <strong>{formatSeasonPolicy(subscription)}</strong>
+                  <strong>{formatSeasonPolicy(subscription, t, locale)}</strong>
                 </div>
                 <div className="subscription-table-cell">
                   <span>{t.strategyEpisodeMode}</span>
-                  <strong>{formatEpisodePolicy(subscription)}</strong>
+                  <strong>{formatEpisodePolicy(subscription, t, locale)}</strong>
                 </div>
                 <div className="subscription-table-cell subscription-table-version">
                   <span>{t.strategySelectedVersion}</span>
-                  <strong>{formatSubscriptionPreferences(subscription) || formatBatchPolicy(subscription.batchPolicy)}</strong>
+                  <strong>
+                    {formatSubscriptionPreferences(subscription) || formatBatchPolicy(subscription.batchPolicy, t)}
+                  </strong>
                 </div>
                 <div className="subscription-table-actions">
                   <button
-                    className="danger-button"
+                    aria-label={t.cancelSubscription}
+                    className="danger-button icon-button"
                     onClick={() => void cancelSubscription(subscription)}
+                    title={t.cancelSubscription}
                     type="button"
                   >
                     <Trash2 size={14} />
-                    {t.cancelSubscription}
                   </button>
                 </div>
               </article>
             ))
           )}
         </div>
+        {subscriptionTotalPages > 1 ? (
+          <div className="candidate-pagination subscription-pagination">
+            <span>
+              {t.queuePage} {currentSubscriptionPage} / {subscriptionTotalPages} · {t.queueShowing}{" "}
+              {(currentSubscriptionPage - 1) * SUBSCRIPTIONS_PAGE_SIZE + 1}-
+              {Math.min(currentSubscriptionPage * SUBSCRIPTIONS_PAGE_SIZE, visibleSubscriptions.length)}
+              {" / "}{visibleSubscriptions.length}
+            </span>
+            <div>
+              <button
+                disabled={currentSubscriptionPage <= 1}
+                onClick={() => setSubscriptionPage((page) => Math.max(1, page - 1))}
+                type="button"
+              >
+                {t.queuePrevious}
+              </button>
+              <button
+                disabled={currentSubscriptionPage >= subscriptionTotalPages}
+                onClick={() => setSubscriptionPage((page) => Math.min(subscriptionTotalPages, page + 1))}
+                type="button"
+              >
+                {t.queueNext}
+              </button>
+            </div>
+          </div>
+        ) : null}
       </section>
 
-      <section className="candidate-board">
+      <section aria-busy={candidateLoading} className="candidate-board">
         <div className="candidate-board-heading">
           <div>
             <h2>{t.subscriptionQueue}</h2>
@@ -896,6 +981,12 @@ export function SubscriptionsClient({ locale }: { locale: Locale }) {
               {groupsWithVersions} {t.withVersions} ·{" "}
               {candidateStats.ungroupedCandidates} {t.ungroupedCandidates}
             </p>
+            {candidateLoading ? (
+              <span className="candidate-loading-status">
+                <Loader2 size={13} />
+                {t.loading}
+              </span>
+            ) : null}
           </div>
           <div className="candidate-board-tools">
             <div className="filter-tabs">
@@ -981,7 +1072,13 @@ export function SubscriptionsClient({ locale }: { locale: Locale }) {
           <span>{t.queueStatusReview}: {candidateStats.reviewGroups}</span>
           <span>{t.futureOnly}: {candidateStats.emptyGroups}</span>
         </div>
-        {visibleGroups.length === 0 ? (
+        {candidateError ? <div className="settings-alert candidate-load-error">{candidateError}</div> : null}
+        {candidateLoading && groups.length === 0 ? (
+          <div className="candidate-initial-loading">
+            <Loader2 size={16} />
+            {t.loading}
+          </div>
+        ) : candidateError && groups.length === 0 ? null : visibleGroups.length === 0 ? (
           <div className="empty-panel">
             {groups.length === 0 ? t.noCandidates : t.noMatchingResults}
           </div>
@@ -1081,8 +1178,8 @@ export function SubscriptionsClient({ locale }: { locale: Locale }) {
                       {groupSubscriptions.map((subscription) => (
                         <span key={subscription.id}>
                           {subscription.autoDownload ? t.subscriptionModeAuto : t.subscriptionModeManual}
-                          {formatSubscriptionPolicy(subscription)
-                            ? ` · ${formatSubscriptionPolicy(subscription)}`
+                          {formatSubscriptionPolicy(subscription, t, locale)
+                            ? ` · ${formatSubscriptionPolicy(subscription, t, locale)}`
                             : ""}
                         </span>
                       ))}
@@ -1155,28 +1252,30 @@ export function SubscriptionsClient({ locale }: { locale: Locale }) {
             })()}
           </div>
         ) : null}
-        <div className="candidate-pagination">
-          <span>
-            {t.queuePage} {candidatePageInfo.page} / {candidatePageInfo.totalPages} ·{" "}
-            {t.queueShowing} {pageRangeLabel(candidatePageInfo)}
-          </span>
-          <div>
-            <button
-              disabled={!candidatePageInfo.hasPrevious}
-              onClick={() => setCandidatePage((page) => Math.max(1, page - 1))}
-              type="button"
-            >
-              {t.queuePrevious}
-            </button>
-            <button
-              disabled={!candidatePageInfo.hasNext}
-              onClick={() => setCandidatePage((page) => page + 1)}
-              type="button"
-            >
-              {t.queueNext}
-            </button>
+        {!candidateLoading || groups.length > 0 ? (
+          <div className="candidate-pagination">
+            <span>
+              {t.queuePage} {candidatePageInfo.page} / {candidatePageInfo.totalPages} ·{" "}
+              {t.queueShowing} {pageRangeLabel(candidatePageInfo)}
+            </span>
+            <div>
+              <button
+                disabled={!candidatePageInfo.hasPrevious}
+                onClick={() => setCandidatePage((page) => Math.max(1, page - 1))}
+                type="button"
+              >
+                {t.queuePrevious}
+              </button>
+              <button
+                disabled={!candidatePageInfo.hasNext}
+                onClick={() => setCandidatePage((page) => page + 1)}
+                type="button"
+              >
+                {t.queueNext}
+              </button>
+            </div>
           </div>
-        </div>
+        ) : null}
       </section>
       {pendingSubscription ? (
         <div
@@ -1821,33 +1920,43 @@ function candidateMetaLabels(locale: Locale) {
   };
 }
 
-function formatSubscriptionPolicy(subscription: Subscription) {
+function formatSubscriptionPolicy(
+  subscription: Subscription,
+  t: ReturnType<typeof getMessages>,
+  locale: Locale,
+) {
   return [
-    formatSubscriptionScope(subscription),
-    formatBatchPolicy(subscription.batchPolicy),
-    subscription.preferredGroup,
-    subscription.preferredReleaseProfile,
-    subscription.preferredSubtitleLanguage,
-    subscription.preferredSourceKind,
-    subscription.preferredResolution,
-    subscription.preferredCodec,
-    subscription.preferredAudio,
-    subscription.autoDownload ? "Auto" : "Manual",
+    formatSubscriptionScope(subscription, t, locale),
+    formatBatchPolicy(subscription.batchPolicy, t),
+    ...subscriptionPreferenceParts(subscription),
+    subscription.autoDownload ? t.subscriptionModeAuto : t.subscriptionModeManual,
   ]
     .filter(Boolean)
     .join(" · ");
 }
 
-function formatSeasonPolicy(subscription: Subscription) {
-  return formatSeasonScope(subscriptionStrategyView(subscription));
+function formatSeasonPolicy(
+  subscription: Subscription,
+  t: ReturnType<typeof getMessages>,
+  locale: Locale,
+) {
+  return formatSeasonScope(subscriptionStrategyView(subscription), t, locale);
 }
 
-function formatEpisodePolicy(subscription: Subscription) {
-  return formatEpisodeScope(subscriptionStrategyView(subscription));
+function formatEpisodePolicy(
+  subscription: Subscription,
+  t: ReturnType<typeof getMessages>,
+  locale: Locale,
+) {
+  return formatEpisodeScope(subscriptionStrategyView(subscription), t, locale);
 }
 
 function formatSubscriptionPreferences(subscription: Subscription) {
-  return [
+  return subscriptionPreferenceParts(subscription).join(" · ");
+}
+
+function subscriptionPreferenceParts(subscription: Subscription) {
+  return uniqueDisplayParts([
     subscription.preferredGroup,
     subscription.preferredReleaseProfile,
     subscription.preferredSubtitleLanguage,
@@ -1855,9 +1964,32 @@ function formatSubscriptionPreferences(subscription: Subscription) {
     subscription.preferredResolution,
     subscription.preferredCodec,
     subscription.preferredAudio,
-  ]
-    .filter(Boolean)
-    .join(" · ");
+  ]);
+}
+
+function uniqueDisplayParts(values: Array<string | null | undefined>) {
+  const seen = new Set<string>();
+  const seenAtoms = new Set<string>();
+  return values.flatMap((value) => {
+    const text = value?.trim();
+    if (!text) {
+      return [];
+    }
+    const key = text.toLocaleLowerCase();
+    if (seen.has(key)) {
+      return [];
+    }
+    const atoms = key
+      .split(/\s*(?:\/|／|·|\||｜|,|，)\s*/)
+      .map((atom) => atom.trim())
+      .filter(Boolean);
+    if (atoms.length > 0 && atoms.every((atom) => seenAtoms.has(atom))) {
+      return [];
+    }
+    seen.add(key);
+    atoms.forEach((atom) => seenAtoms.add(atom));
+    return [text];
+  });
 }
 
 function buildSubscriptionStrategy(group: CandidateGroup, candidate?: Candidate): SubscriptionStrategyDraft {
@@ -1874,9 +2006,13 @@ function buildSubscriptionStrategy(group: CandidateGroup, candidate?: Candidate)
   };
 }
 
-function formatSubscriptionScope(subscription: Subscription) {
+function formatSubscriptionScope(
+  subscription: Subscription,
+  t: ReturnType<typeof getMessages>,
+  locale: Locale,
+) {
   const strategy = subscriptionStrategyView(subscription);
-  return `${formatSeasonScope(strategy)} · ${formatEpisodeScope(strategy)}`;
+  return `${formatSeasonScope(strategy, t, locale)} · ${formatEpisodeScope(strategy, t, locale)}`;
 }
 
 function subscriptionStrategyView(subscription: Subscription) {
@@ -1902,42 +2038,57 @@ function subscriptionStrategyView(subscription: Subscription) {
   } satisfies SubscriptionStrategyDraft;
 }
 
-function formatSeasonScope(strategy: Pick<SubscriptionStrategyDraft, "seasonMode" | "seasonNumber">) {
+function formatSeasonScope(
+  strategy: Pick<SubscriptionStrategyDraft, "seasonMode" | "seasonNumber">,
+  t: ReturnType<typeof getMessages>,
+  locale?: Locale,
+) {
   if (strategy.seasonMode === "latest") {
-    return "Latest season";
+    return t.strategySeasonLatest;
   }
   if (strategy.seasonMode === "specific" && strategy.seasonNumber) {
-    return `Season ${String(strategy.seasonNumber).padStart(2, "0")}`;
+    if (locale !== "en") {
+      return `第 ${String(strategy.seasonNumber).padStart(2, "0")} 季`;
+    }
+    return `${t.strategySeasonSpecific} ${String(strategy.seasonNumber).padStart(2, "0")}`;
   }
-  return "Unknown season requires review";
+  return t.strategySeasonUnknown;
 }
 
 function formatEpisodeScope(
   strategy: Pick<SubscriptionStrategyDraft, "episodeMode" | "episodeStart" | "episodeEnd">,
+  t: ReturnType<typeof getMessages>,
+  locale?: Locale,
 ) {
   if (strategy.episodeMode === "all") {
-    return "All episodes";
+    return t.strategyEpisodeAll;
   }
   if (strategy.episodeMode === "missing_only") {
-    return "Missing episodes only";
+    return t.strategyEpisodeMissingOnly;
   }
   if (strategy.episodeMode === "range") {
-    return `Episodes ${strategy.episodeStart ?? "?"}-${strategy.episodeEnd ?? "?"}`;
+    if (locale !== "en") {
+      return `第 ${strategy.episodeStart ?? "?"}-${strategy.episodeEnd ?? "?"} 集`;
+    }
+    return `${t.strategyEpisodeRange} ${strategy.episodeStart ?? "?"}-${strategy.episodeEnd ?? "?"}`;
   }
   if (strategy.episodeStart) {
-    return `Future episodes from ${strategy.episodeStart}`;
+    if (locale !== "en") {
+      return `从第 ${strategy.episodeStart} 集后续匹配`;
+    }
+    return `${t.strategyEpisodeFuture} ${strategy.episodeStart}`;
   }
-  return "Future episodes";
+  return t.strategyFutureOnlyMode;
 }
 
-function formatBatchPolicy(policy?: string | null) {
+function formatBatchPolicy(policy: string | null | undefined, t: ReturnType<typeof getMessages>) {
   if (policy === "reject") {
-    return "Reject batches";
+    return t.strategyBatchReject;
   }
   if (policy === "allow") {
-    return "Allow batches";
+    return t.strategyBatchAllow;
   }
-  return "Review batches";
+  return t.strategyBatchReview;
 }
 
 function candidateMatchesSubscription(candidate: Candidate, subscription: Subscription) {

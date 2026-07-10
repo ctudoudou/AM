@@ -16,6 +16,7 @@ const episodePattern =
 const sampleRatePattern = /\b(?:44\.1|48|88\.2|96|176\.4|192)\s?kHz\b/i;
 const bitDepthPattern = /\b(?:16|24|32)\s?bit\b/i;
 const audioFormatPattern = /\b(?:flac|mp3|alac|wav|ape|m4a|cue|log)\b/i;
+const archiveExtensionPattern = /\.(?:zip|rar|7z)$/i;
 const musicReleasePattern =
   /(?:hi[\s-]?res|lossless|original soundtrack|soundtrack|ost|character song|album|single|ドラマcd|特典cd|オリジナルサウンドトラック|サウンドトラック|キャラクターソング|主題歌|挿入歌|opテーマ|edテーマ|專輯|专辑|單曲|单曲|广播剧|廣播劇)/i;
 const discPattern = /(?:^|[\s._\-[({])(?:cd|disc)\s?\d?(?:$|[\s._\-\])}])/i;
@@ -42,6 +43,7 @@ export function classifyReleaseResource(rawTitle: string): ReleaseResourceClassi
     sampleRatePattern.test(title),
     bitDepthPattern.test(title),
     audioFormatPattern.test(title),
+    archiveExtensionPattern.test(title),
     musicReleasePattern.test(title),
     discPattern.test(title),
     datedMusicReleasePattern.test(title) && (audioFormatPattern.test(title) || musicReleasePattern.test(title)),

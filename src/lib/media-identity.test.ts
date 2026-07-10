@@ -1,7 +1,10 @@
 import { describe, expect, it } from "vitest";
 import {
+  createMediaIdentity,
   createMediaIdentityKeys,
   mediaIdentitiesOverlap,
+  prepareSubscriptionCoverage,
+  preparedSubscriptionCoversCandidateGroup,
   subscriptionCoversCandidateGroup,
 } from "./media-identity";
 
@@ -159,5 +162,48 @@ describe("media identity", () => {
         },
       ),
     ).toBe(false);
+  });
+
+  it("keeps prepared subscription coverage equivalent to direct matching", () => {
+    const subscription = {
+      mediaType: "ANIME" as const,
+      title: "葬送的芙莉莲 / Sousou no Frieren",
+      seasonMode: "specific",
+      seasonNumber: 2,
+      candidateGroup: {
+        mediaType: "ANIME" as const,
+        displayTitle: "葬送的芙莉莲 第二季 / Sousou no Frieren Season 2",
+        normalizedTitle: "葬送的芙莉莲 sousou no frieren",
+        aliases: ["Sousou no Frieren S2"],
+        season: 2,
+      },
+    };
+    const groups = [
+      {
+        mediaType: "ANIME" as const,
+        displayTitle: "葬送的芙莉莲 第二季",
+        normalizedTitle: "葬送的芙莉莲",
+        season: 2,
+      },
+      {
+        mediaType: "ANIME" as const,
+        displayTitle: "葬送的芙莉莲",
+        normalizedTitle: "葬送的芙莉莲",
+        season: 1,
+      },
+      {
+        mediaType: "ANIME" as const,
+        displayTitle: "无关作品",
+        normalizedTitle: "无关作品",
+        season: 2,
+      },
+    ];
+    const prepared = prepareSubscriptionCoverage(subscription);
+
+    expect(
+      groups.map((group) =>
+        preparedSubscriptionCoversCandidateGroup(prepared, createMediaIdentity(group)),
+      ),
+    ).toEqual(groups.map((group) => subscriptionCoversCandidateGroup(subscription, group)));
   });
 });

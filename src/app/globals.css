@@ -1100,8 +1100,6 @@ a {
 
 .subscription-table {
   display: grid;
-  max-height: 520px;
-  overflow: auto;
   border: 1px solid rgba(255, 255, 255, 0.055);
   border-radius: 14px;
   background: rgba(255, 255, 255, 0.018);
@@ -1175,6 +1173,49 @@ a {
 .subscription-table-actions {
   display: flex;
   justify-content: flex-end;
+}
+
+.subscription-table-actions .danger-button.icon-button {
+  width: 34px;
+  min-width: 34px;
+  padding: 0;
+}
+
+.subscription-pagination {
+  margin-top: 12px;
+}
+
+.candidate-loading-status {
+  display: inline-flex;
+  width: fit-content;
+  align-items: center;
+  gap: 6px;
+  margin-top: 6px;
+  color: var(--text-muted);
+  font-size: 12px;
+  line-height: 18px;
+}
+
+.candidate-loading-status svg {
+  animation: spin 0.9s linear infinite;
+}
+
+.candidate-load-error {
+  margin: 0;
+}
+
+.candidate-initial-loading {
+  display: flex;
+  min-height: 160px;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  color: var(--text-muted);
+  font-size: 13px;
+}
+
+.candidate-initial-loading svg {
+  animation: spin 0.9s linear infinite;
 }
 
 .panel-count {
@@ -4474,7 +4515,7 @@ a {
     justify-content: stretch;
   }
 
-  .subscription-table-actions .danger-button {
+  .subscription-table-actions .danger-button:not(.icon-button) {
     width: 100%;
     justify-content: center;
   }

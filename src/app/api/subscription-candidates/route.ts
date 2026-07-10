@@ -1,12 +1,20 @@
-import type { MediaType, Prisma } from "@prisma/client";
+import { Prisma, type MediaType } from "@prisma/client";
 import { jsonError, jsonResponse } from "@/lib/api";
 import { prisma } from "@/lib/db";
 import {
+  createMediaIdentity,
   jsonStringList,
-  subscriptionCoversCandidateGroup,
+  prepareSubscriptionCoverage,
+  preparedSubscriptionCoversCandidateGroup,
+  type PreparedSubscriptionCoverage,
   type SubscriptionCoverageInput,
 } from "@/lib/media-identity";
+import { classifyReleaseResource } from "@/lib/release-resource";
 import { describeSubscriptionQueueGroup } from "@/lib/subscription-queue-state";
+import {
+  latestCandidateWindowSize,
+  shouldUseLatestCandidateWindow,
+} from "@/lib/subscription-candidate-window";
 import { candidateIsBatch } from "@/lib/subscription-strategy";
 
 export const dynamic = "force-dynamic";
@@ -34,23 +42,46 @@ export async function GET(request: Request) {
     const viewWhere = whereForView(view);
     const filterCanonicalCoverage = shouldFilterCanonicalCoverage(view, status);
     const postProcessPagination = filterCanonicalCoverage || category !== "ALL" || sort === "LATEST";
+    const fastCandidateWindowPromise = shouldUseLatestCandidateWindow({
+      category,
+      filterCanonicalCoverage,
+      mediaType,
+      query,
+      sort,
+      status,
+    })
+      ? latestCandidateGroupWindow({
+          category,
+          skip,
+          sourceScope,
+          take,
+        })
+      : Promise.resolve(null);
     const candidateWhere = candidateWhereForSourceScope(sourceScope);
+    const [fastCandidateWindow, enabledSubscriptions] = await Promise.all([
+      fastCandidateWindowPromise,
+      prisma.subscription.findMany({
+        where: { enabled: true, candidateGroupId: { not: null } },
+        include: { candidateGroup: true },
+      }),
+    ]);
+    const preparedSubscriptions = enabledSubscriptions.map((subscription) => ({
+      subscription,
+      coverage: prepareSubscriptionCoverage(subscriptionCoverageInput(subscription)),
+    }));
     const where = mergeWhere(
       viewWhere,
       whereForSourceScope(sourceScope),
+      fastCandidateWindow ? { id: { in: fastCandidateWindow.ids } } : {},
       mediaType ? { mediaType } : {},
       whereForStatus(status),
       whereForQuery(query),
     );
-    const enabledSubscriptions = await prisma.subscription.findMany({
-      where: { enabled: true, candidateGroupId: { not: null } },
-      include: { candidateGroup: true },
-    });
     const rawGroups = await prisma.releaseCandidateGroup.findMany({
       where,
       orderBy: orderByForSort(sort),
       skip: postProcessPagination ? 0 : skip,
-      take: postProcessPagination ? undefined : take,
+      take: postProcessPagination || fastCandidateWindow ? undefined : take,
       include: {
         _count: { select: { candidates: true, subscriptions: true } },
         subscriptions: {
@@ -95,30 +126,37 @@ export async function GET(request: Request) {
       },
     });
     const annotatedGroups = rawGroups.map((group) => {
-      const coveredBySubscription = enabledSubscriptions.find((subscription) =>
-        subscription.candidateGroupId !== group.id &&
-        subscriptionCoversCandidateGroup(
-          subscriptionCoverageInput(subscription),
-          candidateGroupCoverageInput(group),
-        ),
+      const candidates = group.candidates.filter(
+        (candidate) => classifyReleaseResource(candidate.rawTitle).kind !== "NON_VIDEO",
       );
+      const groupIdentity = createMediaIdentity(candidateGroupCoverageInput(group));
+      const coveredBySubscription = preparedSubscriptions.find(
+        ({ coverage, subscription }) =>
+          subscription.candidateGroupId !== group.id &&
+          preparedSubscriptionCoversCandidateGroup(
+            coverage,
+            groupIdentity,
+          ),
+      );
+      const coveringSubscription = coveredBySubscription?.subscription;
       return {
         ...group,
+        candidates,
         _count: {
           ...group._count,
-          candidates: group.candidates.length,
+          candidates: candidates.length,
         },
-        coveredBySubscription: coveredBySubscription
+        coveredBySubscription: coveringSubscription
           ? {
-              id: coveredBySubscription.id,
-              title: coveredBySubscription.title,
-              candidateGroupId: coveredBySubscription.candidateGroupId,
+              id: coveringSubscription.id,
+              title: coveringSubscription.title,
+              candidateGroupId: coveringSubscription.candidateGroupId,
             }
           : null,
       };
     });
     const visibleGroups = filterCanonicalCoverage
-      ? annotatedGroups.filter((group) => !group.coveredBySubscription)
+      ? annotatedGroups.filter((group) => !group.coveredBySubscription && group.candidates.length > 0)
       : annotatedGroups;
     const categorizedGroups = visibleGroups.filter((group) => groupMatchesCategory(group, category));
     const sortedGroups = sortGroupsForResponse(categorizedGroups, sort);
@@ -151,10 +189,16 @@ export async function GET(request: Request) {
         },
       }),
     ]);
-    const filteredGroupCount = postProcessPagination ? categorizedGroups.length : databaseFilteredGroups;
+    const filteredGroupCount = fastCandidateWindow
+      ? fastCandidateWindow.total
+      : postProcessPagination
+        ? categorizedGroups.length
+        : databaseFilteredGroups;
     const activeGroupCount = filterCanonicalCoverage
-      ? await countCanonicallyActiveGroups(enabledSubscriptions, sourceScope)
+      ? await countCanonicallyActiveGroups(preparedSubscriptions, sourceScope)
       : databaseActiveGroups;
+    const responseGroupCount =
+      fastCandidateWindow && category === "ALL" ? activeGroupCount : filteredGroupCount;
     return jsonResponse({
       groups: groups.map((group) => ({
         ...group,
@@ -167,7 +211,7 @@ export async function GET(request: Request) {
       })),
       stats: {
         totalGroups,
-        filteredGroups: filteredGroupCount,
+        filteredGroups: responseGroupCount,
         activeGroups: activeGroupCount,
         subscribedGroups,
         emptyGroups,
@@ -177,9 +221,9 @@ export async function GET(request: Request) {
       page: {
         page,
         pageSize: take,
-        total: filteredGroupCount,
-        totalPages: Math.max(1, Math.ceil(filteredGroupCount / take)),
-        hasNext: skip + groups.length < filteredGroupCount,
+        total: responseGroupCount,
+        totalPages: Math.max(1, Math.ceil(responseGroupCount / take)),
+        hasNext: skip + groups.length < responseGroupCount,
         hasPrevious: skip > 0,
       },
     });
@@ -193,12 +237,18 @@ function whereForView(view: string): Prisma.ReleaseCandidateGroupWhereInput {
     return { subscriptions: { some: { enabled: true } } };
   }
   if (view === "empty") {
-    return { candidates: { none: {} }, subscriptions: { none: { enabled: true } } };
+    return {
+      candidates: { none: { status: { not: "IGNORED" } } },
+      subscriptions: { none: { enabled: true } },
+    };
   }
   if (view === "all") {
     return {};
   }
-  return { candidates: { some: {} }, subscriptions: { none: { enabled: true } } };
+  return {
+    candidates: { some: { status: { not: "IGNORED" } } },
+    subscriptions: { none: { enabled: true } },
+  };
 }
 
 function shouldFilterCanonicalCoverage(view: string, status: string) {
@@ -206,29 +256,34 @@ function shouldFilterCanonicalCoverage(view: string, status: string) {
 }
 
 async function countCanonicallyActiveGroups(
-  enabledSubscriptions: Array<Parameters<typeof subscriptionCoverageInput>[0]>,
+  enabledSubscriptions: PreparedEnabledSubscription[],
   sourceScope: SourceScope,
 ) {
   const activeGroups = await prisma.releaseCandidateGroup.findMany({
     where: mergeWhere(whereForView("active"), whereForSourceScope(sourceScope)),
-    include: {
-      subscriptions: {
-        where: { enabled: true },
-        select: { id: true },
-      },
+    select: {
+      id: true,
+      mediaType: true,
+      displayTitle: true,
+      normalizedTitle: true,
+      aliases: true,
+      season: true,
     },
   });
-  return activeGroups.filter((group) =>
-    enabledSubscriptions.every(
-      (subscription) =>
+  return activeGroups.filter((group) => {
+    const groupIdentity = createMediaIdentity(candidateGroupCoverageInput(group));
+    return enabledSubscriptions.every(
+      ({ coverage, subscription }) =>
         subscription.candidateGroupId === group.id ||
-        !subscriptionCoversCandidateGroup(
-          subscriptionCoverageInput(subscription),
-          candidateGroupCoverageInput(group),
-        ),
-    ),
-  ).length;
+        !preparedSubscriptionCoversCandidateGroup(coverage, groupIdentity),
+    );
+  }).length;
 }
+
+type PreparedEnabledSubscription = {
+  coverage: PreparedSubscriptionCoverage;
+  subscription: Parameters<typeof subscriptionCoverageInput>[0];
+};
 
 function subscriptionCoverageInput(subscription: {
   mediaType: MediaType;
@@ -273,11 +328,11 @@ function candidateGroupCoverageInput(group: {
 
 function whereForStatus(status: string): Prisma.ReleaseCandidateGroupWhereInput {
   if (status === "READY") {
-    return { candidates: { some: {} }, reviewRequired: false };
+    return { candidates: { some: { status: { not: "IGNORED" } } }, reviewRequired: false };
   }
   if (status === "ACTIONABLE") {
     return {
-      candidates: { some: {} },
+      candidates: { some: { status: { not: "IGNORED" } } },
       reviewRequired: false,
       subscriptions: { none: { enabled: true } },
     };
@@ -289,13 +344,80 @@ function whereForStatus(status: string): Prisma.ReleaseCandidateGroupWhereInput 
     return { subscriptions: { some: { enabled: true } } };
   }
   if (status === "EMPTY") {
-    return { candidates: { none: {} } };
+    return { candidates: { none: { status: { not: "IGNORED" } } } };
   }
   return {};
 }
 
 type SourceScope = "SUBSCRIPTION" | "IMPORT_SCAN" | "ALL";
 type CandidateCategory = "ALL" | "BATCH";
+
+type LatestCandidateWindowInput = {
+  category: CandidateCategory;
+  skip: number;
+  sourceScope: SourceScope;
+  take: number;
+};
+
+async function latestCandidateGroupWindow(input: LatestCandidateWindowInput) {
+  const windowSize = latestCandidateWindowSize(input.skip, input.take);
+  const sourceClause = latestCandidateWindowSourceClause(input.sourceScope);
+  const batchClause = input.category === "BATCH"
+    ? Prisma.sql`
+      AND rc."mediaType" <> 'MOVIE'::"MediaType"
+      AND (
+        rc."episodeNumber" IS NULL OR
+        rc."rawTitle" ~* '(?:^|[[:space:]\\[\\]()【】_-])[0-9]{1,3}[[:space:]]*[-~～][[:space:]]*[0-9]{1,3}(?:[[:space:]]*(fin|end|complete|合集|全集|全|完|完结|完結))?(?:$|[[:space:]\\[\\]()【】_-])'
+      )
+    `
+    : Prisma.empty;
+  const baseWhere = Prisma.sql`
+    rc."groupId" IS NOT NULL
+    AND rc.status <> 'IGNORED'
+    ${sourceClause}
+    ${batchClause}
+    AND NOT EXISTS (
+      SELECT 1 FROM "Subscription" s
+      WHERE s."candidateGroupId" = g.id AND s.enabled = true
+    )
+  `;
+  const [rows, totalRows] = await Promise.all([
+    prisma.$queryRaw<Array<{ id: string }>>(Prisma.sql`
+      SELECT rc."groupId" AS id
+      FROM "ReleaseCandidate" rc
+      JOIN "RssItem" ri ON ri.id = rc."rssItemId"
+      JOIN "ReleaseCandidateGroup" g ON g.id = rc."groupId"
+      WHERE ${baseWhere}
+      GROUP BY rc."groupId"
+      ORDER BY MAX(GREATEST(rc."createdAt", ri."createdAt", COALESCE(ri."publishedAt", ri."createdAt"))) DESC
+      LIMIT ${windowSize}
+    `),
+    prisma.$queryRaw<Array<{ total: number }>>(Prisma.sql`
+      SELECT COUNT(*)::int AS total FROM (
+        SELECT rc."groupId"
+        FROM "ReleaseCandidate" rc
+        JOIN "RssItem" ri ON ri.id = rc."rssItemId"
+        JOIN "ReleaseCandidateGroup" g ON g.id = rc."groupId"
+        WHERE ${baseWhere}
+        GROUP BY rc."groupId"
+      ) t
+    `),
+  ]);
+  return {
+    ids: rows.map((row) => row.id),
+    total: totalRows[0]?.total ?? 0,
+  };
+}
+
+function latestCandidateWindowSourceClause(sourceScope: SourceScope) {
+  if (sourceScope === "SUBSCRIPTION") {
+    return Prisma.sql`AND ri.origin <> 'import-scan'`;
+  }
+  if (sourceScope === "IMPORT_SCAN") {
+    return Prisma.sql`AND ri.origin = 'import-scan'`;
+  }
+  return Prisma.empty;
+}
 
 function normalizeSourceScope(value: string | null, view: string): SourceScope {
   if (value === "all") {
@@ -319,6 +441,7 @@ function whereForSourceScope(sourceScope: SourceScope): Prisma.ReleaseCandidateG
     return {
       candidates: {
         some: {
+          status: { not: "IGNORED" },
           rssItem: {
             origin: { not: "import-scan" },
           },
@@ -330,6 +453,7 @@ function whereForSourceScope(sourceScope: SourceScope): Prisma.ReleaseCandidateG
     return {
       candidates: {
         some: {
+          status: { not: "IGNORED" },
           rssItem: {
             origin: "import-scan",
           },
@@ -342,12 +466,18 @@ function whereForSourceScope(sourceScope: SourceScope): Prisma.ReleaseCandidateG
 
 function candidateWhereForSourceScope(sourceScope: SourceScope): Prisma.ReleaseCandidateWhereInput | undefined {
   if (sourceScope === "SUBSCRIPTION") {
-    return { rssItem: { origin: { not: "import-scan" } } };
+    return {
+      status: { not: "IGNORED" },
+      rssItem: { origin: { not: "import-scan" } },
+    };
   }
   if (sourceScope === "IMPORT_SCAN") {
-    return { rssItem: { origin: "import-scan" } };
+    return {
+      status: { not: "IGNORED" },
+      rssItem: { origin: "import-scan" },
+    };
   }
-  return undefined;
+  return { status: { not: "IGNORED" } };
 }
 
 function groupMatchesCategory(
