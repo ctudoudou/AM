@@ -25,6 +25,15 @@ export type SubscriptionCoverageInput = MediaIdentityInput & {
   candidateGroup?: MediaIdentityInput | null;
 };
 
+export type PreparedSubscriptionCoverage = {
+  mediaType: MediaType | string | null;
+  seasonMode: string | null;
+  seasonNumber: number | null;
+  titleIdentity: MediaIdentity;
+  boundGroupDisplayIdentity: MediaIdentity | null;
+  titleMatchesBoundGroup: boolean;
+};
+
 const releaseNoisePattern =
   /\b(?:2160p|4k|1080p|720p|480p|x265|x264|h\.?265|h\.?264|hevc|avc|av1|aac|flac|opus|mp3|web-?dl|webrip|bdrip|baha|b-global|cr|crunchyroll|netflix|amazon|mikanani|gb|big5|chs|cht|sc|tc|cn|jpn|japanese|eng|english|ready)\b/gi;
 const batchNoisePattern =
@@ -54,46 +63,56 @@ export function createMediaIdentityKeys(input: MediaIdentityInput) {
 }
 
 export function mediaIdentitiesOverlap(left: MediaIdentityInput, right: MediaIdentityInput) {
-  if (left.mediaType && right.mediaType && left.mediaType !== right.mediaType) {
-    return false;
-  }
-  if (!seasonsCompatible(left, right)) {
-    return false;
-  }
+  return preparedMediaIdentitiesOverlap(createMediaIdentity(left), createMediaIdentity(right));
+}
 
-  const leftKeys = createMediaIdentityKeys(left);
-  const rightKeys = createMediaIdentityKeys(right);
-  return identityKeysOverlap(leftKeys, rightKeys);
+export function prepareSubscriptionCoverage(
+  subscription: SubscriptionCoverageInput,
+): PreparedSubscriptionCoverage {
+  const titleIdentity = createMediaIdentity(subscriptionTitleIdentity(subscription));
+  const boundGroupDisplayIdentity = subscription.candidateGroup
+    ? createMediaIdentity({ ...subscription.candidateGroup, aliases: [] })
+    : null;
+  return {
+    mediaType: subscription.mediaType ?? null,
+    seasonMode: subscription.seasonMode ?? null,
+    seasonNumber: normalizeSeason(subscription.seasonNumber),
+    titleIdentity,
+    boundGroupDisplayIdentity,
+    titleMatchesBoundGroup: Boolean(
+      boundGroupDisplayIdentity &&
+      preparedMediaIdentitiesOverlap(titleIdentity, boundGroupDisplayIdentity),
+    ),
+  };
+}
+
+export function preparedSubscriptionCoversCandidateGroup(
+  subscription: PreparedSubscriptionCoverage,
+  group: MediaIdentity,
+) {
+  if (subscription.mediaType && group.mediaType && subscription.mediaType !== group.mediaType) {
+    return false;
+  }
+  if (!preparedSubscriptionSeasonCoversGroup(subscription, group)) {
+    return false;
+  }
+  if (preparedMediaIdentitiesOverlap(subscription.titleIdentity, group)) {
+    return true;
+  }
+  return Boolean(
+    subscription.titleMatchesBoundGroup &&
+    subscription.boundGroupDisplayIdentity &&
+    preparedMediaIdentitiesOverlap(subscription.boundGroupDisplayIdentity, group),
+  );
 }
 
 export function subscriptionCoversCandidateGroup(
   subscription: SubscriptionCoverageInput,
   group: MediaIdentityInput,
 ) {
-  if (subscription.mediaType && group.mediaType && subscription.mediaType !== group.mediaType) {
-    return false;
-  }
-  if (!subscriptionSeasonCoversGroup(subscription, group)) {
-    return false;
-  }
-
-  const titleIdentity = subscriptionTitleIdentity(subscription);
-  if (mediaIdentitiesOverlap(titleIdentity, group)) {
-    return true;
-  }
-
-  const boundGroup = subscription.candidateGroup;
-  if (!boundGroup) {
-    return false;
-  }
-  const boundGroupDisplayIdentity = {
-    ...boundGroup,
-    aliases: [],
-  };
-
-  return (
-    mediaIdentitiesOverlap(titleIdentity, boundGroupDisplayIdentity) &&
-    mediaIdentitiesOverlap(boundGroupDisplayIdentity, group)
+  return preparedSubscriptionCoversCandidateGroup(
+    prepareSubscriptionCoverage(subscription),
+    createMediaIdentity(group),
   );
 }
 
@@ -123,16 +142,32 @@ export function seasonsCompatible(left: MediaIdentityInput, right: MediaIdentity
   return leftSeason === rightSeason;
 }
 
-function subscriptionSeasonCoversGroup(
-  subscription: SubscriptionCoverageInput,
-  group: MediaIdentityInput,
-) {
-  const groupSeason = normalizeSeason(group.season);
-  if (subscription.seasonMode === "specific") {
-    const subscriptionSeason = normalizeSeason(subscription.seasonNumber);
-    return subscriptionSeason === null || groupSeason === null || subscriptionSeason === groupSeason;
+function preparedMediaIdentitiesOverlap(left: MediaIdentity, right: MediaIdentity) {
+  if (left.mediaType && right.mediaType && left.mediaType !== right.mediaType) {
+    return false;
   }
-  return seasonsCompatible(subscriptionTitleIdentity(subscription), group);
+  if (!preparedSeasonsCompatible(left.season, right.season)) {
+    return false;
+  }
+  return identityKeysOverlap(left.keys, right.keys);
+}
+
+function preparedSubscriptionSeasonCoversGroup(
+  subscription: PreparedSubscriptionCoverage,
+  group: MediaIdentity,
+) {
+  if (subscription.seasonMode === "specific") {
+    return (
+      subscription.seasonNumber === null ||
+      group.season === null ||
+      subscription.seasonNumber === group.season
+    );
+  }
+  return preparedSeasonsCompatible(subscription.titleIdentity.season, group.season);
+}
+
+function preparedSeasonsCompatible(left: number | null, right: number | null) {
+  return left === null || right === null || left === right;
 }
 
 export function jsonStringList(value: unknown): string[] {
