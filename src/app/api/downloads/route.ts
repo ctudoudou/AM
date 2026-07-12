@@ -5,9 +5,12 @@ import { buildDownloadDiagnostics } from "@/lib/downloads";
 
 export const dynamic = "force-dynamic";
 
-export async function GET() {
+export async function GET(request: Request) {
   try {
+    const includeSuperseded =
+      new URL(request.url).searchParams.get("includeSuperseded") === "true";
     const downloads = await prisma.download.findMany({
+      where: includeSuperseded ? undefined : { supersededById: null },
       orderBy: { updatedAt: "desc" },
       include: {
         candidate: {
