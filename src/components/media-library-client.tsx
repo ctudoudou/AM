@@ -1,7 +1,8 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Loader2, Play, RefreshCw, Search } from "lucide-react";
+import Image from "next/image";
+import { DatabaseZap, Images, Loader2, Play, RefreshCw, Search } from "lucide-react";
 import { getMessages } from "@/messages";
 import type { Locale } from "@/lib/i18n";
 
@@ -23,34 +24,53 @@ type MediaTitle = {
   } | null;
 };
 
+type MetadataRefreshResult = {
+  checked: number;
+  updated: number;
+  results: Array<{ reason?: string }>;
+};
+
 export function MediaLibraryClient({
   apiPath,
   detailBasePath,
   emptyMessage,
   locale,
+  mediaType,
 }: {
   apiPath: string;
   detailBasePath: string;
   emptyMessage: string;
   locale: Locale;
+  mediaType: "MOVIE" | "TV";
 }) {
   const t = getMessages(locale);
   const [titles, setTitles] = useState<MediaTitle[]>([]);
+  const [failedPosterIds, setFailedPosterIds] = useState<Set<string>>(() => new Set());
   const [query, setQuery] = useState("");
+  const [metadataFilter, setMetadataFilter] = useState<"ALL" | "MISSING_POSTER">("ALL");
   const [loading, setLoading] = useState(true);
   const [scanning, setScanning] = useState(false);
+  const [maintenanceAction, setMaintenanceAction] = useState<"repair" | "refreshMetadata" | null>(null);
   const [error, setError] = useState("");
+  const [status, setStatus] = useState("");
   const visibleTitles = useMemo(() => {
     const needle = query.trim().toLowerCase();
-    if (!needle) {
-      return titles;
-    }
-    return titles.filter((title) =>
-      [title.primaryTitle, title.originalTitle ?? ""].some((value) =>
-        value.toLowerCase().includes(needle),
-      ),
-    );
-  }, [query, titles]);
+    return titles
+      .filter(
+        (title) =>
+          metadataFilter !== "MISSING_POSTER" || !posterIsAvailable(title, failedPosterIds),
+      )
+      .filter(
+        (title) =>
+          !needle ||
+          [title.primaryTitle, title.originalTitle ?? ""].some((value) =>
+            value.toLowerCase().includes(needle),
+          ),
+      );
+  }, [failedPosterIds, metadataFilter, query, titles]);
+  const missingPosterCount = titles.filter(
+    (title) => !posterIsAvailable(title, failedPosterIds),
+  ).length;
 
   const load = useCallback(async () => {
     try {
@@ -60,6 +80,7 @@ export function MediaLibraryClient({
       }
       const body = (await response.json()) as { titles: MediaTitle[] };
       setTitles(body.titles);
+      setFailedPosterIds(new Set());
       setError("");
     } catch (loadError) {
       setError(loadError instanceof Error ? loadError.message : t.libraryLoadError);
@@ -78,6 +99,7 @@ export function MediaLibraryClient({
   async function scan() {
     setScanning(true);
     setError("");
+    setStatus("");
     try {
       const response = await fetch("/api/library/scan", { method: "POST" });
       if (!response.ok) {
@@ -88,6 +110,50 @@ export function MediaLibraryClient({
       setError(scanError instanceof Error ? scanError.message : t.libraryScanError);
     } finally {
       setScanning(false);
+    }
+  }
+
+  async function maintain(action: "repair" | "refreshMetadata") {
+    setMaintenanceAction(action);
+    setError("");
+    setStatus("");
+    try {
+      const response = await fetch("/api/library/maintenance", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action, mediaType }),
+      });
+      if (!response.ok) {
+        throw new Error(action === "repair" ? t.repairMediaLibraryError : t.metadataRefreshError);
+      }
+      const body = (await response.json()) as {
+        result:
+          | MetadataRefreshResult
+          | {
+              normalized: { updated: number };
+              merged: { merged: number };
+              metadata: MetadataRefreshResult;
+            };
+      };
+      const maintenance = "metadata" in body.result ? body.result : null;
+      const metadata = maintenance?.metadata ?? (body.result as MetadataRefreshResult);
+      const unresolved = metadata.results.filter((result) => result.reason !== "UPDATED").length;
+      setStatus(
+        action === "repair" && maintenance
+          ? `${t.repairMediaLibraryDone} ${t.normalizedTitles}: ${maintenance.normalized.updated}, ${t.mergedTitles}: ${maintenance.merged.merged}, ${t.metadataUpdated}: ${metadata.updated}, ${t.metadataUnresolved}: ${unresolved}.`
+          : `${t.metadataRefreshDone} ${t.metadataUpdated}: ${metadata.updated}, ${t.metadataUnresolved}: ${unresolved}.`,
+      );
+      await load();
+    } catch (maintenanceError) {
+      setError(
+        maintenanceError instanceof Error
+          ? maintenanceError.message
+          : action === "repair"
+            ? t.repairMediaLibraryError
+            : t.metadataRefreshError,
+      );
+    } finally {
+      setMaintenanceAction(null);
     }
   }
 
@@ -111,17 +177,53 @@ export function MediaLibraryClient({
             value={query}
           />
         </label>
+        <div className="library-filter-controls">
+          <label>
+            <span>{t.tag}</span>
+            <select
+              aria-label={t.tag}
+              onChange={(event) => setMetadataFilter(event.target.value as "ALL" | "MISSING_POSTER")}
+              value={metadataFilter}
+            >
+              <option value="ALL">{t.allTags}</option>
+              <option value="MISSING_POSTER">
+                {t.libraryTagMissingPoster} ({missingPosterCount})
+              </option>
+            </select>
+          </label>
+        </div>
         <div className="toolbar-actions">
           <span>
             {visibleTitles.length} {t.titles}
           </span>
-          <button disabled={scanning} onClick={() => void scan()} type="button">
+          <button
+            disabled={scanning || maintenanceAction !== null}
+            onClick={() => void scan()}
+            type="button"
+          >
             {scanning ? <Loader2 size={14} /> : <RefreshCw size={14} />}
             {t.scanLibrary}
+          </button>
+          <button
+            disabled={maintenanceAction !== null || scanning}
+            onClick={() => void maintain("refreshMetadata")}
+            type="button"
+          >
+            {maintenanceAction === "refreshMetadata" ? <Loader2 size={14} /> : <Images size={14} />}
+            {t.refreshMetadata}
+          </button>
+          <button
+            disabled={maintenanceAction !== null || scanning}
+            onClick={() => void maintain("repair")}
+            type="button"
+          >
+            {maintenanceAction === "repair" ? <Loader2 size={14} /> : <DatabaseZap size={14} />}
+            {t.repairMediaLibrary}
           </button>
         </div>
       </div>
       {error ? <div className="settings-alert">{error}</div> : null}
+      {status ? <div className="settings-success">{status}</div> : null}
       {visibleTitles.length === 0 ? (
         <div className="empty-panel">{emptyMessage}</div>
       ) : (
@@ -132,22 +234,34 @@ export function MediaLibraryClient({
                 aria-label={title.primaryTitle}
                 className="anime-poster"
                 href={`/${locale}${detailBasePath}/${title.id}`}
-                style={{
-                  backgroundImage: title.posterUrl ? `url(${title.posterUrl})` : undefined,
-                }}
               >
-                {!title.posterUrl ? (
+                {posterIsAvailable(title, failedPosterIds) ? (
+                  <Image
+                    alt=""
+                    className="library-poster-image"
+                    height={750}
+                    onError={() => {
+                      setFailedPosterIds((current) => new Set(current).add(title.id));
+                    }}
+                    src={title.posterUrl!}
+                    unoptimized
+                    width={500}
+                  />
+                ) : (
                   title.type === "MOVIE" ? (
                     <Play size={28} />
                   ) : (
                     <span>{title.primaryTitle.slice(0, 1)}</span>
                   )
-                ) : null}
+                )}
               </a>
               <div className="anime-card-body">
                 <h2>
                   <a href={`/${locale}${detailBasePath}/${title.id}`}>{title.primaryTitle}</a>
                 </h2>
+                {!posterIsAvailable(title, failedPosterIds) ? (
+                  <span className="candidate-policy">{t.libraryTagMissingPoster}</span>
+                ) : null}
                 <p>
                   {title.type === "MOVIE"
                     ? `${title.year ?? "-"} · ${title.episodeCount} ${t.fileVersions}`
@@ -167,4 +281,8 @@ export function MediaLibraryClient({
       )}
     </div>
   );
+}
+
+function posterIsAvailable(title: MediaTitle, failedPosterIds: Set<string>) {
+  return Boolean(title.posterUrl && !failedPosterIds.has(title.id));
 }

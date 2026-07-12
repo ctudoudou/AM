@@ -3,6 +3,7 @@ import {
   buildAnimeMetadataQueries,
   buildGenericMetadataQueries,
   collectAnimeMetadataQueryTexts,
+  isReliableGenericMetadataMatch,
   scoreMetadataRelevance,
 } from "./metadata";
 
@@ -211,5 +212,30 @@ describe("scoreMetadataRelevance", () => {
     });
 
     expect(score).toBeGreaterThanOrEqual(0.86);
+  });
+});
+
+describe("isReliableGenericMetadataMatch", () => {
+  it("requires both aggregate score and title relevance", () => {
+    expect(
+      isReliableGenericMetadataMatch({
+        provider: "tmdb_tv",
+        externalId: "1",
+        title: "Scavengers Reign",
+        score: 0.9,
+        relevance: 1,
+        raw: {},
+      }),
+    ).toBe(true);
+    expect(
+      isReliableGenericMetadataMatch({
+        provider: "tmdb_tv",
+        externalId: "2",
+        title: "Scavenger",
+        score: 0.9,
+        relevance: 0.6,
+        raw: {},
+      }),
+    ).toBe(false);
   });
 });

@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   createMediaIdentityKeys,
+  normalizeMediaTitleForRepair,
   rankMediaIdentityMatches,
   type MediaIdentity,
 } from "./media-title-repair";
@@ -123,6 +124,23 @@ describe("createMediaIdentityKeys", () => {
     expect([...edithKeys].filter((key) => xenonKeys.has(key))).toContain("scavengers reign");
     expect(edithKeys).not.toContain("scavengers reign web edith eng");
     expect(xenonKeys).not.toContain("scavengers reign xen0n eng");
+  });
+});
+
+describe("normalizeMediaTitleForRepair", () => {
+  it("removes TV release group and language noise from historical titles", () => {
+    expect(normalizeMediaTitleForRepair("Scavengers Reign WEB EDITH chs eng", "TV")).toBe(
+      "Scavengers Reign",
+    );
+    expect(normalizeMediaTitleForRepair("Scavengers Reign XEN0N chs eng", "TV")).toBe(
+      "Scavengers Reign",
+    );
+  });
+
+  it("does not rewrite movie titles during automatic repair", () => {
+    expect(normalizeMediaTitleForRepair("The King's Warden", "MOVIE")).toBe(
+      "The King's Warden",
+    );
   });
 });
 

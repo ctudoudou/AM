@@ -68,6 +68,21 @@ export function isLocalMediaAssetUrl(url: string | null | undefined) {
   return Boolean(url?.startsWith("/api/media-assets/"));
 }
 
+export async function localMediaAssetExists(url: string | null | undefined) {
+  if (!isLocalMediaAssetUrl(url)) {
+    return false;
+  }
+  try {
+    const assetPath = url!.slice("/api/media-assets/".length).split("/").filter(Boolean);
+    const settings = await getAppSettings();
+    const metadataRoot = path.resolve(settings.directories.metadataDir);
+    const filePath = assertInsideRoot(path.join(metadataRoot, ...assetPath), metadataRoot);
+    return imageContentTypes.has(path.extname(filePath).toLowerCase()) && exists(filePath);
+  } catch {
+    return false;
+  }
+}
+
 export async function createMediaAssetResponse(assetPath: string[]) {
   const settings = await getAppSettings();
   const metadataRoot = path.resolve(settings.directories.metadataDir);

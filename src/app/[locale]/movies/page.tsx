@@ -30,6 +30,7 @@ export default async function MoviesPage({
           detailBasePath="/movies"
           emptyMessage={t.noMoviesTitles}
           locale={locale}
+          mediaType="MOVIE"
         />
       </section>
     </main>
