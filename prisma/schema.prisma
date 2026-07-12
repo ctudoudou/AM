@@ -273,6 +273,7 @@ model Download {
   candidateId    String?
   candidate      ReleaseCandidate? @relation(fields: [candidateId], references: [id], onDelete: SetNull)
   aria2Gid       String?           @unique
+  infoHash       String?
   status         DownloadStatus    @default(WAITING)
   sourceUrl      String
   targetPath     String?
@@ -287,12 +288,18 @@ model Download {
   errorMessage   String?
   lastSyncedAt   DateTime?
   archiveStatus  String?
+  supersededById String?
+  supersededBy   Download?         @relation("DownloadSupersession", fields: [supersededById], references: [id], onDelete: SetNull)
+  superseded     Download[]        @relation("DownloadSupersession")
+  repairNote     String?
   organizerPlans OrganizerPlan[]
   createdAt      DateTime          @default(now())
   updatedAt      DateTime          @updatedAt
 
   @@index([candidateId])
+  @@index([infoHash])
   @@index([status])
+  @@index([supersededById])
 }
 
 model WantedEpisode {

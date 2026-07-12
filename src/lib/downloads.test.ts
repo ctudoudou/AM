@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   buildDownloadDiagnostics,
   extractBtInfoHash,
+  isCompleteDownloadFileSize,
   isMetadataOnlyAria2Status,
   isRecoverableDownloadError,
   normalizeBtInfoHash,
@@ -111,5 +112,11 @@ describe("aria2 download helpers", () => {
     ).toBe(true);
     expect(isRecoverableDownloadError("Reached max-file-not-found count=10")).toBe(true);
     expect(isRecoverableDownloadError("")).toBe(true);
+  });
+
+  it("does not mark an existing partial or unknown-length target as complete", () => {
+    expect(isCompleteDownloadFileSize(BigInt(100), BigInt(100))).toBe(true);
+    expect(isCompleteDownloadFileSize(BigInt(99), BigInt(100))).toBe(false);
+    expect(isCompleteDownloadFileSize(BigInt(100), BigInt(0))).toBe(false);
   });
 });

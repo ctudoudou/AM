@@ -59,6 +59,7 @@ export async function enqueueCandidateDownload(candidateId: string) {
     data: {
       candidateId: candidate.id,
       aria2Gid: gid,
+      infoHash: extractBtInfoHash(sourceUrl),
       sourceUrl,
       title: candidate.parsedTitle,
       downloadDir,
@@ -109,6 +110,7 @@ export async function syncAria2Downloads() {
   const downloads = await prisma.download.findMany({
     where: {
       aria2Gid: { not: null },
+      supersededById: null,
       OR: [
         { status: { in: ["WAITING", "ACTIVE", "PAUSED"] } },
         { status: "COMPLETED", targetPath: null },
@@ -153,6 +155,9 @@ export async function syncSingleAria2Download(downloadId: string) {
   const download = await prisma.download.findUniqueOrThrow({
     where: { id: downloadId },
   });
+  if (download.supersededById) {
+    return download;
+  }
   if (!download.aria2Gid) {
     return prisma.download.update({
       where: { id: download.id },
@@ -171,6 +176,7 @@ export async function syncSingleAria2Download(downloadId: string) {
   } catch (error) {
     const message = error instanceof Error ? error.message : "Unknown aria2 error";
     const replacement = await findReplacementAria2Status({
+      infoHash: download.infoHash,
       sourceUrl: download.sourceUrl,
       targetPath: download.targetPath,
       errorMessage: `${download.errorMessage ?? ""} ${message}`,
@@ -179,7 +185,11 @@ export async function syncSingleAria2Download(downloadId: string) {
     if (replacement) {
       status = await resolveFollowedAria2Status(replacement);
     } else {
-      const completed = await completeFromExistingTargetIfPossible(download, download.targetPath);
+      const completed = await completeFromExistingTargetIfPossible(
+        download,
+        download.targetPath,
+        expectedBytesForTarget(download, download.targetPath),
+      );
       if (completed) {
         return completed;
       }
@@ -228,6 +238,10 @@ export async function syncSingleAria2Download(downloadId: string) {
     where: { id: download.id },
     data: {
       aria2Gid: status.gid,
+      infoHash:
+        normalizeBtInfoHash(status.infoHash ?? "") ??
+        download.infoHash ??
+        extractBtInfoHash(download.sourceUrl),
       status: nextStatus,
       totalBytes,
       completedBytes,
@@ -284,6 +298,7 @@ async function findReplacementForDuplicateStatus(download: Download, status: Ari
     return null;
   }
   return findReplacementAria2Status({
+    infoHash: download.infoHash,
     sourceUrl: download.sourceUrl,
     targetPath: download.targetPath,
     errorMessage: status.errorMessage,
@@ -305,7 +320,7 @@ async function completeFromExistingTargetIfPossible(
     return null;
   }
   const size = BigInt(stat.size);
-  if (expectedBytes > 0 && size < expectedBytes) {
+  if (!isCompleteDownloadFileSize(size, expectedBytes)) {
     return null;
   }
 
@@ -313,6 +328,7 @@ async function completeFromExistingTargetIfPossible(
     where: { id: download.id },
     data: {
       status: "COMPLETED",
+      infoHash: download.infoHash ?? extractBtInfoHash(download.sourceUrl),
       progress: 1,
       targetPath,
       totalBytes: size,
@@ -351,13 +367,27 @@ async function finalizeCompletedDownload(download: Pick<Download, "id" | "candid
   }
 }
 
+function expectedBytesForTarget(download: Download, targetPath?: string | null) {
+  if (targetPath) {
+    const target = normalizeAria2Files(download.aria2Files).find(
+      (file) => file.path === targetPath && typeof file.length === "string",
+    );
+    if (target?.length && /^\d+$/.test(target.length)) {
+      return BigInt(target.length);
+    }
+  }
+  return download.totalBytes ?? BigInt(0);
+}
+
 async function findReplacementAria2Status(input: {
+  infoHash?: string | null;
   sourceUrl?: string | null;
   targetPath?: string | null;
   errorMessage?: string | null;
   ignoredGid?: string | null;
 }) {
   const infoHash =
+    normalizeBtInfoHash(input.infoHash ?? "") ??
     extractBtInfoHash(input.errorMessage ?? "") ??
     extractBtInfoHash(input.sourceUrl ?? "");
   const statuses = await listKnownDownloads().catch(() => []);
@@ -643,6 +673,9 @@ export async function retryFailedDownload(downloadId: string) {
   if (download.status !== "FAILED") {
     throw new Error("Only failed downloads can be retried.");
   }
+  if (download.supersededById) {
+    throw new Error(`Download is superseded by ${download.supersededById}.`);
+  }
   if (!download.sourceUrl) {
     throw new Error("Download has no source URL to retry.");
   }
@@ -665,6 +698,7 @@ export async function retryFailedDownload(downloadId: string) {
     where: { id: download.id },
     data: {
       aria2Gid: gid,
+      infoHash: download.infoHash ?? extractBtInfoHash(download.sourceUrl),
       status: "WAITING",
       progress: 0,
       totalBytes: BigInt(0),
@@ -704,6 +738,10 @@ export function selectTargetPath(
     .filter((file) => file.path && file.path !== "[METADATA]")
     .filter((file) => videoExtensions.has(file.path ? extname(file.path) : ""))
     .sort((a, b) => Number(b.length ?? 0) - Number(a.length ?? 0))[0]?.path;
+}
+
+export function isCompleteDownloadFileSize(actualBytes: bigint, expectedBytes: bigint) {
+  return actualBytes > 0 && expectedBytes > 0 && actualBytes >= expectedBytes;
 }
 
 function extname(filePath: string) {
