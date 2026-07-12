@@ -3,9 +3,12 @@ import { prisma } from "@/lib/db";
 import { groupCandidatesWithOpenRouter } from "@/lib/openrouter";
 import { parseMediaReleaseTitle } from "@/lib/media-parser";
 import {
+  candidateGroupIdentityInput,
   createMediaIdentityKeys,
+  createStrongMediaIdentityKeys,
   jsonStringList,
   mediaIdentitiesOverlap,
+  mediaIdentitiesShareStrongKey,
 } from "@/lib/media-identity";
 import { classifyReleaseResource, nonVideoReleaseParseError } from "@/lib/release-resource";
 
@@ -574,7 +577,7 @@ async function findCanonicalCandidateGroup(
 
   return candidates
     .filter((candidateGroup) =>
-      mediaIdentitiesOverlap(groupIdentityInput(group), groupIdentityInput(candidateGroup)),
+      mediaIdentitiesShareStrongKey(groupIdentityInput(group), groupIdentityInput(candidateGroup)),
     )
     .sort(
       (a, b) =>
@@ -592,13 +595,7 @@ function groupIdentityInput(group: {
   aliases?: unknown;
   season?: number | null;
 }) {
-  return {
-    mediaType: group.mediaType,
-    displayTitle: group.displayTitle,
-    normalizedTitle: group.normalizedTitle,
-    aliases: group.aliases,
-    season: group.season ?? 1,
-  };
+  return candidateGroupIdentityInput({ ...group, season: group.season ?? 1 });
 }
 
 function mergeGroupAliases(existing: unknown, next: string[], displayTitle: string) {
@@ -790,7 +787,7 @@ function groupAnimeCandidatesByAlias(mediaType: MediaType, candidates: Groupable
 }
 
 function candidateAliasKeys(candidate: GroupableCandidate) {
-  return createMediaIdentityKeys({
+  return createStrongMediaIdentityKeys({
     parsedTitle: candidate.parsedTitle,
     normalizedTitle: candidate.normalizedTitle,
     rawTitle: candidate.rawTitle,

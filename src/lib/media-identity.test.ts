@@ -1,7 +1,9 @@
 import { describe, expect, it } from "vitest";
 import {
+  candidateGroupIdentityInput,
   createMediaIdentity,
   createMediaIdentityKeys,
+  mediaIdentitiesShareStrongKey,
   mediaIdentitiesOverlap,
   prepareSubscriptionCoverage,
   preparedSubscriptionCoversCandidateGroup,
@@ -51,6 +53,55 @@ describe("media identity", () => {
 
     expect(chinese).toContain("无职英雄 技能什么的毫无用处");
     expect(bilingual).toContain("无职英雄 技能什么的毫无用处");
+  });
+
+  it("matches live romanized titles that differ by apostrophes and word hyphens", () => {
+    const localizedGroup = {
+      mediaType: "ANIME",
+      displayTitle: "出发吧怪奇组 / レッツゴー怪奇组 / Lets Go Kaikigumi",
+      normalizedTitle: "出发吧怪奇组",
+      aliases: ["出发吧怪奇组 / レッツゴー怪奇组 / Lets Go Kaikigumi"],
+      season: 1,
+    };
+    const romanizedGroup = {
+      mediaType: "ANIME",
+      displayTitle: "Let's Go 怪奇組 / Let's Go Kaiki-gumi",
+      normalizedTitle: "let's go 怪奇组",
+      aliases: ["Let's Go 怪奇組 / Let's Go Kaiki-gumi"],
+      season: 1,
+    };
+
+    expect(createMediaIdentityKeys(romanizedGroup)).toContain("letsgokaikigumi");
+    expect(mediaIdentitiesOverlap(localizedGroup, romanizedGroup)).toBe(true);
+    expect(mediaIdentitiesShareStrongKey(localizedGroup, romanizedGroup)).toBe(true);
+  });
+
+  it("does not merge unrelated romanized titles after punctuation normalization", () => {
+    expect(
+      mediaIdentitiesOverlap(
+        { mediaType: "ANIME", title: "Let's Go Kaiki-gumi", season: 1 },
+        { mediaType: "ANIME", title: "Let's Go Karaoke!", season: 1 },
+      ),
+    ).toBe(false);
+  });
+
+  it("does not treat a franchise title as a strong match for a spin-off", () => {
+    expect(
+      mediaIdentitiesShareStrongKey(
+        {
+          mediaType: "ANIME",
+          displayTitle: "海贼王 / One Piece",
+          normalizedTitle: "海贼王",
+          season: 1,
+        },
+        {
+          mediaType: "ANIME",
+          displayTitle: "海贼王 女英雄们的故事 / One Piece: Heroines",
+          normalizedTitle: "海贼王 女英雄们的故事",
+          season: 1,
+        },
+      ),
+    ).toBe(false);
   });
 
   it("removes movie packaging tokens from canonical keys", () => {
@@ -160,6 +211,28 @@ describe("media identity", () => {
           ],
           season: 1,
         },
+      ),
+    ).toBe(false);
+  });
+
+  it("excludes historical aliases from candidate group identity matching", () => {
+    const pollutedGroup = candidateGroupIdentityInput({
+      mediaType: "ANIME",
+      displayTitle: "无关作品",
+      normalizedTitle: "无关作品",
+      aliases: ["龙王的工作", "Let's Go Kaiki-gumi"],
+      season: 1,
+    });
+
+    expect(
+      subscriptionCoversCandidateGroup(
+        {
+          mediaType: "ANIME",
+          title: "龙王的工作",
+          seasonMode: "specific",
+          seasonNumber: 1,
+        },
+        pollutedGroup,
       ),
     ).toBe(false);
   });

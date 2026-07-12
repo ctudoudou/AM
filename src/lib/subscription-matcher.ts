@@ -1,7 +1,7 @@
 import { prisma } from "@/lib/db";
 import { enqueueCandidateDownload } from "@/lib/downloads";
 import {
-  jsonStringList,
+  candidateGroupIdentityInput,
   subscriptionCoversCandidateGroup,
   type SubscriptionCoverageInput,
 } from "@/lib/media-identity";
@@ -228,13 +228,7 @@ function candidateGroupCoverageInput(group: {
   aliases?: unknown;
   season?: number | null;
 }) {
-  return {
-    mediaType: group.mediaType,
-    displayTitle: group.displayTitle,
-    normalizedTitle: group.normalizedTitle,
-    aliases: jsonStringList(group.aliases),
-    season: group.season ?? null,
-  };
+  return candidateGroupIdentityInput({ ...group, season: group.season ?? null });
 }
 
 function groupCandidatesByEpisode(candidates: MatchCandidate[]) {

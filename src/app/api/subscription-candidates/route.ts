@@ -2,8 +2,8 @@ import { Prisma, type MediaType } from "@prisma/client";
 import { jsonError, jsonResponse } from "@/lib/api";
 import { prisma } from "@/lib/db";
 import {
+  candidateGroupIdentityInput,
   createMediaIdentity,
-  jsonStringList,
   prepareSubscriptionCoverage,
   preparedSubscriptionCoversCandidateGroup,
   type PreparedSubscriptionCoverage,
@@ -169,7 +169,7 @@ export async function GET(request: Request) {
       databaseActiveGroups,
       subscribedGroups,
       emptyGroups,
-      reviewGroups,
+      databaseReviewGroups,
       ungroupedCandidates,
     ] = await Promise.all([
       prisma.releaseCandidateGroup.count(),
@@ -180,7 +180,11 @@ export async function GET(request: Request) {
         where: whereForView("empty"),
       }),
       prisma.releaseCandidateGroup.count({
-        where: { reviewRequired: true },
+        where: mergeWhere(
+          whereForView("active"),
+          whereForSourceScope(sourceScope),
+          { reviewRequired: true },
+        ),
       }),
       prisma.releaseCandidate.count({
         where: {
@@ -194,28 +198,35 @@ export async function GET(request: Request) {
       : postProcessPagination
         ? categorizedGroups.length
         : databaseFilteredGroups;
-    const activeGroupCount = filterCanonicalCoverage
+    const canonicalActiveStats = filterCanonicalCoverage
       ? await countCanonicallyActiveGroups(preparedSubscriptions, sourceScope)
-      : databaseActiveGroups;
+      : null;
+    const activeGroupCount = canonicalActiveStats?.total ?? databaseActiveGroups;
+    const reviewGroupCount = canonicalActiveStats?.review ?? databaseReviewGroups;
     const responseGroupCount =
       fastCandidateWindow && category === "ALL" ? activeGroupCount : filteredGroupCount;
     return jsonResponse({
-      groups: groups.map((group) => ({
-        ...group,
-        queueStatus: describeSubscriptionQueueGroup({
-          candidateCount: group._count.candidates,
-          enabledSubscriptionCount: group.subscriptions.length,
-          reviewRequired: group.reviewRequired,
-        }),
-        sourceSummary: summarizeGroupSources(group),
-      })),
+      groups: groups.map((group) => {
+        const { candidates, ...summary } = group;
+        return {
+          ...summary,
+          candidates: [],
+          candidatesLoaded: candidates.length === 0,
+          queueStatus: describeSubscriptionQueueGroup({
+            candidateCount: group._count.candidates,
+            enabledSubscriptionCount: group.subscriptions.length,
+            reviewRequired: group.reviewRequired,
+          }),
+          sourceSummary: summarizeGroupSources(group),
+        };
+      }),
       stats: {
         totalGroups,
         filteredGroups: responseGroupCount,
         activeGroups: activeGroupCount,
         subscribedGroups,
         emptyGroups,
-        reviewGroups,
+        reviewGroups: reviewGroupCount,
         ungroupedCandidates,
       },
       page: {
@@ -268,16 +279,21 @@ async function countCanonicallyActiveGroups(
       normalizedTitle: true,
       aliases: true,
       season: true,
+      reviewRequired: true,
     },
   });
-  return activeGroups.filter((group) => {
+  const visibleGroups = activeGroups.filter((group) => {
     const groupIdentity = createMediaIdentity(candidateGroupCoverageInput(group));
     return enabledSubscriptions.every(
       ({ coverage, subscription }) =>
         subscription.candidateGroupId === group.id ||
         !preparedSubscriptionCoversCandidateGroup(coverage, groupIdentity),
     );
-  }).length;
+  });
+  return {
+    total: visibleGroups.length,
+    review: visibleGroups.filter((group) => group.reviewRequired).length,
+  };
 }
 
 type PreparedEnabledSubscription = {
@@ -317,13 +333,7 @@ function candidateGroupCoverageInput(group: {
   aliases?: unknown;
   season?: number | null;
 }) {
-  return {
-    mediaType: group.mediaType,
-    displayTitle: group.displayTitle,
-    normalizedTitle: group.normalizedTitle,
-    aliases: jsonStringList(group.aliases),
-    season: group.season ?? null,
-  };
+  return candidateGroupIdentityInput({ ...group, season: group.season ?? null });
 }
 
 function whereForStatus(status: string): Prisma.ReleaseCandidateGroupWhereInput {

@@ -52,6 +52,16 @@ export function createMediaIdentity(input: MediaIdentityInput): MediaIdentity {
   };
 }
 
+export function candidateGroupIdentityInput(input: MediaIdentityInput): MediaIdentityInput {
+  // Historical aliases are aggregate data and may contain unrelated titles.
+  return {
+    mediaType: input.mediaType,
+    displayTitle: input.displayTitle,
+    normalizedTitle: input.normalizedTitle,
+    season: input.season,
+  };
+}
+
 export function createMediaIdentityKeys(input: MediaIdentityInput) {
   const season = normalizeSeason(input.season);
   const aliases = collectIdentityTexts(input)
@@ -62,8 +72,36 @@ export function createMediaIdentityKeys(input: MediaIdentityInput) {
   return [...new Set(aliases)].sort(compareIdentityKeys);
 }
 
+export function createStrongMediaIdentityKeys(input: MediaIdentityInput) {
+  const keys = createMediaIdentityKeys(input);
+  const longestByFamily = new Map<string, number>();
+  for (const key of keys) {
+    const family = identityKeyFamily(key);
+    longestByFamily.set(family, Math.max(longestByFamily.get(family) ?? 0, identityKeySize(key)));
+  }
+  return keys.filter((key) => {
+    const size = identityKeySize(key);
+    const longest = longestByFamily.get(identityKeyFamily(key)) ?? size;
+    return size >= Math.ceil(longest * 0.75);
+  });
+}
+
 export function mediaIdentitiesOverlap(left: MediaIdentityInput, right: MediaIdentityInput) {
   return preparedMediaIdentitiesOverlap(createMediaIdentity(left), createMediaIdentity(right));
+}
+
+export function mediaIdentitiesShareStrongKey(
+  left: MediaIdentityInput,
+  right: MediaIdentityInput,
+) {
+  if (!seasonsCompatible(left, right)) {
+    return false;
+  }
+  if (left.mediaType && right.mediaType && left.mediaType !== right.mediaType) {
+    return false;
+  }
+  const rightKeys = new Set(createStrongMediaIdentityKeys(right));
+  return createStrongMediaIdentityKeys(left).some((key) => rightKeys.has(key));
 }
 
 export function prepareSubscriptionCoverage(
@@ -219,6 +257,8 @@ function cleanIdentityText(text: string, mediaType?: string | null) {
     .replace(/\bS\d{1,2}E\d{1,4}(?:\.\d+)?\b/gi, " ")
     .replace(/\bEP?\s*\d{1,4}(?:\.\d+)?\b/gi, " ")
     .replace(/第\s*\d{1,4}(?:\.\d+)?\s*(?:话|話|集)/g, " ")
+    .replace(/[’']/g, "")
+    .replace(/(?<=[A-Za-z])[-‐‑‒–—](?=[A-Za-z])/g, " ")
     .replace(/[._]+/g, " ")
     .replace(/\s+/g, " ")
     .trim();
@@ -289,6 +329,14 @@ function compareIdentityKeys(left: string, right: string) {
     return leftHasCjk ? -1 : 1;
   }
   return left.length - right.length || left.localeCompare(right);
+}
+
+function identityKeyFamily(key: string) {
+  return /[\u3400-\u9fff]/.test(key) ? "cjk" : "latin";
+}
+
+function identityKeySize(key: string) {
+  return key.replace(/[^\p{L}\p{N}]/gu, "").length;
 }
 
 function keysContainSameTitle(left: string, right: string) {

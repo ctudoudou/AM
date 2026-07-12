@@ -30,7 +30,6 @@ import type {
 } from "@/lib/subscription-queue-state";
 import {
   type CandidateQueueSort,
-  sortCandidateGroupsForQueue,
   summarizeCandidateGroupFreshness,
 } from "./subscription-queue";
 
@@ -95,6 +94,7 @@ type CandidateGroup = {
   reviewRequired: boolean;
   aiSummary?: string | null;
   candidates: Candidate[];
+  candidatesLoaded?: boolean;
   subscriptions?: Array<{ id: string }>;
   queueStatus?: SubscriptionQueueDescription;
   sourceSummary?: {
@@ -243,6 +243,8 @@ export function SubscriptionsClient({ locale }: { locale: Locale }) {
   const [loading, setLoading] = useState(true);
   const [candidateLoading, setCandidateLoading] = useState(true);
   const [candidateError, setCandidateError] = useState("");
+  const [candidateDetailError, setCandidateDetailError] = useState("");
+  const [candidateDetailLoadingId, setCandidateDetailLoadingId] = useState<string | null>(null);
   const [selectedGroupId, setSelectedGroupId] = useState<string | null>(null);
   const [pendingSubscription, setPendingSubscription] = useState<PendingSubscription | null>(null);
   const [subscriptionSubmitting, setSubscriptionSubmitting] = useState(false);
@@ -279,20 +281,19 @@ export function SubscriptionsClient({ locale }: { locale: Locale }) {
         .map((subscription) => subscription.candidateGroupId)
         .filter((id): id is string => Boolean(id)),
     );
-    const needle = candidateQuery.trim().toLowerCase();
     const filteredGroups = groups
       .filter((group) => {
         if (candidateFilter === "ACTIVE" || candidateFilter === "UNSUBSCRIBED") {
-          return group.candidates.length > 0;
+          return group._count.candidates > 0;
         }
         if (candidateFilter === "BATCH") {
-          return group.candidates.some(candidateIsBatch);
+          return group._count.candidates > 0;
         }
         if (candidateFilter === "SUBSCRIBED") {
           return subscriptionGroupIds.has(group.id);
         }
         if (candidateFilter === "EMPTY") {
-          return group.candidates.length === 0;
+          return group._count.candidates === 0;
         }
         return true;
       })
@@ -303,14 +304,12 @@ export function SubscriptionsClient({ locale }: { locale: Locale }) {
         if (candidateStatus !== "ALL" && !matchesCandidateStatus(group, candidateStatus, subscriptionGroupIds)) {
           return false;
         }
-        return !needle || matchesCandidateQuery(group, needle);
+        return true;
       });
-    return sortCandidateGroupsForQueue(filteredGroups, candidateSort, subscriptionGroupIds);
+    return filteredGroups;
   }, [
     candidateFilter,
     candidateMediaType,
-    candidateQuery,
-    candidateSort,
     candidateStatus,
     groups,
     subscriptions,
@@ -319,6 +318,59 @@ export function SubscriptionsClient({ locale }: { locale: Locale }) {
     () => visibleGroups.find((group) => group.id === selectedGroupId) ?? visibleGroups[0] ?? null,
     [selectedGroupId, visibleGroups],
   );
+
+  useEffect(() => {
+    if (!selectedGroup || selectedGroup.candidatesLoaded || selectedGroup._count.candidates === 0) {
+      return;
+    }
+    const controller = new AbortController();
+    const source =
+      candidateFilter === "ACTIVE" ||
+      candidateFilter === "BATCH" ||
+      candidateFilter === "UNSUBSCRIBED"
+        ? "subscription"
+        : "all";
+    const timeout = window.setTimeout(() => {
+      setCandidateDetailLoadingId(selectedGroup.id);
+      setCandidateDetailError("");
+      void fetch(`/api/subscription-candidates/${selectedGroup.id}?source=${source}`, {
+        signal: controller.signal,
+      })
+        .then(async (response) => {
+          if (!response.ok) {
+            throw new Error(t.subscriptionsLoadError);
+          }
+          return (await response.json()) as CandidateGroup;
+        })
+        .then((detail) => {
+          setGroups((current) =>
+            current.map((group) =>
+              group.id === detail.id
+                ? { ...group, candidates: detail.candidates, candidatesLoaded: true }
+                : group,
+            ),
+          );
+        })
+        .catch((loadError) => {
+          if (!controller.signal.aborted) {
+            setCandidateDetailError(
+              loadError instanceof Error ? loadError.message : t.subscriptionsLoadError,
+            );
+          }
+        })
+        .finally(() => {
+          if (!controller.signal.aborted) {
+            setCandidateDetailLoadingId((current) =>
+              current === selectedGroup.id ? null : current,
+            );
+          }
+        });
+    }, 0);
+    return () => {
+      window.clearTimeout(timeout);
+      controller.abort();
+    };
+  }, [candidateFilter, selectedGroup, t.subscriptionsLoadError]);
   const subscriptionPreview = useMemo(
     () =>
       pendingSubscription
@@ -386,9 +438,9 @@ export function SubscriptionsClient({ locale }: { locale: Locale }) {
         body.stats ?? {
           totalGroups: body.groups.length,
           filteredGroups: body.groups.length,
-          activeGroups: body.groups.filter((group) => group.candidates.length > 0).length,
+          activeGroups: body.groups.filter((group) => group._count.candidates > 0).length,
           subscribedGroups: 0,
-          emptyGroups: body.groups.filter((group) => group.candidates.length === 0).length,
+          emptyGroups: body.groups.filter((group) => group._count.candidates === 0).length,
           reviewGroups: body.groups.filter((group) => group.reviewRequired).length,
           ungroupedCandidates: 0,
         },
@@ -1090,7 +1142,7 @@ export function SubscriptionsClient({ locale }: { locale: Locale }) {
                   (subscription) => subscription.candidateGroupId === group.id,
                 );
                 const hasAnySubscription = groupSubscriptions.length > 0;
-                const freshness = summarizeCandidateGroupFreshness(group);
+                const freshness = candidateGroupFreshness(group);
                 const queueStatus = group.queueStatus ?? fallbackQueueStatus(group, hasAnySubscription);
 
                 return (
@@ -1130,7 +1182,7 @@ export function SubscriptionsClient({ locale }: { locale: Locale }) {
               const hasFutureOnlySubscription = groupSubscriptions.some((subscription) =>
                 subscriptionMatchesGroupFutureRule(group, subscription),
               );
-              const freshness = summarizeCandidateGroupFreshness(group);
+              const freshness = candidateGroupFreshness(group);
               const queueStatus = group.queueStatus ?? fallbackQueueStatus(group, hasAnySubscription);
 
               return (
@@ -1185,7 +1237,17 @@ export function SubscriptionsClient({ locale }: { locale: Locale }) {
                       ))}
                     </div>
                   ) : null}
-                  {group.candidates.length === 0 ? (
+                  {candidateDetailError && !group.candidatesLoaded ? (
+                    <div className="settings-alert candidate-load-error">
+                      {candidateDetailError}
+                    </div>
+                  ) : candidateDetailLoadingId === group.id ||
+                    (!group.candidatesLoaded && group._count.candidates > 0) ? (
+                    <div className="candidate-initial-loading">
+                      <Loader2 size={16} />
+                      {t.loading}
+                    </div>
+                  ) : group._count.candidates === 0 ? (
                     <div className="candidate-empty-version">
                       {t.noVersionsYet} {formatQueueReason(queueStatus.reason, t)}
                     </div>
@@ -2163,24 +2225,6 @@ function matchesSubscriptionQuery(subscription: Subscription, needle: string) {
   ].some((value) => value.toLowerCase().includes(needle));
 }
 
-function matchesCandidateQuery(group: CandidateGroup, needle: string) {
-  return [
-    group.displayTitle,
-    group.normalizedTitle,
-    group.aiSummary ?? "",
-    ...group.candidates.flatMap((candidate) => [
-      candidate.rawTitle,
-      candidate.subtitleGroup ?? "",
-      candidate.resolution ?? "",
-      candidate.codec ?? "",
-      candidate.audio ?? "",
-      candidate.subtitleLanguage ?? "",
-      candidate.releaseProfile ?? "",
-      candidate.sourceKind ?? "",
-    ]),
-  ].some((value) => value.toLowerCase().includes(needle));
-}
-
 function matchesCandidateStatus(
   group: CandidateGroup,
   status: CandidateStatusFilter,
@@ -2188,13 +2232,13 @@ function matchesCandidateStatus(
 ) {
   if (status === "ACTIONABLE") {
     return (
-      group.candidates.length > 0 &&
+      group._count.candidates > 0 &&
       !group.reviewRequired &&
       !subscriptionGroupIds.has(group.id)
     );
   }
   if (status === "READY") {
-    return group.candidates.length > 0 && !group.reviewRequired;
+    return group._count.candidates > 0 && !group.reviewRequired;
   }
   if (status === "REVIEW") {
     return group.reviewRequired;
@@ -2203,7 +2247,7 @@ function matchesCandidateStatus(
     return subscriptionGroupIds.has(group.id);
   }
   if (status === "EMPTY") {
-    return group.candidates.length === 0;
+    return group._count.candidates === 0;
   }
   return true;
 }
@@ -2242,7 +2286,7 @@ function pageRangeLabel(page: CandidatePage) {
 }
 
 function formatCandidateFreshness(
-  freshness: ReturnType<typeof summarizeCandidateGroupFreshness>,
+  freshness: ReturnType<typeof candidateGroupFreshness>,
   locale: Locale,
   t: ReturnType<typeof getMessages>,
 ) {
@@ -2264,6 +2308,19 @@ function formatCandidateFreshness(
     }
   }
   return parts.filter(Boolean).join(" · ");
+}
+
+function candidateGroupFreshness(group: CandidateGroup) {
+  const candidateFreshness = summarizeCandidateGroupFreshness(group);
+  if (candidateFreshness) {
+    return candidateFreshness;
+  }
+  const createdAt =
+    group.sourceSummary?.latestFetchedAt ??
+    group.sourceSummary?.latestPublishedAt ??
+    group.sourceSummary?.latestMergedAt ??
+    null;
+  return createdAt ? { sourceKind: null, createdAt } : null;
 }
 
 function formatCandidateSourceSummary(
@@ -2294,7 +2351,7 @@ function fallbackQueueStatus(
   if (hasSubscription) {
     return { state: "SUBSCRIBED", reason: "alreadySubscribed", canSubscribeVersion: false };
   }
-  if (group.candidates.length === 0) {
+  if (group._count.candidates === 0) {
     return { state: "EMPTY", reason: "noVersions", canSubscribeVersion: false };
   }
   if (group.reviewRequired) {
