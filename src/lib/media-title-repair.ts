@@ -95,6 +95,33 @@ export async function mergeDuplicateTvTitles() {
   return mergeDuplicateMediaTitles("TV");
 }
 
+export async function normalizeMediaPrimaryTitles(type: MediaType) {
+  if (type !== "TV") {
+    return { inspected: 0, updated: 0, results: [] };
+  }
+  const media = await prisma.mediaTitle.findMany({
+    where: { type },
+    select: { id: true, primaryTitle: true },
+  });
+  const results: Array<{ id: string; from: string; to: string }> = [];
+  for (const item of media) {
+    const normalized = normalizeMediaTitleForRepair(item.primaryTitle, type);
+    if (!normalized || normalized === item.primaryTitle) {
+      continue;
+    }
+    await prisma.mediaTitle.update({
+      where: { id: item.id },
+      data: { primaryTitle: normalized },
+    });
+    results.push({ id: item.id, from: item.primaryTitle, to: normalized });
+  }
+  return { inspected: media.length, updated: results.length, results };
+}
+
+export function normalizeMediaTitleForRepair(title: string, type: MediaType) {
+  return cleanMediaPrimaryTitle(title, type);
+}
+
 export async function mergeDuplicateMediaTitles(type: MediaType) {
   const media = await prisma.mediaTitle.findMany({
     where: { type },

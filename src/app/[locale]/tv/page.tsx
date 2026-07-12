@@ -30,6 +30,7 @@ export default async function TvPage({
           detailBasePath="/tv"
           emptyMessage={t.noTvTitles}
           locale={locale}
+          mediaType="TV"
         />
       </section>
     </main>

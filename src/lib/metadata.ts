@@ -3,7 +3,11 @@ import { Prisma, type MediaType } from "@prisma/client";
 import { prisma } from "@/lib/db";
 import { normalizeTitleAliases } from "@/lib/anime-parser";
 import { parseMediaReleaseTitle } from "@/lib/media-parser";
-import { cacheRemoteMediaAsset, isLocalMediaAssetUrl } from "@/lib/media-assets";
+import {
+  cacheRemoteMediaAsset,
+  isLocalMediaAssetUrl,
+  localMediaAssetExists,
+} from "@/lib/media-assets";
 import { getAppSettings, type AppSettings } from "@/lib/settings";
 import {
   aliasesFromMetadataRaw,
@@ -240,24 +244,37 @@ export async function refreshMediaLibraryMetadata(input?: {
     where: {
       type: input?.mediaType,
       id: input?.titleId,
-      ...(input?.onlyMissing === false
-        ? {}
-        : {
-            OR: [{ posterUrl: null }, { backdropUrl: null }, { synopsis: null }],
-          }),
     },
     select: {
       id: true,
+      posterUrl: true,
+      backdropUrl: true,
+      synopsis: true,
     },
   });
+  const targets = input?.onlyMissing === false
+    ? titles
+    : (
+        await Promise.all(
+          titles.map(async (title) => ({
+            title,
+            needsRefresh:
+              !title.posterUrl ||
+              !title.backdropUrl ||
+              !title.synopsis ||
+              (isLocalMediaAssetUrl(title.posterUrl) && !(await localMediaAssetExists(title.posterUrl))) ||
+              (isLocalMediaAssetUrl(title.backdropUrl) && !(await localMediaAssetExists(title.backdropUrl))),
+          })),
+        )
+      ).filter((item) => item.needsRefresh).map((item) => item.title);
   const results = [];
 
-  for (const title of titles) {
+  for (const title of targets) {
     results.push(await refreshMediaMetadata(title.id));
   }
 
   return {
-    checked: titles.length,
+    checked: targets.length,
     updated: results.filter((result) => result.updated).length,
     results,
   };
@@ -308,6 +325,20 @@ export async function refreshMediaMetadata(titleId: string) {
       updated: false,
       queries,
       provider: null,
+      reason: queries.length > 0 ? "NO_MATCH" : "NO_QUERY",
+    };
+  }
+  if (!isReliableGenericMetadataMatch(best)) {
+    return {
+      id: media.id,
+      title: media.primaryTitle,
+      updated: false,
+      queries,
+      provider: best.provider,
+      reason: "LOW_CONFIDENCE",
+      matchedTitle: best.title,
+      score: best.score,
+      relevance: best.relevance ?? null,
     };
   }
 
@@ -321,16 +352,22 @@ export async function refreshMediaMetadata(titleId: string) {
     ]),
     ...aliasesFromMetadataRaw(best.raw),
   ]);
+  const existingPosterUrl = isLocalMediaAssetUrl(media.posterUrl) && await localMediaAssetExists(media.posterUrl)
+    ? media.posterUrl
+    : undefined;
+  const existingBackdropUrl = isLocalMediaAssetUrl(media.backdropUrl) && await localMediaAssetExists(media.backdropUrl)
+    ? media.backdropUrl
+    : undefined;
   const posterUrl =
     (await cacheRemoteMediaAsset(best.posterUrl, {
       mediaId: media.id,
       kind: "poster",
-    })) ?? (isLocalMediaAssetUrl(media.posterUrl) ? media.posterUrl : undefined);
+    })) ?? existingPosterUrl;
   const backdropUrl =
     (await cacheRemoteMediaAsset(best.backdropUrl, {
       mediaId: media.id,
       kind: "backdrop",
-    })) ?? (isLocalMediaAssetUrl(media.backdropUrl) ? media.backdropUrl : undefined);
+    })) ?? existingBackdropUrl;
 
   const updated = await prisma.mediaTitle.update({
     where: { id: media.id },
@@ -339,8 +376,8 @@ export async function refreshMediaMetadata(titleId: string) {
       originalTitle: best.originalTitle,
       year: best.year,
       synopsis: best.synopsis,
-      posterUrl,
-      backdropUrl,
+      posterUrl: posterUrl ?? null,
+      backdropUrl: backdropUrl ?? null,
     },
     select: {
       id: true,
@@ -377,6 +414,14 @@ export async function refreshMediaMetadata(titleId: string) {
     queries,
     provider: best.provider,
     posterUrl: updated.posterUrl,
+    reason: updated.posterUrl
+      ? "UPDATED"
+      : best.posterUrl
+        ? "POSTER_CACHE_FAILED"
+        : "MATCH_WITHOUT_POSTER",
+    matchedTitle: best.title,
+    score: best.score,
+    relevance: best.relevance ?? null,
   };
 }
 
@@ -1156,6 +1201,10 @@ export function scoreMetadataRelevance(query: string, result: MetadataMatch) {
   }
 
   return best;
+}
+
+export function isReliableGenericMetadataMatch(result: MetadataMatch) {
+  return result.score >= 0.78 && (result.relevance ?? 0) >= 0.82;
 }
 
 function isSideStoryOrCollaborationResult(query: string, result: MetadataMatch) {

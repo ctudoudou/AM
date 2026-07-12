@@ -37,7 +37,8 @@ export function MediaTitleActions({
       if (!response.ok) {
         throw new Error(t.metadataActionError);
       }
-      setMessage(t.metadataActionDone);
+      const result = await response.json();
+      setMessage(metadataResultMessage(result, t));
       router.refresh();
     } catch (error) {
       setMessage(error instanceof Error ? error.message : t.metadataActionError);
@@ -65,9 +66,7 @@ export function MediaTitleActions({
       const result = await response.json();
       setAlias("");
       setMessage(
-        result?.metadata?.updated || result?.metadata?.provider
-          ? t.metadataActionDone
-          : t.metadataAliasNoMatch,
+        metadataResultMessage(result?.metadata, t),
       );
       router.refresh();
     } catch (error) {
@@ -126,4 +125,23 @@ export function MediaTitleActions({
       {message ? <span>{message}</span> : null}
     </div>
   );
+}
+
+function metadataResultMessage(
+  result: { updated?: boolean; reason?: string } | null | undefined,
+  t: ReturnType<typeof getMessages>,
+) {
+  if (result?.reason === "LOW_CONFIDENCE") {
+    return t.metadataLowConfidence;
+  }
+  if (result?.reason === "POSTER_CACHE_FAILED") {
+    return t.metadataPosterCacheFailed;
+  }
+  if (result?.reason === "MATCH_WITHOUT_POSTER") {
+    return t.metadataMatchWithoutPoster;
+  }
+  if (result?.updated || result?.reason === "UPDATED") {
+    return t.metadataActionDone;
+  }
+  return t.metadataAliasNoMatch;
 }
