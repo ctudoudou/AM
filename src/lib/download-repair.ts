@@ -96,6 +96,7 @@ export type DownloadRepairRecord = Pick<
   | "totalBytes"
   | "aria2Files"
   | "errorMessage"
+  | "repairNote"
   | "supersededById"
   | "createdAt"
 >;
@@ -189,19 +190,49 @@ export function buildDownloadRepairPlan(snapshot: DownloadRepairSnapshot): Downl
   const items = failed.map((download) => {
     const artifact = snapshot.artifacts.get(download.id) ?? emptyArtifact;
     const current = download.aria2Gid ? knownByGid.get(download.aria2Gid) : undefined;
-    if (current) {
-      return repairItem(download, artifact, {
-        kind: "sync_existing_gid",
-        confidence: "high",
-        reason: "The database GID still exists in aria2 and can be synchronized without re-adding the source.",
-      });
-    }
-
     if (artifact.targetState === "complete") {
       return repairItem(download, artifact, {
         kind: "mark_completed",
         confidence: "high",
         reason: "The target file exists inside DOWNLOADS_DIR and is at least the expected byte length.",
+      });
+    }
+
+    if (current) {
+      const followedCanonical = (current.followedBy ?? [])
+        .map((gid) => trackedByGid.get(gid))
+        .find((tracked) => tracked && tracked.id !== download.id);
+      if (followedCanonical) {
+        return repairItem(download, artifact, {
+          kind: "supersede_duplicate",
+          confidence: "high",
+          reason: `The metadata GID follows an aria2 task tracked by canonical download ${followedCanonical.id}.`,
+          canonicalDownloadId: followedCanonical.id,
+        });
+      }
+      if (current.status === "error" || current.status === "removed") {
+        if (download.repairNote?.startsWith("Controlled source retry completed")) {
+          return repairItem(download, artifact, {
+            kind: "manual_review",
+            confidence: "low",
+            executable: false,
+            reason: current.errorMessage
+              ? `The controlled retry remains failed in aria2: ${current.errorMessage}`
+              : "The controlled retry remains failed in aria2.",
+          });
+        }
+        return repairItem(download, artifact, {
+          kind: "retry_source",
+          confidence: "medium",
+          reason: current.errorMessage
+            ? `The current aria2 task is failed and can be recreated from its source: ${current.errorMessage}`
+            : "The current aria2 task is failed and can be recreated from its source.",
+        });
+      }
+      return repairItem(download, artifact, {
+        kind: "sync_existing_gid",
+        confidence: "high",
+        reason: "The database GID still exists in aria2 and can be synchronized without re-adding the source.",
       });
     }
 
