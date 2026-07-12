@@ -16,12 +16,18 @@ export async function GET(request: Request) {
     const url = new URL(request.url);
     const view = url.searchParams.get("view") ?? "active";
     const status = url.searchParams.get("status");
+    const page = clampPositiveInt(Number(url.searchParams.get("page")), 1, 10_000);
+    const requestedPageSize = Number(url.searchParams.get("pageSize"));
     const requestedLimit = Number(url.searchParams.get("limit"));
-    const limit = Number.isFinite(requestedLimit)
-      ? Math.min(Math.max(Math.floor(requestedLimit), 1), 300)
-      : view === "history"
-        ? 100
-        : 200;
+    const pagination = url.searchParams.has("page") || url.searchParams.has("pageSize");
+    const pageSize = pagination
+      ? clampPositiveInt(requestedPageSize, 50, 100)
+      : Number.isFinite(requestedLimit)
+        ? Math.min(Math.max(Math.floor(requestedLimit), 1), 300)
+        : view === "history"
+          ? 100
+          : 200;
+    const skip = pagination ? (page - 1) * pageSize : 0;
     const statusFilter: OrganizerPlanStatus[] =
       status && statusSet.has(status)
         ? [status as OrganizerPlanStatus]
@@ -44,11 +50,12 @@ export async function GET(request: Request) {
           }
         : {}),
     } satisfies Prisma.OrganizerPlanWhereInput;
-    const [plans, groupedStatuses, active, autoExecutable, all] = await Promise.all([
+    const [plans, filteredTotal, groupedStatuses, active, autoExecutable, all] = await Promise.all([
       prisma.organizerPlan.findMany({
         where,
         orderBy: { updatedAt: "desc" },
-        take: limit,
+        skip,
+        take: pageSize,
         include: {
           items: true,
           candidate: { include: { group: true } },
@@ -56,6 +63,7 @@ export async function GET(request: Request) {
           mediaTitle: true,
         },
       }),
+      prisma.organizerPlan.count({ where }),
       prisma.organizerPlan.groupBy({
         by: ["status"],
         _count: { _all: true },
@@ -90,8 +98,23 @@ export async function GET(request: Request) {
           groupedStatuses.map((item) => [item.status, item._count._all]),
         ),
       },
+      page: {
+        page,
+        pageSize,
+        total: filteredTotal,
+        totalPages: Math.max(1, Math.ceil(filteredTotal / pageSize)),
+        hasNext: skip + plans.length < filteredTotal,
+        hasPrevious: skip > 0,
+      },
     });
   } catch (error) {
     return jsonError(error);
   }
+}
+
+function clampPositiveInt(value: number, fallback: number, max: number) {
+  if (!Number.isFinite(value)) {
+    return fallback;
+  }
+  return Math.min(Math.max(Math.floor(value), 1), max);
 }

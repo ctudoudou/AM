@@ -76,11 +76,29 @@ type OrganizerStats = {
   byStatus: Record<string, number | undefined>;
 };
 
+type OrganizerPage = {
+  page: number;
+  pageSize: number;
+  total: number;
+  totalPages: number;
+  hasNext: boolean;
+  hasPrevious: boolean;
+};
+
 export function OrganizerClient({ locale }: { locale: Locale }) {
   const t = getMessages(locale);
   const [plans, setPlans] = useState<OrganizerPlan[]>([]);
   const [stats, setStats] = useState<OrganizerStats | null>(null);
   const [filter, setFilter] = useState<OrganizerFilter>("ACTIVE");
+  const [planPage, setPlanPage] = useState(1);
+  const [pageInfo, setPageInfo] = useState<OrganizerPage>({
+    page: 1,
+    pageSize: 50,
+    total: 0,
+    totalPages: 1,
+    hasNext: false,
+    hasPrevious: false,
+  });
   const [importDraft, setImportDraft] = useState({ root: "", mediaType: "AUTO" });
   const [importing, setImporting] = useState(false);
   const [reviewing, setReviewing] = useState(false);
@@ -93,20 +111,38 @@ export function OrganizerClient({ locale }: { locale: Locale }) {
 
   const load = useCallback(async () => {
     try {
-      const response = await fetch(`/api/organizer/plans?${organizerPlanParams(filter)}`);
+      const response = await fetch(`/api/organizer/plans?${organizerPlanParams(filter, planPage)}`);
       if (!response.ok) {
         throw new Error(t.organizerLoadError);
       }
-      const body = (await response.json()) as { plans: OrganizerPlan[]; stats?: OrganizerStats };
+      const body = (await response.json()) as {
+        plans: OrganizerPlan[];
+        stats?: OrganizerStats;
+        page?: OrganizerPage;
+      };
+      if (body.page && body.page.page > body.page.totalPages) {
+        setPlanPage(body.page.totalPages);
+        return;
+      }
       setPlans(body.plans);
       setStats(body.stats ?? null);
+      setPageInfo(
+        body.page ?? {
+          page: 1,
+          pageSize: body.plans.length || 50,
+          total: body.plans.length,
+          totalPages: 1,
+          hasNext: false,
+          hasPrevious: false,
+        },
+      );
       setError("");
     } catch (loadError) {
       setError(loadError instanceof Error ? loadError.message : t.organizerLoadError);
     } finally {
       setLoading(false);
     }
-  }, [filter, t.organizerLoadError]);
+  }, [filter, planPage, t.organizerLoadError]);
 
   const loadImportRoot = useCallback(async () => {
     const response = await fetch("/api/settings");
@@ -371,7 +407,10 @@ export function OrganizerClient({ locale }: { locale: Locale }) {
               <button
                 className={filter === status ? "active" : ""}
                 key={status}
-                onClick={() => setFilter(status)}
+                onClick={() => {
+                  setPlanPage(1);
+                  setFilter(status);
+                }}
                 type="button"
               >
                 <span>{formatOrganizerFilter(status, t)}</span>
@@ -387,7 +426,10 @@ export function OrganizerClient({ locale }: { locale: Locale }) {
               <button
                 className={filter === status ? "active" : ""}
                 key={status}
-                onClick={() => setFilter(status)}
+                onClick={() => {
+                  setPlanPage(1);
+                  setFilter(status);
+                }}
                 type="button"
               >
                 <span>{formatOrganizerFilter(status, t)}</span>
@@ -399,6 +441,13 @@ export function OrganizerClient({ locale }: { locale: Locale }) {
       </div>
       {error ? <div className="settings-alert">{error}</div> : null}
       {status ? <div className="settings-success">{status}</div> : null}
+      <div className="organizer-result-summary">
+        <span>
+          {filter === "ALL"
+            ? `${t.allOrganizerPlans}: ${pageInfo.total}`
+            : `${formatOrganizerFilter(filter, t)}: ${pageInfo.total} · ${t.allOrganizerPlans}: ${stats?.all ?? "-"}`}
+        </span>
+      </div>
       <div className="organizer-list">
         {plans.length === 0 ? (
           <p>{emptyOrganizerMessage(filter, t)}</p>
@@ -490,6 +539,30 @@ export function OrganizerClient({ locale }: { locale: Locale }) {
           })
         )}
       </div>
+      {pageInfo.total > 0 ? (
+        <div className="candidate-pagination">
+          <span>
+            {t.queuePage} {pageInfo.page} / {pageInfo.totalPages} · {t.queueShowing}{" "}
+            {organizerPageRangeLabel(pageInfo)}
+          </span>
+          <div>
+            <button
+              disabled={!pageInfo.hasPrevious}
+              onClick={() => setPlanPage((page) => Math.max(1, page - 1))}
+              type="button"
+            >
+              {t.queuePrevious}
+            </button>
+            <button
+              disabled={!pageInfo.hasNext}
+              onClick={() => setPlanPage((page) => page + 1)}
+              type="button"
+            >
+              {t.queueNext}
+            </button>
+          </div>
+        </div>
+      ) : null}
     </section>
   );
 }
@@ -517,7 +590,7 @@ function canRegeneratePlan(plan: OrganizerPlan) {
   return plan.status === "REJECTED";
 }
 
-function organizerPlanParams(filter: OrganizerFilter) {
+function organizerPlanParams(filter: OrganizerFilter, page: number) {
   const params = new URLSearchParams();
   if (filter === "ACTIVE") {
     params.set("view", "active");
@@ -527,12 +600,21 @@ function organizerPlanParams(filter: OrganizerFilter) {
     params.set("view", "history");
   } else if (filter === "ALL") {
     params.set("view", "all");
-    params.set("limit", "300");
   } else {
     params.set("status", filter);
-    params.set("limit", ["EXECUTED", "REJECTED", "AUTO_ARCHIVED"].includes(filter) ? "100" : "200");
   }
+  params.set("page", String(page));
+  params.set("pageSize", "50");
   return params.toString();
+}
+
+function organizerPageRangeLabel(page: OrganizerPage) {
+  if (page.total === 0) {
+    return "0 / 0";
+  }
+  const start = (page.page - 1) * page.pageSize + 1;
+  const end = Math.min(page.page * page.pageSize, page.total);
+  return `${start}-${end} / ${page.total}`;
 }
 
 function formatOrganizerFilter(filter: OrganizerFilter, t: ReturnType<typeof getMessages>) {
