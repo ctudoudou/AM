@@ -53,6 +53,7 @@ vi.mock("@/lib/db", () => ({
       create: vi.fn(),
       delete: vi.fn(),
       findMany: vi.fn(),
+      findUnique: vi.fn(),
       findUniqueOrThrow: vi.fn(),
       update: vi.fn(),
     },
@@ -587,42 +588,78 @@ describe("regenerateRejectedOrganizerPlan", () => {
     expect(prisma.organizerPlan.create).not.toHaveBeenCalled();
   });
 
-  it("resets the download, removes the rejected plan, and creates a replacement", async () => {
+  it("creates a valid replacement before removing the rejected plan", async () => {
+    vi.mocked(fs.stat).mockReset();
+    vi.mocked(fs.stat).mockResolvedValue({ size: 100, isFile: () => true } as never);
     const newPlan = { id: "plan-2", status: "NEEDS_REVIEW", items: [] };
     vi.mocked(prisma.organizerPlan.findUniqueOrThrow).mockResolvedValueOnce({
       id: "plan-1",
       status: "REJECTED",
       downloadId: "download-1",
+      download: { archiveStatus: "organizer_failed" },
+      items: [{ sourcePath: "/data/downloads/episode.mkv" }],
     } as never);
+    vi.mocked(fs.access).mockResolvedValueOnce(undefined);
     vi.mocked(prisma.organizerPlan.findMany).mockResolvedValueOnce([] as never);
-    vi.mocked(prisma.download.update).mockResolvedValueOnce({ id: "download-1" } as never);
-    vi.mocked(prisma.organizerPlan.delete).mockResolvedValueOnce({ id: "plan-1" } as never);
     vi.mocked(prisma.download.findUniqueOrThrow).mockResolvedValueOnce({
       id: "download-1",
       candidateId: null,
-      candidate: null,
-      targetPath: null,
+      candidate: {
+        id: "candidate-1",
+        groupId: "group-1",
+        mediaType: "ANIME",
+        group: { id: "group-1" },
+      },
+      targetPath: "/data/downloads/episode.mkv",
+      aria2Files: [
+        { path: "[METADATA]08a536f95860edf4a351aeee82411c8d290a3efc", selected: "true" },
+        { path: "/data/downloads/episode.mkv", selected: "true" },
+      ],
     } as never);
+    vi.mocked(prisma.releaseCandidate.findUniqueOrThrow).mockResolvedValueOnce({
+      id: "candidate-1",
+      groupId: "group-1",
+      mediaType: "ANIME",
+      parsedTitle: "Episode",
+      normalizedTitle: "episode",
+      episodeNumber: 1,
+      season: 1,
+      group: { displayTitle: "Episode", normalizedTitle: "episode", aliases: [] },
+    } as never);
+    vi.mocked(prisma.releaseCandidate.findMany).mockResolvedValueOnce([] as never);
     vi.mocked(prisma.organizerPlan.create).mockResolvedValueOnce(newPlan as never);
+    vi.mocked(prisma.organizerPlan.findUniqueOrThrow).mockResolvedValueOnce({
+      items: [{ id: "replacement-item" }],
+    } as never);
+    vi.mocked(prisma.organizerPlan.delete).mockResolvedValueOnce({ id: "plan-1" } as never);
 
     await expect(regenerateRejectedOrganizerPlan("plan-1")).resolves.toBe(newPlan);
-    expect(prisma.download.update).toHaveBeenCalledWith({
-      where: { id: "download-1" },
-      data: { archiveStatus: null },
-    });
-    expect(prisma.organizerPlan.delete).toHaveBeenCalledWith({
+    expect(prisma.organizerPlan.update).toHaveBeenCalledWith({
       where: { id: "plan-1" },
-    });
-    expect(prisma.organizerPlan.create).toHaveBeenCalledWith({
       data: {
-        downloadId: "download-1",
-        candidateId: null,
-        mediaType: "ANIME",
-        status: "NEEDS_REVIEW",
-        confidence: 0,
-        reason: "Download has no grouped candidate",
+        resolvedAt: expect.any(Date),
+        resolution: "Regenerated as organizer plan plan-2.",
       },
     });
+    expect(prisma.organizerPlan.delete).not.toHaveBeenCalled();
+  });
+
+  it("keeps the rejected plan when its source file is missing", async () => {
+    vi.mocked(fs.access).mockReset();
+    vi.mocked(fs.access).mockRejectedValue(new Error("missing"));
+    vi.mocked(prisma.organizerPlan.findUniqueOrThrow).mockResolvedValueOnce({
+      id: "plan-1",
+      status: "REJECTED",
+      downloadId: "download-1",
+      download: { archiveStatus: "organizer_failed" },
+      items: [{ sourcePath: "/data/downloads/missing.mkv" }],
+    } as never);
+    vi.mocked(prisma.organizerPlan.findMany).mockResolvedValueOnce([] as never);
+    await expect(regenerateRejectedOrganizerPlan("plan-1")).rejects.toThrow(
+      "Rejected organizer plan source files are missing.",
+    );
+    expect(prisma.organizerPlan.delete).not.toHaveBeenCalled();
+    expect(prisma.download.update).not.toHaveBeenCalled();
   });
 });
 

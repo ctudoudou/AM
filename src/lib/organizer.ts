@@ -718,18 +718,33 @@ export async function autoExecuteReadyOrganizerPlans(limit = 20) {
 export async function rejectOrganizerPlan(planId: string) {
   return prisma.organizerPlan.update({
     where: { id: planId },
-    data: { status: "REJECTED", reason: "Rejected by user" },
+    data: {
+      status: "REJECTED",
+      reason: "Rejected by user",
+      resolvedAt: null,
+      resolution: null,
+    },
   });
 }
 
 export async function regenerateRejectedOrganizerPlan(planId: string) {
   const plan = await prisma.organizerPlan.findUniqueOrThrow({
     where: { id: planId },
-    select: { id: true, status: true, downloadId: true },
+    select: {
+      id: true,
+      status: true,
+      resolvedAt: true,
+      downloadId: true,
+      items: { select: { sourcePath: true } },
+      download: { select: { archiveStatus: true } },
+    },
   });
 
   if (plan.status !== "REJECTED") {
     throw new Error("Only rejected organizer plans can be regenerated.");
+  }
+  if (plan.resolvedAt) {
+    throw new Error("Resolved organizer plans cannot be regenerated.");
   }
   if (!plan.downloadId) {
     throw new Error("Rejected organizer plan has no linked download.");
@@ -746,15 +761,38 @@ export async function regenerateRejectedOrganizerPlan(planId: string) {
     throw new Error("Download already has an active or completed organizer plan.");
   }
 
-  await prisma.download.update({
-    where: { id: plan.downloadId },
-    data: { archiveStatus: null },
-  });
-  await prisma.organizerPlan.delete({
-    where: { id: plan.id },
-  });
+  const sourceItems = await withSourceExistence(plan.items);
+  if (sourceItems.length === 0 || sourceItems.every((item) => !item.sourceExists)) {
+    throw new Error("Rejected organizer plan source files are missing.");
+  }
 
-  return createOrganizerPlanForDownload(plan.downloadId);
+  let replacement: Awaited<ReturnType<typeof createOrganizerPlanForDownload>>;
+  try {
+    replacement = await createOrganizerPlanForDownload(plan.downloadId);
+    const created = await prisma.organizerPlan.findUniqueOrThrow({
+      where: { id: replacement.id },
+      select: { items: { select: { id: true } } },
+    });
+    if (created.items.length === 0) {
+      await prisma.organizerPlan.delete({ where: { id: replacement.id } });
+      throw new Error("Replacement organizer plan has no files to process.");
+    }
+  } catch (error) {
+    await prisma.download.update({
+      where: { id: plan.downloadId },
+      data: { archiveStatus: plan.download?.archiveStatus ?? "organizer_failed" },
+    });
+    throw error;
+  }
+
+  await prisma.organizerPlan.update({
+    where: { id: plan.id },
+    data: {
+      resolvedAt: new Date(),
+      resolution: `Regenerated as organizer plan ${replacement.id}.`,
+    },
+  });
+  return replacement;
 }
 
 export async function cleanupPollutedOrganizerPlans() {
@@ -910,7 +948,11 @@ function selectedAria2SourcePaths(value: unknown) {
     .filter((file) => file.selected !== "false")
     .map((file) => file.path)
     .filter((filePath): filePath is string => {
-      return typeof filePath === "string" && filePath.length > 0 && filePath !== "[METADATA]";
+      return (
+        typeof filePath === "string" &&
+        filePath.length > 0 &&
+        !filePath.startsWith("[METADATA]")
+      );
     });
 }
 
