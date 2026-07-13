@@ -73,7 +73,7 @@ describe("/api/organizer/plans", () => {
     );
   });
 
-  it("hides resolved rejected plans unless audit history is explicitly requested", async () => {
+  it("hides resolved plans unless audit history is explicitly requested", async () => {
     organizerPlan.count
       .mockResolvedValueOnce(1)
       .mockResolvedValueOnce(1)
@@ -87,6 +87,22 @@ describe("/api/organizer/plans", () => {
     expect(organizerPlan.findMany).toHaveBeenCalledWith(
       expect.objectContaining({
         where: expect.objectContaining({ status: { in: ["REJECTED"] }, resolvedAt: null }),
+      }),
+    );
+
+    vi.clearAllMocks();
+    organizerPlan.findMany.mockResolvedValue([]);
+    organizerPlan.groupBy.mockResolvedValue([]);
+    organizerPlan.count.mockResolvedValue(0);
+    await GET(
+      new Request("http://localhost/api/organizer/plans?status=NEEDS_REVIEW&page=1&pageSize=50"),
+    );
+    expect(organizerPlan.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({
+          status: { in: ["NEEDS_REVIEW"] },
+          resolvedAt: null,
+        }),
       }),
     );
 

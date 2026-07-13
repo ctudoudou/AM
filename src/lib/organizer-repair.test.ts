@@ -8,6 +8,7 @@ function group(overrides: Partial<OrganizerRepairGroup> = {}): OrganizerRepairGr
   return {
     key: "download:download-1",
     planIds: ["plan-1"],
+    statuses: ["REJECTED"],
     downloadId: "download-1",
     downloadStatus: "COMPLETED",
     archiveStatus: "organizer_failed",
@@ -37,6 +38,29 @@ describe("organizer repair planning", () => {
       group({ archivedEvidencePaths: ["/data/library/anime/Alias/Season 01/episode.mkv"] }),
     ]);
     expect(result.items[0]).toMatchObject({ kind: "resolve_archived", confidence: "high" });
+  });
+
+  it("resolves an orphaned empty review only with archived-file evidence", () => {
+    const result = buildOrganizerRepairPlan([
+      group({
+        statuses: ["NEEDS_REVIEW"],
+        hasItems: false,
+        sourcePaths: [{ path: "/data/downloads/example.mkv", exists: true }],
+        archivedEvidencePaths: ["/data/library/anime/Example/Season 01/example.mkv"],
+      }),
+    ]);
+    expect(result.items[0]).toMatchObject({ kind: "resolve_archived", executable: true });
+  });
+
+  it("does not regenerate an orphaned empty review without archived-file evidence", () => {
+    const result = buildOrganizerRepairPlan([
+      group({
+        statuses: ["NEEDS_REVIEW"],
+        hasItems: false,
+        sourcePaths: [{ path: "/data/downloads/example.mkv", exists: true }],
+      }),
+    ]);
+    expect(result.items[0]).toMatchObject({ kind: "manual_review", executable: false });
   });
 
   it("regenerates only when a source exists and no plan blocks it", () => {

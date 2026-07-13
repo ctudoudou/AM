@@ -11,6 +11,7 @@ import {
   cleanupPollutedOrganizerPlans,
   createOrganizerPlanForCandidateSource,
   hasBlockingOrganizerPlan,
+  hasUnresolvedOrganizerReviewPlan,
   inspectCompletedDownloads,
   isAutoExecutableOrganizerPlan,
   organizerTargetPathLooksPolluted,
@@ -134,6 +135,28 @@ describe("resolveOrganizerItemIdentity", () => {
     expect(identity.season).toBe(2);
     expect(identity.episodeNumber).toBe(4);
   });
+
+  it("prefers distinct source episodes for a multi-file batch with a stale candidate episode", () => {
+    const identity = resolveOrganizerItemIdentity({
+      sourcePath: "/data/downloads/Dagashi Kashi 2018 S02E12 BDRip 1080p AV1 OPUS.mkv",
+      preferSourceEpisode: true,
+      candidate: {
+        mediaType: "ANIME",
+        parsedTitle: "Dagashi Kashi",
+        normalizedTitle: "dagashi kashi",
+        episodeNumber: 2,
+        season: 2,
+        group: {
+          displayTitle: "Dagashi Kashi",
+          normalizedTitle: "dagashi kashi",
+          aliases: [],
+        },
+      },
+    });
+
+    expect(identity.season).toBe(2);
+    expect(identity.episodeNumber).toBe(12);
+  });
 });
 
 describe("buildOrganizerEpisodeTitleSegment", () => {
@@ -210,6 +233,55 @@ describe("resolveOrganizerMediaType", () => {
 });
 
 describe("createOrganizerPlanForCandidateSource", () => {
+  it("replans a stale Dagashi Kashi batch candidate into distinct season-two episodes", async () => {
+    const sourcePaths = [1, 2, 12].map(
+      (episode) =>
+        `/data/downloads/[BDrip] Dagashi Kashi S02 [ktnbytes]/Dagashi Kashi 2018 S02E${String(episode).padStart(2, "0")}-[1080p][BDRIP][AV1.OPUS].mkv`,
+    );
+    vi.mocked(prisma.releaseCandidate.findUniqueOrThrow).mockResolvedValueOnce(
+      organizerReleaseCandidate({
+        rawTitle:
+          "[7³ACG] 粗点心战争 第2季/Dagashi Kashi S02 | 01-12 [简繁字幕] BDrip 1080p AV1 OPUS 2.0",
+        parsedTitle: "粗点心战争 第2季 Dagashi Kashi S02 01-12",
+        normalizedTitle: "粗点心战争 dagashi kashi 01 12",
+        episodeNumber: 2,
+      }) as never,
+    );
+    vi.mocked(prisma.releaseCandidate.findMany).mockResolvedValueOnce([] as never);
+    vi.mocked(matchMetadataForGroup).mockResolvedValueOnce({
+      provider: "fallback",
+      externalId: "",
+      title: "粗点心战争 第2季 Dagashi Kashi S02 01-12",
+      score: 0.55,
+      relevance: 0.5,
+    } as never);
+    vi.mocked(prisma.organizerPlan.create).mockResolvedValueOnce({ id: "plan-1" } as never);
+
+    await createOrganizerPlanForCandidateSource({
+      candidateId: "candidate-1",
+      downloadId: "download-1",
+      sourceRoot: sourcePaths[0],
+      sourcePaths,
+    });
+
+    const createArgs = vi.mocked(prisma.organizerPlan.create).mock.calls[0]?.[0] as {
+      data: {
+        status: string;
+        items: { create: Array<{ targetPath: string; conflict: boolean }> };
+      };
+    };
+    const targets = createArgs.data.items.create.map((item) => item.targetPath);
+
+    expect(targets).toHaveLength(3);
+    expect(targets.some((target) => target.includes("S02E01"))).toBe(true);
+    expect(targets.some((target) => target.includes("S02E02"))).toBe(true);
+    expect(targets.some((target) => target.includes("S02E12"))).toBe(true);
+    expect(new Set(targets)).toHaveLength(3);
+    expect(targets.every((target) => !target.includes("01-12"))).toBe(true);
+    expect(createArgs.data.items.create.every((item) => !item.conflict)).toBe(true);
+    expect(createArgs.data.status).not.toBe("CONFLICT");
+  });
+
   it("archives every matching numbered video in an anime batch as an episode", async () => {
     const sourcePaths = [
       "/data/downloads/[SweetSub] Seihantai na Kimi to Boku [01-03][WebRip][1080P][AVC 8bit][CHS]/[SweetSub] Seihantai na Kimi to Boku - 01 [WebRip][1080P][AVC 8bit][CHS].mp4",
@@ -462,6 +534,19 @@ describe("hasBlockingOrganizerPlan", () => {
     expect(
       hasBlockingOrganizerPlan([{ status: "PENDING", items: [{ id: "item-1" }] }]),
     ).toBe(true);
+  });
+
+  it("treats one unresolved empty review as outstanding without changing regeneration blocking", () => {
+    expect(
+      hasUnresolvedOrganizerReviewPlan([
+        { status: "NEEDS_REVIEW", resolvedAt: null },
+      ]),
+    ).toBe(true);
+    expect(
+      hasUnresolvedOrganizerReviewPlan([
+        { status: "NEEDS_REVIEW", resolvedAt: new Date() },
+      ]),
+    ).toBe(false);
   });
 });
 
