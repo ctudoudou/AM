@@ -16,6 +16,7 @@ export async function GET(request: Request) {
     const url = new URL(request.url);
     const view = url.searchParams.get("view") ?? "active";
     const status = url.searchParams.get("status");
+    const includeResolved = url.searchParams.get("includeResolved") === "true";
     const page = clampPositiveInt(Number(url.searchParams.get("page")), 1, 10_000);
     const requestedPageSize = Number(url.searchParams.get("pageSize"));
     const requestedLimit = Number(url.searchParams.get("limit"));
@@ -41,6 +42,7 @@ export async function GET(request: Request) {
     const activeView = view === "active" && !status;
     const where = {
       status: { in: statusFilter },
+      ...(status === "REJECTED" && !includeResolved ? { resolvedAt: null } : {}),
       ...(activeView ? { items: { some: {} } } : {}),
       ...(view === "auto"
         ? {
@@ -66,6 +68,9 @@ export async function GET(request: Request) {
       prisma.organizerPlan.count({ where }),
       prisma.organizerPlan.groupBy({
         by: ["status"],
+        where: {
+          OR: [{ status: { not: "REJECTED" } }, { resolvedAt: null }],
+        },
         _count: { _all: true },
       }),
       prisma.organizerPlan.count({

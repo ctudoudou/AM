@@ -30,6 +30,7 @@ function download(overrides: Partial<DownloadRepairRecord> = {}): DownloadRepair
       { path: "/data/downloads/episode.mkv", length: "100", completedLength: "0" },
     ],
     errorMessage: "aria2 task is not available: aria2 request failed: 400",
+    repairNote: null,
     supersededById: null,
     createdAt: new Date("2026-01-01T00:00:00.000Z"),
     ...overrides,
@@ -96,6 +97,51 @@ describe("download repair planning", () => {
     expect(result.items[0]).toMatchObject({
       kind: "adopt_aria2_gid",
       replacementGid: "replacement",
+    });
+  });
+
+  it("supersedes a metadata GID when its followed task already has a canonical record", () => {
+    const duplicate = download({ id: "metadata", aria2Gid: "metadata-gid" });
+    const canonical = download({
+      id: "canonical",
+      aria2Gid: "final-gid",
+      status: "ACTIVE",
+      sourceUrl: "magnet:?xt=urn:btih:2222222222222222222222222222222222222222",
+    });
+    const result = plan({
+      downloads: [duplicate, canonical],
+      knownAria2: [
+        aria2({ gid: "metadata-gid", status: "complete", followedBy: ["final-gid"] }),
+        aria2({ gid: "final-gid", status: "active" }),
+      ],
+    });
+
+    expect(result.items[0]).toMatchObject({
+      kind: "supersede_duplicate",
+      canonicalDownloadId: "canonical",
+    });
+  });
+
+  it("sends a failed aria2 task to review after its controlled source retry is exhausted", () => {
+    const result = plan({
+      downloads: [
+        download({
+          repairNote: "Controlled source retry completed, but aria2 could not find the file.",
+        }),
+      ],
+      knownAria2: [
+        aria2({
+          gid: "old-gid",
+          status: "error",
+          errorMessage: "Reached max-file-not-found count=10",
+        }),
+      ],
+    });
+
+    expect(result.items[0]).toMatchObject({
+      kind: "manual_review",
+      confidence: "low",
+      executable: false,
     });
   });
 

@@ -72,4 +72,37 @@ describe("/api/organizer/plans", () => {
       }),
     );
   });
+
+  it("hides resolved rejected plans unless audit history is explicitly requested", async () => {
+    organizerPlan.count
+      .mockResolvedValueOnce(1)
+      .mockResolvedValueOnce(1)
+      .mockResolvedValueOnce(0)
+      .mockResolvedValueOnce(459);
+
+    await GET(
+      new Request("http://localhost/api/organizer/plans?status=REJECTED&page=1&pageSize=50"),
+    );
+
+    expect(organizerPlan.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({ status: { in: ["REJECTED"] }, resolvedAt: null }),
+      }),
+    );
+
+    vi.clearAllMocks();
+    organizerPlan.findMany.mockResolvedValue([]);
+    organizerPlan.groupBy.mockResolvedValue([]);
+    organizerPlan.count.mockResolvedValue(0);
+    await GET(
+      new Request(
+        "http://localhost/api/organizer/plans?status=REJECTED&includeResolved=true&page=1&pageSize=50",
+      ),
+    );
+    expect(organizerPlan.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.not.objectContaining({ resolvedAt: null }),
+      }),
+    );
+  });
 });
