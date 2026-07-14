@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { Loader2, Pause, Play, RefreshCw, RotateCw, Trash2 } from "lucide-react";
 import { getMessages } from "@/messages";
+import { buildDownloadPipeline, type PipelineStageState } from "@/lib/download-pipeline";
 import type { Locale } from "@/lib/i18n";
 
 type DownloadRecord = {
@@ -272,6 +273,7 @@ export function DownloadsClient({ locale }: { locale: Locale }) {
                 <p>
                   {formatAria2DetailLine(download, t)}
                 </p>
+                <DownloadPipelineStatus download={download} t={t} />
                 {download.aria2Gid ? <small>gid {download.aria2Gid}</small> : null}
                 {download.aria2Files?.length ? (
                   <div className="download-files">
@@ -370,6 +372,39 @@ export function DownloadsClient({ locale }: { locale: Locale }) {
       ) : null}
     </section>
   );
+}
+
+function DownloadPipelineStatus({ download, t }: { download: DownloadRecord; t: Messages }) {
+  const pipeline = buildDownloadPipeline(download);
+  const stages = [
+    { label: t.pipelineDownload, state: pipeline.download },
+    { label: t.pipelineOrganizer, state: pipeline.organizer },
+    { label: t.pipelineLibrary, state: pipeline.library },
+  ];
+  return (
+    <div className="download-pipeline" title={pipeline.blockedReason ?? undefined}>
+      {stages.map((stage, index) => (
+        <span className={`download-pipeline-stage ${stage.state}`} key={stage.label}>
+          <i aria-hidden="true" />
+          {stage.label}
+          <small>{pipelineStateLabel(stage.state, t)}</small>
+          {index < stages.length - 1 ? <b aria-hidden="true">→</b> : null}
+        </span>
+      ))}
+      {pipeline.blockedReason ? (
+        <em>{pipeline.blockedReason === "download_failed" ? t.pipelineDownloadFailed : pipeline.blockedReason}</em>
+      ) : null}
+    </div>
+  );
+}
+
+function pipelineStateLabel(state: PipelineStageState, t: Messages) {
+  return {
+    waiting: t.pipelineWaiting,
+    active: t.pipelineActive,
+    done: t.pipelineDone,
+    blocked: t.pipelineBlocked,
+  }[state];
 }
 
 function formatDownloadLine(download: DownloadRecord, t: Messages) {

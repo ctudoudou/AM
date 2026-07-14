@@ -9,8 +9,10 @@ import {
   Search,
   ShieldAlert,
   WandSparkles,
+  X,
 } from "lucide-react";
 import { getMessages } from "@/messages";
+import { readAnimeLibraryFilters, writeAnimeLibraryFilters } from "@/lib/anime-library-filters";
 import type { Locale } from "@/lib/i18n";
 
 type AnimeTitle = {
@@ -60,6 +62,8 @@ export function AnimeLibraryClient({ locale }: { locale: Locale }) {
   const [yearFilter, setYearFilter] = useState("ALL");
   const [tagFilter, setTagFilter] = useState<AnimeLibraryTag>("ALL");
   const [sortMode, setSortMode] = useState<AnimeLibrarySort>("UPDATED_DESC");
+  const [filtersReady, setFiltersReady] = useState(false);
+  const [manualAddOpen, setManualAddOpen] = useState(false);
   const [loading, setLoading] = useState(true);
   const [refreshingMetadata, setRefreshingMetadata] = useState(false);
   const [repairingLibrary, setRepairingLibrary] = useState(false);
@@ -142,6 +146,44 @@ export function AnimeLibraryClient({ locale }: { locale: Locale }) {
     }, 0);
     return () => window.clearTimeout(timeout);
   }, [auditLibrary, load]);
+
+  useEffect(() => {
+    const timeout = window.setTimeout(() => {
+      const filters = readAnimeLibraryFilters(window.location.search);
+      setQuery(filters.query);
+      setYearFilter(filters.year);
+      setTagFilter(isAnimeLibraryTag(filters.tag) ? filters.tag : "ALL");
+      setSortMode(isAnimeLibrarySort(filters.sort) ? filters.sort : "UPDATED_DESC");
+      setFiltersReady(true);
+    }, 0);
+    return () => window.clearTimeout(timeout);
+  }, []);
+
+  useEffect(() => {
+    if (!filtersReady) {
+      return;
+    }
+    const search = writeAnimeLibraryFilters(window.location.search, {
+      query,
+      year: yearFilter,
+      tag: tagFilter,
+      sort: sortMode,
+    });
+    window.history.replaceState(null, "", `${window.location.pathname}${search}${window.location.hash}`);
+  }, [filtersReady, query, sortMode, tagFilter, yearFilter]);
+
+  useEffect(() => {
+    if (!manualAddOpen) {
+      return;
+    }
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        setManualAddOpen(false);
+      }
+    };
+    window.addEventListener("keydown", closeOnEscape);
+    return () => window.removeEventListener("keydown", closeOnEscape);
+  }, [manualAddOpen]);
 
   async function refreshMetadata() {
     setRefreshingMetadata(true);
@@ -240,32 +282,6 @@ export function AnimeLibraryClient({ locale }: { locale: Locale }) {
 
   return (
     <div className="library-workspace">
-      <div className="manual-anime-panel">
-        <div>
-          <strong>{t.manualAnimeTitle}</strong>
-          <span>{t.manualAnimeDescription}</span>
-        </div>
-        <input
-          onChange={(event) => setManualDraft({ ...manualDraft, title: event.target.value })}
-          placeholder={t.manualAnimeTitlePlaceholder}
-          value={manualDraft.title}
-        />
-        <input
-          onChange={(event) => setManualDraft({ ...manualDraft, originalTitle: event.target.value })}
-          placeholder={t.manualAnimeOriginalTitlePlaceholder}
-          value={manualDraft.originalTitle}
-        />
-        <input
-          inputMode="numeric"
-          onChange={(event) => setManualDraft({ ...manualDraft, year: event.target.value })}
-          placeholder={t.year}
-          value={manualDraft.year}
-        />
-        <button disabled={creatingTitle || !manualDraft.title.trim()} onClick={() => void createManualTitle()} type="button">
-          {creatingTitle ? <Loader2 size={14} /> : <Plus size={14} />}
-          {t.createAnimeTitle}
-        </button>
-      </div>
       <div className="library-toolbar">
         <label className="library-search-field">
           <Search size={14} />
@@ -318,6 +334,10 @@ export function AnimeLibraryClient({ locale }: { locale: Locale }) {
           {visibleTitles.length} {t.titles}
         </span>
         <div className="toolbar-actions library-actions">
+          <button onClick={() => setManualAddOpen(true)} type="button">
+            <Plus size={14} />
+            {t.manualAnimeTitle}
+          </button>
           <button
             disabled={auditing || repairingLibrary}
             onClick={() => void auditLibrary()}
@@ -342,6 +362,70 @@ export function AnimeLibraryClient({ locale }: { locale: Locale }) {
           </button>
         </div>
       </div>
+      {manualAddOpen ? (
+        <div className="strategy-dialog-backdrop" onMouseDown={() => setManualAddOpen(false)}>
+          <section
+            aria-labelledby="manual-anime-heading"
+            aria-modal="true"
+            className="strategy-dialog manual-anime-dialog"
+            onMouseDown={(event) => event.stopPropagation()}
+            role="dialog"
+          >
+            <button
+              aria-label={t.closeManualAnime}
+              className="strategy-dialog-close"
+              onClick={() => setManualAddOpen(false)}
+              type="button"
+            >
+              <X size={16} />
+            </button>
+            <div className="strategy-dialog-heading">
+              <div>
+                <h2 id="manual-anime-heading">{t.manualAnimeTitle}</h2>
+                <p>{t.manualAnimeDescription}</p>
+              </div>
+            </div>
+            <div className="manual-anime-form">
+              <label>
+                <span>{t.manualAnimeTitle}</span>
+                <input
+                  autoFocus
+                  onChange={(event) => setManualDraft({ ...manualDraft, title: event.target.value })}
+                  placeholder={t.manualAnimeTitlePlaceholder}
+                  value={manualDraft.title}
+                />
+              </label>
+              <label>
+                <span>{t.manualAnimeOriginalTitlePlaceholder}</span>
+                <input
+                  onChange={(event) => setManualDraft({ ...manualDraft, originalTitle: event.target.value })}
+                  placeholder={t.manualAnimeOriginalTitlePlaceholder}
+                  value={manualDraft.originalTitle}
+                />
+              </label>
+              <label>
+                <span>{t.year}</span>
+                <input
+                  inputMode="numeric"
+                  onChange={(event) => setManualDraft({ ...manualDraft, year: event.target.value })}
+                  placeholder={t.year}
+                  value={manualDraft.year}
+                />
+              </label>
+            </div>
+            <div className="strategy-dialog-actions">
+              <button
+                disabled={creatingTitle || !manualDraft.title.trim()}
+                onClick={() => void createManualTitle()}
+                type="button"
+              >
+                {creatingTitle ? <Loader2 size={14} /> : <Plus size={14} />}
+                {t.createAnimeTitle}
+              </button>
+            </div>
+          </section>
+        </div>
+      ) : null}
       {error ? <div className="settings-alert">{error}</div> : null}
       {repairMessage ? <div className="settings-success">{repairMessage}</div> : null}
       {visibleTitles.length === 0 ? (
@@ -407,6 +491,22 @@ export function AnimeLibraryClient({ locale }: { locale: Locale }) {
       )}
     </div>
   );
+}
+
+function isAnimeLibraryTag(value: string): value is AnimeLibraryTag {
+  return [
+    "ALL",
+    "METADATA_ISSUE",
+    "MISSING_POSTER",
+    "IN_PROGRESS",
+    "NOT_STARTED",
+    "MULTI_SEASON",
+    "WITH_SYNOPSIS",
+  ].includes(value);
+}
+
+function isAnimeLibrarySort(value: string): value is AnimeLibrarySort {
+  return ["UPDATED_DESC", "TITLE", "YEAR_DESC", "EPISODES_DESC", "PROGRESS"].includes(value);
 }
 
 function splitTitle(title: string) {
