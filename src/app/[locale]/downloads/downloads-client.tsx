@@ -410,14 +410,37 @@ function pipelineStateLabel(state: PipelineStageState, t: Messages) {
 function formatDownloadLine(download: DownloadRecord, t: Messages) {
   const latestPlan = download.organizerPlans?.[0];
   return [
-    download.candidate?.mediaType,
-    download.archiveStatus,
-    latestPlan ? `plan ${latestPlan.status}` : undefined,
+    formatDownloadMediaType(download.candidate?.mediaType, t),
+    download.archiveStatus === "archived"
+      ? `${t.pipelineLibrary}: ${t.pipelineDone}`
+      : download.archiveStatus === "organizer_failed"
+        ? `${t.pipelineOrganizer}: ${t.pipelineBlocked}`
+        : download.archiveStatus || undefined,
+    latestPlan ? `${t.pipelineOrganizer}: ${organizerPlanStatusLabel(latestPlan.status, t)}` : undefined,
     latestPlan?.items?.[0]?.targetPath || download.targetPath,
     download.errorMessage ? `${t.aria2Error}: ${download.errorMessage}` : undefined,
   ]
     .filter(Boolean)
     .join(" · ") || download.status;
+}
+
+function formatDownloadMediaType(mediaType: "ANIME" | "MOVIE" | "TV" | undefined, t: Messages) {
+  if (mediaType === "ANIME") return t.anime;
+  if (mediaType === "MOVIE") return t.movies;
+  if (mediaType === "TV") return t.tv;
+  return undefined;
+}
+
+function organizerPlanStatusLabel(status: string, t: Messages) {
+  return {
+    PENDING: t.organizerStatusPending,
+    NEEDS_REVIEW: t.organizerStatusNeedsReview,
+    CONFLICT: t.organizerStatusConflict,
+    FAILED: t.organizerStatusFailed,
+    EXECUTED: t.organizerStatusExecuted,
+    REJECTED: t.organizerStatusRejected,
+    AUTO_ARCHIVED: t.organizerStatusAutoArchived,
+  }[status] ?? status;
 }
 
 function formatAria2DetailLine(download: DownloadRecord, t: Messages) {

@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Check, Loader2, Plus, RefreshCw, Save, Trash2, Wifi } from "lucide-react";
 import { getMessages } from "@/messages";
+import { collectDirtySettingsSections } from "@/lib/settings-dirty";
 import type { Locale } from "@/lib/i18n";
 
 type PublicSettings = {
@@ -81,6 +82,8 @@ type JobRun = {
   error?: string;
 };
 
+type SettingsSection = "directories" | "aria2" | "metadataProviders" | "ai" | "general";
+
 const directoryFields = [
   ["dataRoot", "DATA_ROOT"],
   ["importRoot", "IMPORT_ROOT"],
@@ -96,6 +99,7 @@ const directoryFields = [
 export function SettingsClient({ locale }: { locale: Locale }) {
   const t = getMessages(locale);
   const [settings, setSettings] = useState<PublicSettings | null>(null);
+  const [savedSettings, setSavedSettings] = useState<PublicSettings | null>(null);
   const [rssSources, setRssSources] = useState<RssSource[]>([]);
   const [jobRuns, setJobRuns] = useState<JobRun[]>([]);
   const [rssDraft, setRssDraft] = useState({ name: "", url: "" });
@@ -113,6 +117,36 @@ export function SettingsClient({ locale }: { locale: Locale }) {
   const [status, setStatus] = useState("");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(true);
+  const [savingAll, setSavingAll] = useState(false);
+
+  const dirtySections = useMemo(() => {
+    if (!settings || !savedSettings) {
+      return new Set<SettingsSection>();
+    }
+    const forcedDirty: SettingsSection[] = [];
+    if (aria2Secret) forcedDirty.push("aria2");
+    if (tmdbApiKey || omdbApiKey || theTvdbApiKey || anidbUsername || anidbPassword) {
+      forcedDirty.push("metadataProviders");
+    }
+    if (openRouterApiKey) forcedDirty.push("ai");
+    return collectDirtySettingsSections(
+      settings,
+      savedSettings,
+      ["directories", "aria2", "metadataProviders", "ai", "general"],
+      forcedDirty,
+    );
+  }, [
+    anidbPassword,
+    anidbUsername,
+    aria2Secret,
+    omdbApiKey,
+    openRouterApiKey,
+    savedSettings,
+    settings,
+    theTvdbApiKey,
+    tmdbApiKey,
+  ]);
+  const hasUnsavedChanges = dirtySections.size > 0;
 
   const configuredSummary = useMemo(() => {
     if (!settings) {
@@ -143,7 +177,9 @@ export function SettingsClient({ locale }: { locale: Locale }) {
         throw new Error(t.settingsLoadError);
       }
 
-      setSettings(await settingsResponse.json());
+      const loadedSettings = (await settingsResponse.json()) as PublicSettings;
+      setSettings(loadedSettings);
+      setSavedSettings(loadedSettings);
       const rssPayload = (await rssResponse.json()) as { sources: RssSource[] };
       setRssSources(rssPayload.sources);
       const jobRunsPayload = (await jobRunsResponse.json()) as { runs: JobRun[] };
@@ -163,7 +199,19 @@ export function SettingsClient({ locale }: { locale: Locale }) {
     return () => window.clearTimeout(timeout);
   }, [load]);
 
-  async function patchSettings(pathName: string, payload: unknown) {
+  useEffect(() => {
+    if (!hasUnsavedChanges) {
+      return;
+    }
+    const warnBeforeUnload = (event: BeforeUnloadEvent) => {
+      event.preventDefault();
+      event.returnValue = "";
+    };
+    window.addEventListener("beforeunload", warnBeforeUnload);
+    return () => window.removeEventListener("beforeunload", warnBeforeUnload);
+  }, [hasUnsavedChanges]);
+
+  async function patchSettings(pathName: string, section: SettingsSection, payload: unknown) {
     setStatus("");
     setError("");
     const response = await fetch(`/api/settings/${pathName}`, {
@@ -177,7 +225,9 @@ export function SettingsClient({ locale }: { locale: Locale }) {
       throw new Error(body?.message || body?.issues?.[0]?.message || t.settingsSaveError);
     }
 
-    setSettings(await response.json());
+    const saved = (await response.json()) as PublicSettings;
+    setSettings((current) => current ? { ...current, [section]: saved[section] } : saved);
+    setSavedSettings((current) => current ? { ...current, [section]: saved[section] } : saved);
     setStatus(t.saved);
   }
 
@@ -187,7 +237,7 @@ export function SettingsClient({ locale }: { locale: Locale }) {
     }
 
     try {
-      await patchSettings("directories", settings.directories);
+      await patchSettings("directories", "directories", settings.directories);
     } catch (saveError) {
       setError(saveError instanceof Error ? saveError.message : t.settingsSaveError);
     }
@@ -199,7 +249,7 @@ export function SettingsClient({ locale }: { locale: Locale }) {
     }
 
     try {
-      await patchSettings("aria2", {
+      await patchSettings("aria2", "aria2", {
         rpcUrl: settings.aria2.rpcUrl,
         ...(aria2Secret.length > 0 ? { rpcSecret: aria2Secret } : {}),
       });
@@ -215,7 +265,7 @@ export function SettingsClient({ locale }: { locale: Locale }) {
     }
 
     try {
-      await patchSettings("aria2", {
+      await patchSettings("aria2", "aria2", {
         rpcUrl: settings.aria2.rpcUrl,
         rpcSecret: "",
       });
@@ -260,7 +310,7 @@ export function SettingsClient({ locale }: { locale: Locale }) {
     }
 
     try {
-      await patchSettings("ai", {
+      await patchSettings("ai", "ai", {
         model: settings.ai.model,
         ...(openRouterApiKey.length > 0
           ? { openRouterApiKey }
@@ -278,7 +328,7 @@ export function SettingsClient({ locale }: { locale: Locale }) {
     }
 
     try {
-      await patchSettings("metadata-providers", {
+      await patchSettings("metadata-providers", "metadataProviders", {
         ...(tmdbApiKey.length > 0 ? { tmdbApiKey } : {}),
         ...(omdbApiKey.length > 0 ? { omdbApiKey } : {}),
         ...(theTvdbApiKey.length > 0 ? { theTvdbApiKey } : {}),
@@ -332,9 +382,60 @@ export function SettingsClient({ locale }: { locale: Locale }) {
     }
 
     try {
-      await patchSettings("general", settings.general);
+      await patchSettings("general", "general", settings.general);
     } catch (saveError) {
       setError(saveError instanceof Error ? saveError.message : t.settingsSaveError);
+    }
+  }
+
+  async function saveAllSettings() {
+    if (!settings || !hasUnsavedChanges) {
+      return;
+    }
+    setSavingAll(true);
+    setError("");
+    try {
+      if (dirtySections.has("directories")) {
+        await patchSettings("directories", "directories", settings.directories);
+      }
+      if (dirtySections.has("aria2")) {
+        await patchSettings("aria2", "aria2", {
+          rpcUrl: settings.aria2.rpcUrl,
+          ...(aria2Secret ? { rpcSecret: aria2Secret } : {}),
+        });
+        setAria2Secret("");
+      }
+      if (dirtySections.has("metadataProviders")) {
+        await patchSettings("metadata-providers", "metadataProviders", {
+          ...(tmdbApiKey ? { tmdbApiKey } : {}),
+          ...(omdbApiKey ? { omdbApiKey } : {}),
+          ...(theTvdbApiKey ? { theTvdbApiKey } : {}),
+          ...(anidbUsername ? { anidbUsername } : {}),
+          ...(anidbPassword ? { anidbPassword } : {}),
+          anidbClientName: settings.metadataProviders.anidbClientName,
+          anidbClientVersion: settings.metadataProviders.anidbClientVersion,
+        });
+        setTmdbApiKey("");
+        setOmdbApiKey("");
+        setTheTvdbApiKey("");
+        setAnidbUsername("");
+        setAnidbPassword("");
+      }
+      if (dirtySections.has("ai")) {
+        await patchSettings("ai", "ai", {
+          model: settings.ai.model,
+          ...(openRouterApiKey ? { openRouterApiKey } : {}),
+        });
+        setOpenRouterApiKey("");
+      }
+      if (dirtySections.has("general")) {
+        await patchSettings("general", "general", settings.general);
+      }
+      setStatus(t.allSettingsSaved);
+    } catch (saveError) {
+      setError(saveError instanceof Error ? saveError.message : t.settingsSaveError);
+    } finally {
+      setSavingAll(false);
     }
   }
 
@@ -370,6 +471,9 @@ export function SettingsClient({ locale }: { locale: Locale }) {
   }
 
   async function deleteRssSource(source: RssSource) {
+    if (!window.confirm(t.deleteRssSourceConfirm.replace("{name}", source.name))) {
+      return;
+    }
     const response = await fetch(`/api/rss-sources/${source.id}`, {
       method: "DELETE",
     });
@@ -410,7 +514,15 @@ export function SettingsClient({ locale }: { locale: Locale }) {
     <div className="settings-grid">
       <div className="settings-status-row">
         <span>{configuredSummary}</span>
-        {status ? (
+        {hasUnsavedChanges ? (
+          <div className="settings-unsaved-actions">
+            <b>{t.unsavedChanges.replace("{count}", String(dirtySections.size))}</b>
+            <button disabled={savingAll} onClick={() => void saveAllSettings()} type="button">
+              {savingAll ? <Loader2 size={14} /> : <Save size={14} />}
+              {t.saveAll}
+            </button>
+          </div>
+        ) : status ? (
           <b>
             <Check size={14} />
             {status}
@@ -425,7 +537,7 @@ export function SettingsClient({ locale }: { locale: Locale }) {
             <h2>{t.directorySettings}</h2>
             <p>{t.directorySettingsDescription}</p>
           </div>
-          <button onClick={saveDirectories} type="button">
+          <button disabled={!dirtySections.has("directories")} onClick={saveDirectories} type="button">
             <Save size={14} />
             {t.save}
           </button>
@@ -462,7 +574,7 @@ export function SettingsClient({ locale }: { locale: Locale }) {
               {aria2DebugLoading ? <Loader2 size={14} /> : <Wifi size={14} />}
               {t.testConnection}
             </button>
-            <button onClick={saveAria2} type="button">
+            <button disabled={!dirtySections.has("aria2")} onClick={saveAria2} type="button">
               <Save size={14} />
               {t.save}
             </button>
@@ -515,7 +627,7 @@ export function SettingsClient({ locale }: { locale: Locale }) {
             <h2>{t.metadataProviderSettings}</h2>
             <p>{t.metadataProviderSettingsDescription}</p>
           </div>
-          <button onClick={saveMetadataProviders} type="button">
+          <button disabled={!dirtySections.has("metadataProviders")} onClick={saveMetadataProviders} type="button">
             <Save size={14} />
             {t.save}
           </button>
@@ -630,7 +742,7 @@ export function SettingsClient({ locale }: { locale: Locale }) {
               {aiDebugLoading ? <Loader2 size={14} /> : <Wifi size={14} />}
               {t.testConnection}
             </button>
-            <button onClick={saveAi} type="button">
+            <button disabled={!dirtySections.has("ai")} onClick={saveAi} type="button">
               <Save size={14} />
               {t.save}
             </button>
@@ -677,7 +789,7 @@ export function SettingsClient({ locale }: { locale: Locale }) {
             <h2>{t.generalSettings}</h2>
             <p>{t.generalSettingsDescription}</p>
           </div>
-          <button onClick={saveGeneral} type="button">
+          <button disabled={!dirtySections.has("general")} onClick={saveGeneral} type="button">
             <Save size={14} />
             {t.save}
           </button>
@@ -802,6 +914,7 @@ export function SettingsClient({ locale }: { locale: Locale }) {
                   <p>{source.url}</p>
                 </div>
                 <button
+                  aria-label={t.deleteRssSource.replace("{name}", source.name)}
                   className="icon-button"
                   onClick={() => void deleteRssSource(source)}
                   type="button"

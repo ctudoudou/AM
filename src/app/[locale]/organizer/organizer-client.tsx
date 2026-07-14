@@ -381,11 +381,13 @@ export function OrganizerClient({ locale }: { locale: Locale }) {
           <span>{t.importScanDescription}</span>
         </div>
         <input
+          aria-label={t.importRoot}
           onChange={(event) => setImportDraft({ ...importDraft, root: event.target.value })}
           placeholder={t.importRoot}
           value={importDraft.root}
         />
         <select
+          aria-label={t.mediaType}
           onChange={(event) => setImportDraft({ ...importDraft, mediaType: event.target.value })}
           value={importDraft.mediaType}
         >

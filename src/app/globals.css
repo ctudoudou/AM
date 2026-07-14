@@ -852,6 +852,37 @@ a {
   font-weight: 500;
 }
 
+.settings-unsaved-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.settings-unsaved-actions b {
+  color: #fde68a;
+}
+
+.settings-unsaved-actions button {
+  display: inline-flex;
+  min-height: 32px;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  border: 1px solid rgba(250, 204, 21, 0.25);
+  border-radius: 9px;
+  background: rgba(250, 204, 21, 0.09);
+  color: #fef3c7;
+  padding: 0 11px;
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.settings-unsaved-actions button:disabled {
+  cursor: default;
+  opacity: 0.55;
+}
+
 .settings-alert {
   border: 1px solid rgba(248, 113, 113, 0.35);
   border-radius: 14px;
@@ -4779,6 +4810,24 @@ a {
   .settings-panel {
     gap: 12px;
     padding: 16px;
+  }
+
+  .settings-status-row {
+    min-height: auto;
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 10px;
+    padding: 12px;
+  }
+
+  .settings-unsaved-actions {
+    width: 100%;
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .settings-unsaved-actions button {
+    min-height: 42px;
   }
 
   .settings-panel-heading {
