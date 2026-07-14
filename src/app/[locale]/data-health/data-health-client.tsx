@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { AlertTriangle, CheckCircle2, Loader2, RefreshCw, ShieldCheck, Wrench } from "lucide-react";
 import { getMessages } from "@/messages";
 import type { Locale } from "@/lib/i18n";
@@ -36,6 +36,8 @@ type DataHealthRepairResponse = {
   scan: DataHealthScan;
 };
 
+const dataHealthRequestTimeoutMs = 60_000;
+
 export function DataHealthClient({ locale }: { locale: Locale }) {
   const t = getMessages(locale);
   const [scan, setScan] = useState<DataHealthScan | null>(null);
@@ -43,28 +45,64 @@ export function DataHealthClient({ locale }: { locale: Locale }) {
   const [repairing, setRepairing] = useState(false);
   const [error, setError] = useState("");
   const [repairMessage, setRepairMessage] = useState("");
+  const [loadingSeconds, setLoadingSeconds] = useState(0);
+  const requestRef = useRef<AbortController | null>(null);
 
   const load = useCallback(async () => {
+    requestRef.current?.abort();
+    const controller = new AbortController();
+    requestRef.current = controller;
     setLoading(true);
+    setLoadingSeconds(0);
     setError("");
+    const startedAt = Date.now();
+    const elapsedTimer = window.setInterval(() => {
+      setLoadingSeconds(Math.max(1, Math.floor((Date.now() - startedAt) / 1000)));
+    }, 1000);
+    const timeout = window.setTimeout(
+      () => controller.abort("timeout"),
+      dataHealthRequestTimeoutMs,
+    );
     try {
-      const response = await fetch("/api/data-health", { cache: "no-store" });
+      const response = await fetch("/api/data-health", {
+        cache: "no-store",
+        signal: controller.signal,
+      });
       if (!response.ok) {
         throw new Error(t.dataHealthLoadError);
       }
-      setScan((await response.json()) as DataHealthScan);
+      if (requestRef.current === controller) {
+        setScan((await response.json()) as DataHealthScan);
+      }
     } catch (loadError) {
-      setError(loadError instanceof Error ? loadError.message : t.dataHealthLoadError);
+      if (requestRef.current !== controller) {
+        return;
+      }
+      setError(
+        controller.signal.reason === "timeout"
+          ? t.dataHealthLoadTimeout
+          : loadError instanceof Error
+            ? loadError.message
+            : t.dataHealthLoadError,
+      );
     } finally {
-      setLoading(false);
+      window.clearInterval(elapsedTimer);
+      window.clearTimeout(timeout);
+      if (requestRef.current === controller) {
+        requestRef.current = null;
+        setLoading(false);
+      }
     }
-  }, [t.dataHealthLoadError]);
+  }, [t.dataHealthLoadError, t.dataHealthLoadTimeout]);
 
   useEffect(() => {
     const timeout = window.setTimeout(() => {
       void load();
     }, 0);
-    return () => window.clearTimeout(timeout);
+    return () => {
+      window.clearTimeout(timeout);
+      requestRef.current?.abort();
+    };
   }, [load]);
 
   async function repair() {
@@ -101,9 +139,15 @@ export function DataHealthClient({ locale }: { locale: Locale }) {
 
   if (loading && !scan) {
     return (
-      <div className="settings-loading">
+      <div aria-live="polite" className="settings-loading data-health-loading">
         <Loader2 size={18} />
-        {t.loading}
+        <div>
+          <strong>{t.dataHealthLoading}</strong>
+          <span>
+            {loadingSeconds} {t.seconds}
+            {loadingSeconds >= 12 ? ` · ${t.dataHealthLoadingSlow}` : ""}
+          </span>
+        </div>
       </div>
     );
   }
@@ -118,6 +162,11 @@ export function DataHealthClient({ locale }: { locale: Locale }) {
           <div>
             <h2>{t.dataHealthOverview}</h2>
             <p>{t.dataHealthOverviewDescription}</p>
+            {loading ? (
+              <small aria-live="polite" className="data-health-refresh-status">
+                {t.dataHealthRefreshing} · {loadingSeconds} {t.seconds}
+              </small>
+            ) : null}
           </div>
           <div className="toolbar-actions">
             <button disabled={loading || repairing} onClick={() => void load()} type="button">
@@ -175,7 +224,10 @@ export function DataHealthClient({ locale }: { locale: Locale }) {
                 <span>{issue.count}</span>
                 <small>{issue.autoFixable ? t.dataHealthAutoFixable : t.dataHealthManualOnly}</small>
                 {issue.samples.length > 0 ? (
-                  <pre>{JSON.stringify(issue.samples.slice(0, 3), null, 2)}</pre>
+                  <details>
+                    <summary>{t.dataHealthSamples} ({Math.min(issue.samples.length, 3)})</summary>
+                    <pre>{JSON.stringify(issue.samples.slice(0, 3), null, 2)}</pre>
+                  </details>
                 ) : null}
               </article>
             ))}

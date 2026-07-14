@@ -5,7 +5,6 @@ import {
   Film,
   Folder,
   Home,
-  Search,
   Settings,
   ShieldCheck,
   Sparkles,
@@ -16,6 +15,7 @@ import { getMessages } from "@/messages";
 import type { Locale } from "@/lib/i18n";
 import { StorageSummaryCard } from "@/components/storage-summary-card";
 import { KuraIcon } from "@/components/kura-icon";
+import { LibrarySearchDialog } from "@/components/library-search-dialog";
 
 type SidebarKey =
   | "home"
@@ -83,11 +83,7 @@ export function AppSidebar({
         </div>
       </div>
 
-      <button className="sidebar-search" type="button">
-        <Search size={14} />
-        <span>{t.search}</span>
-        <kbd>⌘K</kbd>
-      </button>
+      <LibrarySearchDialog locale={locale} />
 
       <nav aria-label={t.library} className="nav">
         {navGroups.map((group) => (
