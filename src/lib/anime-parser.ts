@@ -35,6 +35,9 @@ const episodePatterns = [
   /(?:第|\s|\[| - )(?<episode>\d{1,4}(?:\.\d)?)(?:话|集|\]|\s|v\d|$)/i,
   /\bEP?\s?(?<episode>\d{1,4}(?:\.\d)?)\b/i,
 ];
+const batchEpisodeRangePattern =
+  /(?:^|[\s|/（(【\[])(?<start>\d{1,4}(?:\.\d+)?)\s*[-~～]\s*(?<end>\d{1,4}(?:\.\d+)?)(?:\s*(?:fin|final|end|完|完结|完結|全集|全))?(?=$|[\s|/）)】\]])/i;
+const audioChannelPattern = /\b(?:1\.0|2\.0|5\.1|7\.1)\b/i;
 const releaseSeasonBannerPattern =
   /(?:^|[\s\[])(?:★\s*)?(?:\d{1,2}|[一二三四五六七八九十]+)\s*月\s*新番(?:\s*★)?(?:\]|$|\s*)/gi;
 const releaseDescriptorPattern =
@@ -146,12 +149,19 @@ export function parseAnimeReleaseTitle(rawTitle: string): ParsedAnimeRelease {
 
   let episodeNumber: number | undefined;
   let season: number | undefined;
-  for (const pattern of episodePatterns) {
-    const match = releaseTitle.match(pattern);
-    if (match?.groups?.episode && !isLikelyYearEpisode(match.groups.episode, releaseTitle, match.index ?? -1)) {
-      episodeNumber = Number(match.groups.episode);
-      season = match.groups.season ? Number(match.groups.season) : undefined;
-      break;
+  const batchRelease = hasBatchEpisodeRange(releaseTitle);
+  if (!batchRelease) {
+    for (const pattern of episodePatterns) {
+      const match = releaseTitle.match(pattern);
+      if (
+        match?.groups?.episode &&
+        !isLikelyYearEpisode(match.groups.episode, releaseTitle, match.index ?? -1) &&
+        !isLikelyAudioChannelEpisode(match.groups.episode, releaseTitle, match.index ?? -1)
+      ) {
+        episodeNumber = Number(match.groups.episode);
+        season = match.groups.season ? Number(match.groups.season) : undefined;
+        break;
+      }
     }
   }
 
@@ -174,8 +184,12 @@ export function parseAnimeReleaseTitle(rawTitle: string): ParsedAnimeRelease {
   for (const pattern of episodePatterns) {
     parsedTitle = parsedTitle.replace(pattern, " ");
   }
+  if (batchRelease) {
+    parsedTitle = parsedTitle.replace(batchEpisodeRangePattern, " ");
+  }
 
   parsedTitle = canonicalizeTitle(parsedTitle
+    .replace(audioChannelPattern, " ")
     .replace(releaseSeasonBannerPattern, " ")
     .replace(releaseDescriptorPattern, " ")
     .replace(/\[[^\]]+\]|【[^】]+】/g, " ")
@@ -186,6 +200,7 @@ export function parseAnimeReleaseTitle(rawTitle: string): ParsedAnimeRelease {
     .replace(/\[\s*\]/g, " ")
     .replace(/[._]+/g, " ")
     .replace(/\s*\/\s*$/, "")
+    .replace(/\s*\|\s*$/, "")
     .replace(/\s+-\s+$/, "")
     .replace(/\s+/g, " ")
     .trim());
@@ -228,6 +243,18 @@ export function parseAnimeReleaseTitle(rawTitle: string): ParsedAnimeRelease {
     releaseTags,
     confidence: Math.min(0.95, 0.35 + signals * 0.15),
   };
+}
+
+export function hasBatchEpisodeRange(value: string) {
+  const releaseTitle = stripReleaseFileExtension(value);
+  const match = releaseTitle.match(batchEpisodeRangePattern);
+  const start = Number(match?.groups?.start);
+  const end = Number(match?.groups?.end);
+  if (!Number.isFinite(start) || !Number.isFinite(end) || start <= 0 || end <= start) {
+    return false;
+  }
+  const prefix = match?.index === undefined ? "" : releaseTitle.slice(0, match.index);
+  return !/(?:\bpart|\bvol(?:ume)?|\bdisc|\bcd|\bcour|\bseason)\s*$/i.test(prefix);
 }
 
 function stripReleaseFileExtension(value: string) {
@@ -357,6 +384,7 @@ function sanitizeParsedTitle(value: string) {
   return cleanInlineReleaseMetadata(value)
     .replace(/\s*\/\s*(?:\d{1,4}(?:\.\d+)?(?:\s*[-~～]\s*\d{1,4}(?:\.\d+)?)?.*?(?:合集|fin|final|end|完|完结|完結|全集|全))$/i, "")
     .replace(/\s+-\s*\d{1,4}(?:\.\d+)?(?:\s*[-~～]\s*\d{1,4}(?:\.\d+)?)?\s*(?:(?:精校|全修正|修正)?合集.*|fin|final|end|完|完结|完結|全集|全)?$/i, "")
+    .replace(/\s*[|/]\s*$/, "")
     .replace(/\s+/g, " ")
     .trim();
 }
@@ -513,6 +541,14 @@ function isLikelyYearEpisode(value: string, rawTitle: string, index: number) {
   const context = index >= 0 ? rawTitle.slice(Math.max(0, index - 12), index + value.length + 12) : rawTitle;
   return /\b(?:tv|movie|ova)?\s*\d{1,4}\s*,\s*(?:19\d{2}|20\d{2})\b/i.test(context) ||
     /[\[【(（][^\]】)）]*(?:19\d{2}|20\d{2})[^\]】)）]*[\]】)）]/.test(context);
+}
+
+function isLikelyAudioChannelEpisode(value: string, rawTitle: string, index: number) {
+  if (!/^(?:1\.0|2\.0|5\.1|7\.1)$/.test(value)) {
+    return false;
+  }
+  const prefix = index >= 0 ? rawTitle.slice(Math.max(0, index - 24), index) : rawTitle;
+  return /(?:aac|opus|flac|ac-?3|e-?ac-?3|ddp?|truehd|dts(?:-hd)?|atmos)\s*$/i.test(prefix);
 }
 
 function normalizeSubtitleLanguage(value: string | undefined) {

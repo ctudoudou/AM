@@ -5,6 +5,7 @@ import type { DownloadStatus, MediaType } from "@prisma/client";
 import { prisma } from "@/lib/db";
 import { retryFailedDownload } from "@/lib/downloads";
 import { findExistingMediaTitle } from "@/lib/media-title-repair";
+import { parseMediaReleaseTitle } from "@/lib/media-parser";
 import { regenerateRejectedOrganizerPlan } from "@/lib/organizer";
 import { getAppSettings } from "@/lib/settings";
 
@@ -24,6 +25,7 @@ export type OrganizerRepairKind =
 export type OrganizerRepairGroup = {
   key: string;
   planIds: string[];
+  statuses: string[];
   downloadId: string | null;
   downloadStatus: DownloadStatus | null;
   archiveStatus: string | null;
@@ -56,7 +58,9 @@ export type OrganizerRepairPlan = {
   planId: string;
   createdAt: string;
   summary: {
+    plans: number;
     rejectedPlans: number;
+    reviewPlans: number;
     actions: number;
     executable: number;
     review: number;
@@ -65,7 +69,7 @@ export type OrganizerRepairPlan = {
   items: OrganizerRepairItem[];
 };
 
-type RejectedPlanRecord = Awaited<ReturnType<typeof loadRejectedPlans>>[number];
+type RepairablePlanRecord = Awaited<ReturnType<typeof loadRepairablePlans>>[number];
 
 export async function createOrganizerRepairPlan(): Promise<OrganizerRepairPlan> {
   const settings = await getAppSettings();
@@ -74,7 +78,7 @@ export async function createOrganizerRepairPlan(): Promise<OrganizerRepairPlan> 
     settings.directories.moviesLibraryDir,
     settings.directories.tvLibraryDir,
   ].map((value) => path.resolve(value));
-  const plans = await loadRejectedPlans();
+  const plans = await loadRepairablePlans();
   const blockingPlans = await prisma.organizerPlan.findMany({
     where: {
       status: { not: "REJECTED" },
@@ -138,7 +142,7 @@ export async function createOrganizerRepairPlan(): Promise<OrganizerRepairPlan> 
     ]);
   }
 
-  const grouped = groupRejectedPlans(plans);
+  const grouped = groupRepairablePlans(plans);
   const groups: OrganizerRepairGroup[] = [];
   for (const group of grouped.values()) {
     const first = group[0];
@@ -176,13 +180,21 @@ export async function createOrganizerRepairPlan(): Promise<OrganizerRepairPlan> 
     groups.push({
       key: first.downloadId ? `download:${first.downloadId}` : `plan:${first.id}`,
       planIds: group.map((plan) => plan.id).sort(),
+      statuses: group.map((plan) => plan.status),
       downloadId: first.downloadId,
       downloadStatus: first.download?.status ?? null,
       archiveStatus: first.download?.archiveStatus ?? null,
       supersededById: first.download?.supersededById ?? null,
       sourceUrlAvailable: Boolean(first.download?.sourceUrl?.trim()),
-      title: first.candidate?.group?.displayTitle ?? first.candidate?.parsedTitle ?? null,
-      episode: first.candidate?.episodeNumber ?? null,
+      title:
+        first.candidate?.group?.displayTitle ??
+        first.candidate?.parsedTitle ??
+        first.download?.title ??
+        null,
+      episode:
+        first.candidate?.episodeNumber ??
+        parseDownloadIdentity(first.download?.targetPath, first.mediaType).episodeNumber ??
+        null,
       hasItems: group.some((plan) => plan.items.length > 0),
       sourcePaths: sourcePaths.map((filePath) => ({ path: filePath, exists: existence.get(filePath) ?? false })),
       targetPaths: targetPaths.map((filePath) => ({ path: filePath, exists: existence.get(filePath) ?? false })),
@@ -221,7 +233,15 @@ export function buildOrganizerRepairPlan(groups: OrganizerRepairGroup[]): Organi
     planId,
     createdAt: new Date().toISOString(),
     summary: {
-      rejectedPlans: groups.reduce((total, group) => total + group.planIds.length, 0),
+      plans: groups.reduce((total, group) => total + group.planIds.length, 0),
+      rejectedPlans: groups.reduce(
+        (total, group) => total + group.statuses.filter((status) => status === "REJECTED").length,
+        0,
+      ),
+      reviewPlans: groups.reduce(
+        (total, group) => total + group.statuses.filter((status) => status === "NEEDS_REVIEW").length,
+        0,
+      ),
       actions: items.length,
       executable: items.filter((item) => item.executable).length,
       review: items.filter((item) => !item.executable).length,
@@ -341,6 +361,14 @@ function classifyOrganizerRepairGroup(group: OrganizerRepairGroup): OrganizerRep
     });
   }
   if (sourcePaths.length > 0) {
+    if (group.statuses.some((status) => status !== "REJECTED")) {
+      return repairItem(base, {
+        kind: "manual_review",
+        executable: false,
+        confidence: "low",
+        reason: "The orphaned review still has a source file, but no matching archived-file evidence was found.",
+      });
+    }
     return repairItem(base, group.hasBlockingPlan
       ? {
           kind: "manual_review",
@@ -361,6 +389,14 @@ function classifyOrganizerRepairGroup(group: OrganizerRepairGroup): OrganizerRep
       executable: true,
       confidence: "high",
       reason: "The empty rejected plan belongs to a download already marked archived.",
+    });
+  }
+  if (group.statuses.some((status) => status !== "REJECTED")) {
+    return repairItem(base, {
+      kind: "manual_review",
+      executable: false,
+      confidence: "low",
+      reason: "The orphaned review has no verified archived-file evidence and cannot be retried safely.",
     });
   }
   if (
@@ -396,7 +432,11 @@ function repairItem(
 async function executeOrganizerRepairItem(item: OrganizerRepairItem) {
   if (item.kind === "delete_stale") {
     return prisma.organizerPlan.updateMany({
-      where: { id: { in: item.planIds }, status: "REJECTED", resolvedAt: null },
+      where: {
+        id: { in: item.planIds },
+        status: { in: ["REJECTED", "NEEDS_REVIEW"] },
+        resolvedAt: null,
+      },
       data: { resolvedAt: new Date(), resolution: item.reason },
     });
   }
@@ -406,8 +446,16 @@ async function executeOrganizerRepairItem(item: OrganizerRepairItem) {
     }
     return prisma.$transaction(async (transaction) => {
       await transaction.organizerPlan.updateMany({
-        where: { id: { in: item.planIds }, status: "REJECTED", resolvedAt: null },
-        data: { resolvedAt: new Date(), resolution: item.reason },
+        where: {
+          id: { in: item.planIds },
+          status: { in: ["REJECTED", "NEEDS_REVIEW"] },
+          resolvedAt: null,
+        },
+        data: {
+          status: "REJECTED",
+          resolvedAt: new Date(),
+          resolution: item.reason,
+        },
       });
       return transaction.download.update({
         where: { id: item.downloadId as string },
@@ -470,9 +518,19 @@ async function executeOrganizerRepairItem(item: OrganizerRepairItem) {
   throw new Error("Review-only organizer repair actions cannot be executed.");
 }
 
-async function loadRejectedPlans() {
+async function loadRepairablePlans() {
   return prisma.organizerPlan.findMany({
-    where: { status: "REJECTED", resolvedAt: null },
+    where: {
+      resolvedAt: null,
+      OR: [
+        { status: "REJECTED" },
+        {
+          status: "NEEDS_REVIEW",
+          candidateId: null,
+          items: { none: {} },
+        },
+      ],
+    },
     orderBy: { createdAt: "asc" },
     include: {
       items: true,
@@ -482,6 +540,9 @@ async function loadRejectedPlans() {
           archiveStatus: true,
           supersededById: true,
           sourceUrl: true,
+          targetPath: true,
+          title: true,
+          totalBytes: true,
         },
       },
       candidate: { include: { group: true } },
@@ -489,8 +550,8 @@ async function loadRejectedPlans() {
   });
 }
 
-function groupRejectedPlans(plans: RejectedPlanRecord[]) {
-  const grouped = new Map<string, RejectedPlanRecord[]>();
+function groupRepairablePlans(plans: RepairablePlanRecord[]) {
+  const grouped = new Map<string, RepairablePlanRecord[]>();
   for (const plan of plans) {
     const key = plan.downloadId ? `download:${plan.downloadId}` : `plan:${plan.id}`;
     grouped.set(key, [...(grouped.get(key) ?? []), plan]);
@@ -498,7 +559,7 @@ function groupRejectedPlans(plans: RejectedPlanRecord[]) {
   return grouped;
 }
 
-async function findArchivedCandidatePaths(plans: RejectedPlanRecord[], dataRoot: string) {
+async function findArchivedCandidatePaths(plans: RepairablePlanRecord[], dataRoot: string) {
   const candidates = uniqueBy(
     plans.map((plan) => plan.candidate).filter((candidate) => candidate?.episodeNumber !== null),
     (candidate) => candidate?.id ?? "",
@@ -536,7 +597,65 @@ async function findArchivedCandidatePaths(plans: RejectedPlanRecord[], dataRoot:
       }
     }
   }
+  for (const plan of plans) {
+    const download = plan.download;
+    const identity = parseDownloadIdentity(download?.targetPath, plan.mediaType);
+    if (!download || identity.episodeNumber === null) {
+      continue;
+    }
+    const title = download.title?.trim() || identity.parsedTitle;
+    if (!title) {
+      continue;
+    }
+    const media = await findExistingMediaTitle({
+      type: plan.mediaType as MediaType,
+      title,
+      aliases: [
+        identity.parsedTitle,
+        ...title.split(/\s*\/\s*/g),
+      ],
+    });
+    if (!media) {
+      continue;
+    }
+    const files = await prisma.mediaFile.findMany({
+      where: {
+        ...(download.totalBytes !== null ? { sizeBytes: download.totalBytes } : {}),
+        episode: {
+          number: identity.episodeNumber,
+          season: {
+            mediaId: media.id,
+            number: identity.season,
+          },
+        },
+      },
+      select: { absolutePath: true },
+    });
+    for (const file of files) {
+      if (await regularFileExists(file.absolutePath, dataRoot)) {
+        matches.add(file.absolutePath);
+      }
+    }
+  }
   return [...matches];
+}
+
+function parseDownloadIdentity(targetPath: string | null | undefined, mediaType: MediaType) {
+  if (!targetPath) {
+    return { parsedTitle: "", episodeNumber: null, season: 1 };
+  }
+  const parsed = parseMediaReleaseTitle(
+    path.basename(targetPath, path.extname(targetPath)),
+    mediaType,
+  );
+  return {
+    parsedTitle: parsed.parsedTitle,
+    episodeNumber:
+      parsed.episodeNumber !== undefined && parsed.episodeNumber > 0
+        ? Math.floor(parsed.episodeNumber)
+        : null,
+    season: parsed.season ?? 1,
+  };
 }
 
 function stringArray(value: unknown) {

@@ -42,7 +42,7 @@ export async function GET(request: Request) {
     const activeView = view === "active" && !status;
     const where = {
       status: { in: statusFilter },
-      ...(status === "REJECTED" && !includeResolved ? { resolvedAt: null } : {}),
+      ...(!includeResolved ? { resolvedAt: null } : {}),
       ...(activeView ? { items: { some: {} } } : {}),
       ...(view === "auto"
         ? {
@@ -68,20 +68,20 @@ export async function GET(request: Request) {
       prisma.organizerPlan.count({ where }),
       prisma.organizerPlan.groupBy({
         by: ["status"],
-        where: {
-          OR: [{ status: { not: "REJECTED" } }, { resolvedAt: null }],
-        },
+        where: { resolvedAt: null },
         _count: { _all: true },
       }),
       prisma.organizerPlan.count({
         where: {
           status: { in: [...activeStatuses] },
+          resolvedAt: null,
           items: { some: {} },
         },
       }),
       prisma.organizerPlan.count({
         where: {
           status: "PENDING",
+          resolvedAt: null,
           autoExecutable: true,
           confidence: { gte: minAutoOrganizerConfidence },
           items: { some: {}, every: { conflict: false } },

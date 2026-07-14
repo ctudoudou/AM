@@ -120,11 +120,34 @@ describe("parseAnimeReleaseTitle", () => {
     expect(witchWatch.parsedTitle).toBe("魔女与使魔 / Witch Watch");
     expect(witchWatch.normalizedTitle).toBe("魔女与使魔");
     expect(witchWatch.releaseProfile).not.toContain("01-25Fin");
+    expect(witchWatch.episodeNumber).toBeUndefined();
     expect(agents.parsedTitle).toBe(
       "春夏秋冬代行者 春之舞 / Shunkashuutou Daikousha - Haru no Mai / Agents of the Four Seasons",
     );
     expect(agents.normalizedTitle).toBe("春夏秋冬代行者 春之舞");
     expect(agents.releaseProfile).not.toContain("01-05");
+    expect(agents.episodeNumber).toBeUndefined();
+  });
+
+  it("does not parse an audio channel marker as the episode of a batch release", () => {
+    const parsed = parseAnimeReleaseTitle(
+      "[7³ACG] 粗点心战争 第2季/Dagashi Kashi S02 | 01-12 [简繁字幕] BDrip 1080p AV1 OPUS 2.0",
+    );
+
+    expect(parsed.season).toBe(2);
+    expect(parsed.episodeNumber).toBeUndefined();
+    expect(parsed.parsedTitle).toBe("粗点心战争 第2季/Dagashi Kashi S02");
+    expect(parsed.parsedTitle).not.toContain("01-12");
+    expect(parsed.parsedTitle).not.toContain("2.0");
+  });
+
+  it("does not mistake descending resolution dimensions for a batch range", () => {
+    const parsed = parseAnimeReleaseTitle(
+      "[Group] Some Anime - 04 [1920-1080 AVC AAC].mkv",
+    );
+
+    expect(parsed.episodeNumber).toBe(4);
+    expect(parsed.parsedTitle).toBe("Some Anime");
   });
 
   it("keeps adjacent bracket title aliases while dropping release banners", () => {

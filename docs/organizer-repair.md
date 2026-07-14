@@ -1,11 +1,12 @@
 # Organizer rejected-plan repair
 
-Kura preserves rejected Organizer plans as an audit trail. Migration
+Kura preserves resolved Organizer plans as an audit trail. Migration
 `000015_organizer_plan_resolution` adds nullable `resolvedAt` and `resolution` fields so stale or
-superseded history can be removed from the operational rejected queue without deleting records.
+superseded history can be removed from operational queues without deleting records.
 
 `GET /api/organizer/plans?status=REJECTED` returns unresolved rejected plans by default. Append
 `includeResolved=true` when an audit or support workflow needs the complete rejected history.
+The same visibility rule applies to resolved orphaned `NEEDS_REVIEW` plans.
 
 ## Dry-run and apply
 
@@ -18,6 +19,11 @@ download and distinguishes:
 - completed downloads whose source and archive are both missing;
 - downloads that are still active; and
 - cases that require review.
+
+The dry-run also includes empty `NEEDS_REVIEW` plans whose download lost its release-candidate
+relation. Such a plan is resolved automatically only when Kura can match the download title,
+season, episode, and exact byte size to an existing library file. Otherwise it remains a manual
+review item; the repair workflow does not retry or delete the source on incomplete evidence.
 
 The response includes a stable plan hash. Apply selected executable actions with:
 

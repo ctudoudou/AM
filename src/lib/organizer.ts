@@ -6,7 +6,7 @@ import { cacheRemoteMediaAsset, isLocalMediaAssetUrl } from "@/lib/media-assets"
 import { getAppSettings } from "@/lib/settings";
 import { matchMetadataForGroup, type MetadataMatch } from "@/lib/metadata";
 import { addMediaTitleAliases, findExistingMediaTitle } from "@/lib/media-title-repair";
-import { normalizeTitleAliases } from "@/lib/anime-parser";
+import { hasBatchEpisodeRange, normalizeTitleAliases } from "@/lib/anime-parser";
 import {
   normalizeCandidateEpisodeNumber,
   parseTargetPathEpisodeIdentity,
@@ -92,14 +92,19 @@ export async function inspectCompletedDownloads() {
     },
     include: {
       candidate: { include: { group: true } },
-      organizerPlans: { select: { id: true, status: true, items: { select: { id: true } } } },
+      organizerPlans: {
+        select: { id: true, status: true, resolvedAt: true, items: { select: { id: true } } },
+      },
     },
   });
   const results = [];
   const failures = [];
 
   for (const download of downloads) {
-    if (hasBlockingOrganizerPlan(download.organizerPlans)) {
+    if (
+      hasBlockingOrganizerPlan(download.organizerPlans) ||
+      hasUnresolvedOrganizerReviewPlan(download.organizerPlans)
+    ) {
       continue;
     }
     try {
@@ -249,10 +254,33 @@ export async function createOrganizerPlanForCandidateSource(input: {
     },
   });
   const normalizedCandidateEpisode = normalizeCandidateEpisodeNumber(candidate, siblingCandidates);
+  const parsedCandidate = candidate.rawTitle
+    ? parseMediaReleaseTitle(candidate.rawTitle, candidate.mediaType)
+    : null;
+  const isBatchCandidate =
+    candidate.mediaType === "ANIME" &&
+    Boolean(parsedCandidate && hasBatchEpisodeRange(candidate.rawTitle));
   const organizerCandidate = {
     ...candidate,
-    season: normalizedCandidateEpisode.season,
-    episodeNumber: normalizedCandidateEpisode.episodeNumber,
+    parsedTitle: isBatchCandidate && parsedCandidate ? parsedCandidate.parsedTitle : candidate.parsedTitle,
+    normalizedTitle:
+      isBatchCandidate && parsedCandidate ? parsedCandidate.normalizedTitle : candidate.normalizedTitle,
+    season: isBatchCandidate
+      ? parsedCandidate?.season ?? normalizedCandidateEpisode.season
+      : normalizedCandidateEpisode.season,
+    episodeNumber: isBatchCandidate ? null : normalizedCandidateEpisode.episodeNumber,
+    group:
+      isBatchCandidate && candidate.group
+        ? {
+            ...candidate.group,
+            displayTitle: hasBatchEpisodeRange(candidate.group.displayTitle) && parsedCandidate
+              ? parsedCandidate.parsedTitle
+              : candidate.group.displayTitle,
+            normalizedTitle: hasBatchEpisodeRange(candidate.group.displayTitle) && parsedCandidate
+              ? parsedCandidate.normalizedTitle
+              : candidate.group.normalizedTitle,
+          }
+        : candidate.group,
   };
 
   if (!candidate.groupId) {
@@ -273,7 +301,7 @@ export async function createOrganizerPlanForCandidateSource(input: {
   const planMetadata = metadataReliable
     ? metadata
     : buildCandidateMetadataFallback({
-        candidate,
+        candidate: organizerCandidate,
         metadata,
       });
   const allowedRoots = allowedOrganizerRoots(settings.directories);
@@ -320,6 +348,10 @@ export async function createOrganizerPlanForCandidateSource(input: {
     episodeNumber: mediaType === "MOVIE" ? 1 : organizerCandidate.episodeNumber,
     season: mediaType === "MOVIE" ? 1 : organizerCandidate.season,
   };
+  const preferSourceEpisode = shouldPreferSourceEpisodeForPackage(
+    videoFiles,
+    effectiveCandidate,
+  );
 
   const confidence = Math.min(candidate.confidence, planMetadata.score);
   const mainSourcePath = path.resolve(input.sourceRoot);
@@ -334,6 +366,7 @@ export async function createOrganizerPlanForCandidateSource(input: {
       const identity = resolveOrganizerItemIdentity({
         candidate: effectiveCandidate,
         sourcePath,
+        preferSourceEpisode,
       });
       const matchesCandidate =
         file.fileType === "video" ? sourcePathMatchesCandidate(sourcePath, effectiveCandidate) : false;
@@ -347,7 +380,7 @@ export async function createOrganizerPlanForCandidateSource(input: {
         effectiveCandidate.group?.displayTitle ||
         effectiveCandidate.parsedTitle;
       const targetPath = archiveAsVideo
-        ? buildTargetPath({
+        ? buildOrganizerTargetPath({
             mediaType: effectiveCandidate.mediaType,
             roots: settings.directories,
             title,
@@ -442,6 +475,12 @@ export async function createOrganizerPlanForCandidateSource(input: {
 
 export function hasBlockingOrganizerPlan(plans: Array<{ status: string; items: Array<unknown> }>) {
   return plans.some((plan) => plan.status !== "REJECTED" && plan.items.length > 0);
+}
+
+export function hasUnresolvedOrganizerReviewPlan(
+  plans: Array<{ status: string; resolvedAt?: Date | string | null }>,
+) {
+  return plans.some((plan) => plan.status === "NEEDS_REVIEW" && !plan.resolvedAt);
 }
 
 function markDuplicateTargetConflicts(
@@ -1248,6 +1287,7 @@ function groupAliases(value: unknown) {
 export function resolveOrganizerItemIdentity(input: {
   sourcePath: string;
   candidate: OrganizerCandidateIdentity;
+  preferSourceEpisode?: boolean;
 }) {
   const candidateSeason = input.candidate.season ?? 1;
   const candidateEpisode =
@@ -1276,8 +1316,8 @@ export function resolveOrganizerItemIdentity(input: {
       ? parsedSource.season
       : candidateSeason;
   const canUseSourceEpisode =
-    candidateEpisode === null &&
     sourceEpisode !== null &&
+    (candidateEpisode === null || input.preferSourceEpisode === true) &&
     sourcePathMatchesCandidate(input.sourcePath, input.candidate);
 
   return {
@@ -1286,6 +1326,29 @@ export function resolveOrganizerItemIdentity(input: {
     episodeTitle: parsedSource.parsedTitle || input.candidate.parsedTitle,
     sourceParsedEpisode: sourceEpisode,
   };
+}
+
+function shouldPreferSourceEpisodeForPackage(
+  sourcePaths: string[],
+  candidate: OrganizerCandidateIdentity,
+) {
+  if (sourcePaths.length < 2 || candidate.mediaType === "MOVIE") {
+    return false;
+  }
+  const episodes = new Set<number>();
+  for (const sourcePath of sourcePaths) {
+    if (!sourcePathMatchesCandidate(sourcePath, candidate)) {
+      continue;
+    }
+    const parsed = parseMediaReleaseTitle(
+      path.basename(sourcePath, path.extname(sourcePath)),
+      candidate.mediaType,
+    );
+    if (parsed.episodeNumber !== undefined && parsed.episodeNumber > 0) {
+      episodes.add(Math.floor(parsed.episodeNumber));
+    }
+  }
+  return episodes.size > 1;
 }
 
 export function resolveOrganizerMediaType(input: {
@@ -1318,7 +1381,7 @@ function looksTheatricalMoviePackage(value: string) {
   );
 }
 
-function buildTargetPath(input: {
+export function buildOrganizerTargetPath(input: {
   mediaType: MediaType;
   roots: {
     animeLibraryDir: string;
