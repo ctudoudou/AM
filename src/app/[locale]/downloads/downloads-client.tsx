@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { Loader2, Pause, Play, RefreshCw, RotateCw, Trash2 } from "lucide-react";
 import { getMessages } from "@/messages";
 import type { Locale } from "@/lib/i18n";
@@ -72,42 +72,74 @@ type Aria2Overview =
 type Messages = ReturnType<typeof getMessages>;
 type DownloadReason = NonNullable<DownloadRecord["aria2Diagnostics"]>["reason"];
 type DownloadAction = "pause" | "resume" | "remove" | "sync" | "retry";
+type DownloadFilter = "ALL" | "ACTIVE" | "WAITING" | "PAUSED" | "COMPLETED" | "FAILED";
+type DownloadPagination = {
+  page: number;
+  pageSize: number;
+  total: number;
+  totalPages: number;
+  hasNext: boolean;
+  hasPrevious: boolean;
+};
+
+const downloadFilters: DownloadFilter[] = [
+  "ALL",
+  "ACTIVE",
+  "WAITING",
+  "PAUSED",
+  "COMPLETED",
+  "FAILED",
+];
+const defaultPagination: DownloadPagination = {
+  page: 1,
+  pageSize: 25,
+  total: 0,
+  totalPages: 1,
+  hasNext: false,
+  hasPrevious: false,
+};
 
 export function DownloadsClient({ locale }: { locale: Locale }) {
   const t = getMessages(locale);
   const [downloads, setDownloads] = useState<DownloadRecord[]>([]);
   const [aria2, setAria2] = useState<Aria2Overview | null>(null);
-  const [filter, setFilter] = useState("ALL");
+  const [filter, setFilter] = useState<DownloadFilter>("ALL");
+  const [page, setPage] = useState(1);
+  const [pagination, setPagination] = useState<DownloadPagination>(defaultPagination);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [message, setMessage] = useState("");
   const [syncing, setSyncing] = useState(false);
   const [pendingAction, setPendingAction] = useState("");
 
-  const visibleDownloads = useMemo(
-    () => downloads.filter((download) => filter === "ALL" || download.status === filter),
-    [downloads, filter],
-  );
-
   const load = useCallback(async () => {
     try {
-      const response = await fetch("/api/downloads");
+      const params = new URLSearchParams({ page: String(page), pageSize: "25" });
+      if (filter !== "ALL") {
+        params.set("status", filter);
+      }
+      const response = await fetch(`/api/downloads?${params.toString()}`);
       if (!response.ok) {
         throw new Error(t.downloadsLoadError);
       }
       const body = (await response.json()) as {
         downloads: DownloadRecord[];
         aria2?: Aria2Overview;
+        pagination: DownloadPagination;
       };
       setDownloads(body.downloads);
       setAria2(body.aria2 ?? null);
+      setPagination(body.pagination);
+      if (body.pagination.total > 0 && page > body.pagination.totalPages) {
+        setPage(body.pagination.totalPages);
+      }
       setError("");
     } catch (loadError) {
       setError(loadError instanceof Error ? loadError.message : t.downloadsLoadError);
     } finally {
       setLoading(false);
     }
-  }, [t.downloadsLoadError]);
+  }, [filter, page, t.downloadsLoadError]);
 
   useEffect(() => {
     const timeout = window.setTimeout(() => {
@@ -190,14 +222,18 @@ export function DownloadsClient({ locale }: { locale: Locale }) {
         </button>
       </div>
       <div className="filter-tabs">
-        {["ALL", "ACTIVE", "WAITING", "PAUSED", "COMPLETED", "FAILED"].map((status) => (
+        {downloadFilters.map((status) => (
           <button
+            aria-pressed={filter === status}
             className={filter === status ? "active" : ""}
             key={status}
-            onClick={() => setFilter(status)}
+            onClick={() => {
+              setFilter(status);
+              setPage(1);
+            }}
             type="button"
           >
-            {status}
+            {downloadStatusLabel(status, t)}
           </button>
         ))}
       </div>
@@ -218,10 +254,10 @@ export function DownloadsClient({ locale }: { locale: Locale }) {
         </div>
       ) : null}
       <div className="download-table enhanced">
-        {visibleDownloads.length === 0 ? (
+        {downloads.length === 0 ? (
           <p>{t.noDownloads}</p>
         ) : (
-          visibleDownloads.map((download) => (
+          downloads.map((download) => (
             <article key={download.id}>
               <div>
                 <h3>
@@ -252,7 +288,7 @@ export function DownloadsClient({ locale }: { locale: Locale }) {
                 ) : null}
               </div>
               <span title={formatReason(download.aria2Diagnostics?.reason, t)}>
-                {download.status}
+                {downloadStatusLabel(download.status, t)}
               </span>
               <strong>{Math.round(download.progress * 100)}%</strong>
               <div className="download-actions">
@@ -309,6 +345,29 @@ export function DownloadsClient({ locale }: { locale: Locale }) {
           ))
         )}
       </div>
+      {pagination.total > pagination.pageSize ? (
+        <div className="candidate-pagination download-pagination">
+          <span>
+            {t.queueShowing} {paginationStart(pagination)}–{paginationEnd(pagination)} / {pagination.total}
+          </span>
+          <div>
+            <button
+              disabled={!pagination.hasPrevious}
+              onClick={() => setPage((current) => Math.max(1, current - 1))}
+              type="button"
+            >
+              {t.queuePrevious}
+            </button>
+            <button
+              disabled={!pagination.hasNext}
+              onClick={() => setPage((current) => current + 1)}
+              type="button"
+            >
+              {t.queueNext}
+            </button>
+          </div>
+        </div>
+      ) : null}
     </section>
   );
 }
@@ -385,7 +444,26 @@ function formatActionResult(action: DownloadAction, status: string | undefined, 
     sync: t.syncTask,
     retry: t.retryDownload,
   }[action];
-  return status ? `${label}: ${status}` : t.downloadActionDone;
+  return status ? `${label}: ${downloadStatusLabel(status, t)}` : t.downloadActionDone;
+}
+
+function downloadStatusLabel(status: string, t: Messages) {
+  return {
+    ALL: t.downloadStatusAll,
+    ACTIVE: t.downloadStatusActive,
+    WAITING: t.downloadStatusWaiting,
+    PAUSED: t.downloadStatusPaused,
+    COMPLETED: t.downloadStatusCompleted,
+    FAILED: t.downloadStatusFailed,
+  }[status] ?? status;
+}
+
+function paginationStart(pagination: DownloadPagination) {
+  return (pagination.page - 1) * pagination.pageSize + 1;
+}
+
+function paginationEnd(pagination: DownloadPagination) {
+  return Math.min(pagination.page * pagination.pageSize, pagination.total);
 }
 
 function formatDuration(seconds: number) {

@@ -153,6 +153,156 @@ a {
   padding: 2px 6px;
 }
 
+.library-search-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  display: grid;
+  place-items: start center;
+  background: rgba(0, 0, 0, 0.76);
+  padding: min(12vh, 112px) 24px 24px;
+}
+
+.library-search-dialog {
+  width: min(680px, 100%);
+  max-height: min(76svh, 720px);
+  overflow: hidden;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 18px;
+  background: rgb(10, 10, 10);
+  box-shadow: 0 28px 90px rgba(0, 0, 0, 0.58);
+  padding: 16px;
+}
+
+.library-search-dialog > header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.library-search-dialog h2 {
+  margin: 0;
+  color: var(--text-primary);
+  font-size: 18px;
+  line-height: 26px;
+}
+
+.library-search-dialog header p {
+  margin: 3px 0 0;
+  color: var(--text-muted);
+  font-size: 12px;
+  line-height: 18px;
+}
+
+.library-search-close {
+  display: inline-flex;
+  width: 34px;
+  height: 34px;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--border-default);
+  border-radius: 10px;
+  background: var(--surface-2);
+  color: var(--text-muted);
+}
+
+.library-search-input {
+  display: flex;
+  height: 44px;
+  align-items: center;
+  gap: 10px;
+  margin-top: 14px;
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.055);
+  color: var(--text-muted);
+  padding: 0 13px;
+}
+
+.library-search-input:focus-within {
+  border-color: rgba(253, 199, 0, 0.65);
+  box-shadow: 0 0 0 3px rgba(253, 199, 0, 0.12);
+}
+
+.library-search-input input {
+  width: 100%;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  color: var(--text-primary);
+  font: inherit;
+}
+
+.library-search-results {
+  display: grid;
+  max-height: min(56svh, 520px);
+  gap: 5px;
+  margin-top: 10px;
+  overflow: auto;
+}
+
+.library-search-results > a {
+  display: grid;
+  grid-template-columns: 42px minmax(0, 1fr);
+  align-items: center;
+  gap: 11px;
+  border-radius: 11px;
+  color: var(--text-primary);
+  padding: 7px;
+}
+
+.library-search-results > a:hover,
+.library-search-results > a:focus-visible {
+  outline: 0;
+  background: var(--surface-active);
+}
+
+.library-search-poster {
+  display: grid;
+  width: 42px;
+  aspect-ratio: 2 / 3;
+  place-items: center;
+  border-radius: 7px;
+  background-color: var(--surface-3);
+  background-position: center;
+  background-size: cover;
+  color: var(--text-muted);
+}
+
+.library-search-copy {
+  display: grid;
+  min-width: 0;
+  gap: 3px;
+}
+
+.library-search-copy strong,
+.library-search-copy small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.library-search-copy strong {
+  font-size: 13px;
+}
+
+.library-search-copy small {
+  color: var(--text-muted);
+  font-size: 11px;
+}
+
+.library-search-empty {
+  display: flex;
+  min-height: 92px;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
 .nav {
   flex: 1;
   overflow: auto;
@@ -835,6 +985,36 @@ a {
   align-items: stretch;
 }
 
+.data-health-loading {
+  min-height: 220px;
+  height: auto;
+  align-items: flex-start;
+  padding-top: 72px;
+}
+
+.data-health-loading > div {
+  display: grid;
+  gap: 4px;
+}
+
+.data-health-loading strong {
+  color: var(--text-secondary);
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.data-health-loading span,
+.data-health-refresh-status {
+  color: var(--text-muted);
+  font-size: 11px;
+  line-height: 17px;
+}
+
+.data-health-refresh-status {
+  display: block;
+  margin-top: 6px;
+}
+
 .data-health-hero {
   gap: 18px;
 }
@@ -968,7 +1148,6 @@ a {
 }
 
 .data-health-issue pre {
-  grid-column: 1 / -1;
   max-height: 180px;
   overflow: auto;
   border: 1px solid var(--border-subtle);
@@ -979,6 +1158,22 @@ a {
   line-height: 16px;
   margin: 0;
   padding: 10px;
+}
+
+.data-health-issue details {
+  grid-column: 1 / -1;
+}
+
+.data-health-issue summary {
+  width: fit-content;
+  cursor: pointer;
+  color: var(--text-muted);
+  font-size: 11px;
+  line-height: 18px;
+}
+
+.data-health-issue details pre {
+  margin-top: 8px;
 }
 
 .data-health-empty {
@@ -4889,6 +5084,18 @@ a {
 }
 
 @media (max-width: 560px) {
+  .library-search-backdrop {
+    place-items: start stretch;
+    padding: 72px 10px calc(82px + env(safe-area-inset-bottom));
+  }
+
+  .library-search-dialog {
+    width: 100%;
+    max-height: calc(100svh - 164px);
+    border-radius: 14px;
+    padding: 13px;
+  }
+
   .settings-content {
     padding: 18px 12px calc(92px + env(safe-area-inset-bottom));
   }

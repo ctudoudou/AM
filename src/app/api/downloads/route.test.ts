@@ -7,6 +7,7 @@ vi.mock("@/lib/db", () => ({
   prisma: {
     download: {
       findMany: vi.fn(),
+      count: vi.fn(),
     },
   },
 }));
@@ -23,6 +24,7 @@ describe("/api/downloads", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     vi.mocked(prisma.download.findMany).mockResolvedValue([]);
+    vi.mocked(prisma.download.count).mockResolvedValue(0);
     vi.mocked(aria2Request).mockResolvedValue({
       downloadSpeed: "0",
       uploadSpeed: "0",
@@ -38,7 +40,50 @@ describe("/api/downloads", () => {
 
     expect(response.status).toBe(200);
     expect(prisma.download.findMany).toHaveBeenCalledWith(
-      expect.objectContaining({ where: { supersededById: null } }),
+      expect.objectContaining({
+        where: { supersededById: null },
+        skip: 0,
+        take: 25,
+      }),
+    );
+  });
+
+  it("paginates and filters downloads on the server", async () => {
+    vi.mocked(prisma.download.count).mockResolvedValue(80);
+
+    const response = await GET(
+      new Request("http://localhost/api/downloads?status=FAILED&page=2&pageSize=20"),
+    );
+    const body = await response.json();
+
+    expect(prisma.download.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { supersededById: null, status: "FAILED" },
+        skip: 20,
+        take: 20,
+      }),
+    );
+    expect(body.pagination).toEqual({
+      page: 2,
+      pageSize: 20,
+      total: 80,
+      totalPages: 4,
+      hasNext: true,
+      hasPrevious: true,
+    });
+  });
+
+  it("caps page size and ignores unknown statuses", async () => {
+    await GET(
+      new Request("http://localhost/api/downloads?status=UNKNOWN&page=invalid&pageSize=1000"),
+    );
+
+    expect(prisma.download.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { supersededById: null },
+        skip: 0,
+        take: 100,
+      }),
     );
   });
 
