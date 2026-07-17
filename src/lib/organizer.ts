@@ -80,7 +80,9 @@ export async function inspectCompletedDownloads() {
   const downloads = await prisma.download.findMany({
     where: {
       status: "COMPLETED",
+      supersededById: null,
       OR: [
+        { archiveStatus: null },
         { archiveStatus: { not: "planned" } },
         {
           organizerPlans: {
@@ -96,9 +98,33 @@ export async function inspectCompletedDownloads() {
         select: { id: true, status: true, resolvedAt: true, items: { select: { id: true } } },
       },
     },
+    orderBy: { createdAt: "asc" },
   });
+  const nullArchiveSourceUrls = [
+    ...new Set(
+      downloads
+        .filter((download) => download.archiveStatus === null && download.sourceUrl.length > 0)
+        .map((download) => download.sourceUrl),
+    ),
+  ];
+  const archivedPeers = nullArchiveSourceUrls.length
+    ? await prisma.download.findMany({
+        where: {
+          sourceUrl: { in: nullArchiveSourceUrls },
+          status: "COMPLETED",
+          archiveStatus: { in: ["archived", "auto_archived"] },
+          supersededById: null,
+        },
+        select: { id: true, sourceUrl: true },
+      })
+    : [];
+  const archivedPeerBySource = new Map(
+    archivedPeers.map((download) => [download.sourceUrl, download.id]),
+  );
+  const inspectedNullSources = new Set<string>();
   const results = [];
   const failures = [];
+  const skipped: Array<{ downloadId: string; reason: string; canonicalDownloadId?: string }> = [];
 
   for (const download of downloads) {
     if (
@@ -106,6 +132,34 @@ export async function inspectCompletedDownloads() {
       hasUnresolvedOrganizerReviewPlan(download.organizerPlans)
     ) {
       continue;
+    }
+    if (download.archiveStatus === null) {
+      const archivedPeerId = archivedPeerBySource.get(download.sourceUrl);
+      if (archivedPeerId) {
+        skipped.push({
+          downloadId: download.id,
+          canonicalDownloadId: archivedPeerId,
+          reason: "completed_source_already_archived",
+        });
+        continue;
+      }
+      if (download.sourceUrl && inspectedNullSources.has(download.sourceUrl)) {
+        skipped.push({
+          downloadId: download.id,
+          reason: "duplicate_completed_source",
+        });
+        continue;
+      }
+      if (!download.targetPath || !(await organizerSourceExists(download.targetPath))) {
+        skipped.push({
+          downloadId: download.id,
+          reason: "completed_source_missing",
+        });
+        continue;
+      }
+      if (download.sourceUrl) {
+        inspectedNullSources.add(download.sourceUrl);
+      }
     }
     try {
       results.push(await createOrganizerPlanForDownload(download.id));
@@ -118,9 +172,15 @@ export async function inspectCompletedDownloads() {
   return {
     inspected: results.length,
     failed: failures.length,
+    skipped: skipped.length,
     plans: results.map((plan) => plan.id),
     failures,
+    skippedDownloads: skipped,
   };
+}
+
+async function organizerSourceExists(sourcePath: string) {
+  return Boolean(await fs.stat(sourcePath).catch(() => null));
 }
 
 async function recordOrganizerInspectionFailure(

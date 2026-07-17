@@ -53,6 +53,20 @@ describe("aria2 download helpers", () => {
     });
   });
 
+  it("recognizes aria2 metadata paths that include the info hash suffix", () => {
+    expect(
+      buildDownloadDiagnostics({
+        aria2Gid: "metadata",
+        status: "ACTIVE",
+        aria2Files: [{ path: `[METADATA]${"a".repeat(40)}`, length: "0" }],
+      }),
+    ).toMatchObject({
+      reason: "metadata",
+      metadataOnly: true,
+      visibleFileCount: 0,
+    });
+  });
+
   it("explains active downloads with no speed as peer waits", () => {
     expect(
       buildDownloadDiagnostics({

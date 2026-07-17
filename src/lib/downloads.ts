@@ -135,9 +135,12 @@ export async function syncAria2Downloads() {
     try {
       const updated = await syncSingleAria2Download(download.id);
       synced += 1;
-      if (updated.status === "FAILED" && updated.errorMessage?.startsWith("aria2 task is not available")) {
+      if (updated.status === "FAILED") {
         failed += 1;
-        errors.push({ id: download.id, message: updated.errorMessage });
+        errors.push({
+          id: download.id,
+          message: updated.errorMessage || "Download remains failed after aria2 synchronization.",
+        });
       }
     } catch (error) {
       failed += 1;
@@ -460,7 +463,7 @@ export type DownloadDiagnostics = {
 
 export function buildDownloadDiagnostics(download: DownloadDiagnosticsInput): DownloadDiagnostics {
   const files = normalizeAria2Files(download.aria2Files);
-  const visibleFiles = files.filter((file) => file.path && file.path !== "[METADATA]");
+  const visibleFiles = files.filter((file) => file.path && !file.path.startsWith("[METADATA]"));
   const metadataOnly = files.length > 0 && visibleFiles.length === 0;
   const speedBytesPerSecond = bigintString(download.downloadSpeed);
   const totalBytes = bigintString(download.totalBytes);
@@ -735,7 +738,7 @@ export function selectTargetPath(
   files?: Array<{ path?: string; length?: string; completedLength?: string; selected?: string }>,
 ) {
   return (files ?? [])
-    .filter((file) => file.path && file.path !== "[METADATA]")
+    .filter((file) => file.path && !file.path.startsWith("[METADATA]"))
     .filter((file) => videoExtensions.has(file.path ? extname(file.path) : ""))
     .sort((a, b) => Number(b.length ?? 0) - Number(a.length ?? 0))[0]?.path;
 }

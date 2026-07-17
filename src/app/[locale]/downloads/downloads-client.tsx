@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { Loader2, Pause, Play, RefreshCw, RotateCw, Trash2 } from "lucide-react";
+import { Loader2, Pause, Play, RefreshCw, RotateCw, ScanSearch, Trash2 } from "lucide-react";
 import { getMessages } from "@/messages";
 import { buildDownloadPipeline, type PipelineStageState } from "@/lib/download-pipeline";
 import type { Locale } from "@/lib/i18n";
@@ -83,6 +83,37 @@ type DownloadPagination = {
   hasPrevious: boolean;
 };
 
+type DownloadReconciliationPlan = {
+  planId: string;
+  warnings: string[];
+  summary: {
+    knownAria2: number;
+    untrackedAria2: number;
+    anomalies: number;
+    archivedActive: number;
+    safePause: number;
+    manualReview: number;
+  };
+  items: Array<{
+    actionId: string;
+    kind:
+      | "archived_active"
+      | "archived_result"
+      | "untracked_payload"
+      | "untracked_metadata"
+      | "untracked_error"
+      | "ambiguous_match";
+    gid: string;
+    aria2Status: string;
+    title: string | null;
+    downloadId: string | null;
+    safeToPause: boolean;
+    completedBytes: string;
+    totalBytes: string;
+    libraryTargets: Array<{ state: string }>;
+  }>;
+};
+
 const downloadFilters: DownloadFilter[] = [
   "ALL",
   "ACTIVE",
@@ -111,6 +142,8 @@ export function DownloadsClient({ locale }: { locale: Locale }) {
   const [error, setError] = useState("");
   const [message, setMessage] = useState("");
   const [syncing, setSyncing] = useState(false);
+  const [reconciling, setReconciling] = useState(false);
+  const [reconciliation, setReconciliation] = useState<DownloadReconciliationPlan | null>(null);
   const [pendingAction, setPendingAction] = useState("");
 
   const load = useCallback(async () => {
@@ -179,6 +212,28 @@ export function DownloadsClient({ locale }: { locale: Locale }) {
     }
   }
 
+  async function reconcileDownloads() {
+    setError("");
+    setMessage("");
+    setReconciling(true);
+    try {
+      const response = await fetch("/api/downloads/reconciliation");
+      const body = await response.json().catch(() => null);
+      if (!response.ok) {
+        throw new Error(body?.message || t.downloadReconciliationLoadError);
+      }
+      setReconciliation(body as DownloadReconciliationPlan);
+    } catch (reconciliationError) {
+      setError(
+        reconciliationError instanceof Error
+          ? reconciliationError.message
+          : t.downloadReconciliationLoadError,
+      );
+    } finally {
+      setReconciling(false);
+    }
+  }
+
   async function runDownloadAction(download: DownloadRecord, action: DownloadAction) {
     setError("");
     setMessage("");
@@ -217,10 +272,16 @@ export function DownloadsClient({ locale }: { locale: Locale }) {
           <h2>{t.downloadTasks}</h2>
           <p>{t.downloadTasksDescription}</p>
         </div>
-        <button disabled={syncing} onClick={syncDownloads} type="button">
-          {syncing ? <Loader2 size={14} /> : <RefreshCw size={14} />}
-          {t.sync}
-        </button>
+        <div className="download-heading-actions">
+          <button disabled={reconciling} onClick={reconcileDownloads} type="button">
+            {reconciling ? <Loader2 size={14} /> : <ScanSearch size={14} />}
+            {t.downloadReconciliation}
+          </button>
+          <button disabled={syncing} onClick={syncDownloads} type="button">
+            {syncing ? <Loader2 size={14} /> : <RefreshCw size={14} />}
+            {t.sync}
+          </button>
+        </div>
       </div>
       <div className="filter-tabs">
         {downloadFilters.map((status) => (
@@ -254,6 +315,7 @@ export function DownloadsClient({ locale }: { locale: Locale }) {
           )}
         </div>
       ) : null}
+      {reconciliation ? <DownloadReconciliation plan={reconciliation} t={t} /> : null}
       <div className="download-table enhanced">
         {downloads.length === 0 ? (
           <p>{t.noDownloads}</p>
@@ -278,7 +340,7 @@ export function DownloadsClient({ locale }: { locale: Locale }) {
                 {download.aria2Files?.length ? (
                   <div className="download-files">
                     {download.aria2Files
-                      .filter((file) => file.path && file.path !== "[METADATA]")
+                      .filter((file) => file.path && !file.path.startsWith("[METADATA]"))
                       .slice(0, 3)
                       .map((file) => (
                         <span key={file.path}>
@@ -372,6 +434,78 @@ export function DownloadsClient({ locale }: { locale: Locale }) {
       ) : null}
     </section>
   );
+}
+
+function DownloadReconciliation({
+  plan,
+  t,
+}: {
+  plan: DownloadReconciliationPlan;
+  t: Messages;
+}) {
+  return (
+    <section aria-live="polite" className="download-reconciliation">
+      <div className="download-reconciliation-heading">
+        <div>
+          <strong>{t.downloadReconciliation}</strong>
+          <span>{t.downloadReconciliationDescription}</span>
+        </div>
+        <small>{t.downloadReconciliationReadOnly}</small>
+      </div>
+      <div className="download-reconciliation-summary">
+        <span>{t.downloadReconciliationKnown}: <strong>{plan.summary.knownAria2}</strong></span>
+        <span>{t.downloadReconciliationUntracked}: <strong>{plan.summary.untrackedAria2}</strong></span>
+        <span>{t.downloadReconciliationAnomalies}: <strong>{plan.summary.anomalies}</strong></span>
+        <span>{t.downloadReconciliationArchivedActive}: <strong>{plan.summary.archivedActive}</strong></span>
+        <span>{t.downloadReconciliationSafePause}: <strong>{plan.summary.safePause}</strong></span>
+        <span>{t.downloadReconciliationManualReview}: <strong>{plan.summary.manualReview}</strong></span>
+      </div>
+      {plan.warnings.map((warning) => (
+        <div className="settings-alert" key={warning}>{warning}</div>
+      ))}
+      {plan.items.length === 0 ? (
+        <p>{t.downloadReconciliationEmpty}</p>
+      ) : (
+        <div className="download-reconciliation-list">
+          {plan.items.slice(0, 20).map((item) => (
+            <article key={item.actionId}>
+              <div>
+                <strong>{item.title || t.unknownTitle}</strong>
+                <span>
+                  gid {item.gid} · {item.aria2Status} · {formatBytes(item.completedBytes)} / {formatBytes(item.totalBytes)}
+                </span>
+              </div>
+              <span>{downloadReconciliationKindLabel(item.kind, t)}</span>
+              <em className={item.safeToPause ? "safe" : "review"}>
+                {item.safeToPause
+                  ? t.downloadReconciliationSafePauseCandidate
+                  : t.downloadReconciliationReviewRequired}
+              </em>
+            </article>
+          ))}
+          {plan.items.length > 20 ? (
+            <small className="download-reconciliation-more">
+              {t.queueShowing} 1–20 / {plan.items.length}
+            </small>
+          ) : null}
+        </div>
+      )}
+    </section>
+  );
+}
+
+function downloadReconciliationKindLabel(
+  kind: DownloadReconciliationPlan["items"][number]["kind"],
+  t: Messages,
+) {
+  return {
+    archived_active: t.downloadReconciliationKindArchivedActive,
+    archived_result: t.downloadReconciliationKindArchivedResult,
+    untracked_payload: t.downloadReconciliationKindUntrackedPayload,
+    untracked_metadata: t.downloadReconciliationKindUntrackedMetadata,
+    untracked_error: t.downloadReconciliationKindUntrackedError,
+    ambiguous_match: t.downloadReconciliationKindAmbiguousMatch,
+  }[kind];
 }
 
 function DownloadPipelineStatus({ download, t }: { download: DownloadRecord; t: Messages }) {

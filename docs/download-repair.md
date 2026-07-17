@@ -19,6 +19,22 @@ aria2 tasks, and files under `DOWNLOADS_DIR`.
 - `GET /api/downloads` hides superseded rows by default. Audit callers can request
   `?includeSuperseded=true`.
 
+## aria2 reconciliation dry-run
+
+`GET /api/downloads/reconciliation` is a separate read-only audit for live aria2 state that is not
+covered by failed-record repair. It reports:
+
+- aria2 payload tasks with no canonical `Download.aria2Gid`;
+- magnet metadata helper tasks such as `[METADATA]<info-hash>`;
+- archived downloads that are active again after the organizer moved their source files;
+- terminal aria2 results still associated with archived downloads; and
+- ambiguous info-hash or source-path matches that require review.
+
+An archived active task is only marked as a safe pause candidate when every item in the latest
+executed organizer plan has a regular, non-symbolic-link library target inside a configured media
+library root and its byte length exactly matches the recorded organizer size. The endpoint never
+pauses, removes, adopts, or cleans a task; it only produces a stable evidence plan for review.
+
 ## Repair actions
 
 | Action | Behavior |

@@ -556,14 +556,18 @@ describe("inspectCompletedDownloads", () => {
       {
         id: "missing-download",
         candidateId: "candidate-1",
+        sourceUrl: "magnet:?xt=urn:btih:missing",
         targetPath: "/data/downloads/Missing Episode.mkv",
+        archiveStatus: "organizer_failed",
         candidate: { mediaType: "ANIME" },
         organizerPlans: [],
       },
       {
         id: "next-download",
         candidateId: "candidate-2",
+        sourceUrl: "magnet:?xt=urn:btih:next",
         targetPath: null,
+        archiveStatus: "organizer_failed",
         candidate: { mediaType: "ANIME" },
         organizerPlans: [],
       },
@@ -602,6 +606,16 @@ describe("inspectCompletedDownloads", () => {
       plans: ["next-plan"],
       failures: [{ downloadId: "missing-download", planId: "failed-plan" }],
     });
+    expect(prisma.download.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({
+          status: "COMPLETED",
+          supersededById: null,
+          OR: expect.arrayContaining([{ archiveStatus: null }]),
+        }),
+        orderBy: { createdAt: "asc" },
+      }),
+    );
     expect(prisma.organizerPlan.create).toHaveBeenNthCalledWith(1, {
       data: expect.objectContaining({
         downloadId: "missing-download",
@@ -621,6 +635,71 @@ describe("inspectCompletedDownloads", () => {
         status: "NEEDS_REVIEW",
       }),
     });
+  });
+
+  it("skips null-state completed duplicates when the same source is already archived", async () => {
+    vi.mocked(prisma.download.findMany)
+      .mockResolvedValueOnce([
+        {
+          id: "duplicate-download",
+          candidateId: "candidate-1",
+          sourceUrl: "magnet:?xt=urn:btih:duplicate",
+          targetPath: "/data/downloads/Recreated Episode.mkv",
+          archiveStatus: null,
+          candidate: { mediaType: "ANIME" },
+          organizerPlans: [],
+        },
+      ] as never)
+      .mockResolvedValueOnce([
+        {
+          id: "archived-download",
+          sourceUrl: "magnet:?xt=urn:btih:duplicate",
+        },
+      ] as never);
+
+    await expect(inspectCompletedDownloads()).resolves.toMatchObject({
+      inspected: 0,
+      failed: 0,
+      skipped: 1,
+      skippedDownloads: [
+        {
+          downloadId: "duplicate-download",
+          canonicalDownloadId: "archived-download",
+          reason: "completed_source_already_archived",
+        },
+      ],
+    });
+    expect(prisma.organizerPlan.create).not.toHaveBeenCalled();
+  });
+
+  it("reports null-state completed records with missing sources without creating failed plans", async () => {
+    vi.mocked(prisma.download.findMany)
+      .mockResolvedValueOnce([
+        {
+          id: "missing-source",
+          candidateId: "candidate-1",
+          sourceUrl: "magnet:?xt=urn:btih:missing-source",
+          targetPath: "/data/downloads/Gone Episode.mkv",
+          archiveStatus: null,
+          candidate: { mediaType: "ANIME" },
+          organizerPlans: [],
+        },
+      ] as never)
+      .mockResolvedValueOnce([] as never);
+    vi.mocked(fs.stat).mockRejectedValueOnce(new Error("ENOENT"));
+
+    await expect(inspectCompletedDownloads()).resolves.toMatchObject({
+      inspected: 0,
+      failed: 0,
+      skipped: 1,
+      skippedDownloads: [
+        {
+          downloadId: "missing-source",
+          reason: "completed_source_missing",
+        },
+      ],
+    });
+    expect(prisma.organizerPlan.create).not.toHaveBeenCalled();
   });
 });
 
