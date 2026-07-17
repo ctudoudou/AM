@@ -18,6 +18,16 @@ import {
   type OrganizerAiReview,
   type OrganizerReviewInput,
 } from "@/lib/openrouter";
+import {
+  moveOrganizerFiles,
+  OrganizerMoveError,
+  prepareOrganizerAria2Task,
+  restoreOrganizerAria2Task,
+  rollbackOrganizerFiles,
+  type OrganizerAria2Guard,
+  type OrganizerMove,
+  type OrganizerRollbackResult,
+} from "@/lib/organizer-lifecycle";
 
 const videoExtensions = new Set([
   ".mkv",
@@ -80,7 +90,9 @@ export async function inspectCompletedDownloads() {
   const downloads = await prisma.download.findMany({
     where: {
       status: "COMPLETED",
+      supersededById: null,
       OR: [
+        { archiveStatus: null },
         { archiveStatus: { not: "planned" } },
         {
           organizerPlans: {
@@ -96,9 +108,33 @@ export async function inspectCompletedDownloads() {
         select: { id: true, status: true, resolvedAt: true, items: { select: { id: true } } },
       },
     },
+    orderBy: { createdAt: "asc" },
   });
+  const nullArchiveSourceUrls = [
+    ...new Set(
+      downloads
+        .filter((download) => download.archiveStatus === null && download.sourceUrl.length > 0)
+        .map((download) => download.sourceUrl),
+    ),
+  ];
+  const archivedPeers = nullArchiveSourceUrls.length
+    ? await prisma.download.findMany({
+        where: {
+          sourceUrl: { in: nullArchiveSourceUrls },
+          status: "COMPLETED",
+          archiveStatus: { in: ["archived", "auto_archived"] },
+          supersededById: null,
+        },
+        select: { id: true, sourceUrl: true },
+      })
+    : [];
+  const archivedPeerBySource = new Map(
+    archivedPeers.map((download) => [download.sourceUrl, download.id]),
+  );
+  const inspectedNullSources = new Set<string>();
   const results = [];
   const failures = [];
+  const skipped: Array<{ downloadId: string; reason: string; canonicalDownloadId?: string }> = [];
 
   for (const download of downloads) {
     if (
@@ -106,6 +142,34 @@ export async function inspectCompletedDownloads() {
       hasUnresolvedOrganizerReviewPlan(download.organizerPlans)
     ) {
       continue;
+    }
+    if (download.archiveStatus === null) {
+      const archivedPeerId = archivedPeerBySource.get(download.sourceUrl);
+      if (archivedPeerId) {
+        skipped.push({
+          downloadId: download.id,
+          canonicalDownloadId: archivedPeerId,
+          reason: "completed_source_already_archived",
+        });
+        continue;
+      }
+      if (download.sourceUrl && inspectedNullSources.has(download.sourceUrl)) {
+        skipped.push({
+          downloadId: download.id,
+          reason: "duplicate_completed_source",
+        });
+        continue;
+      }
+      if (!download.targetPath || !(await organizerSourceExists(download.targetPath))) {
+        skipped.push({
+          downloadId: download.id,
+          reason: "completed_source_missing",
+        });
+        continue;
+      }
+      if (download.sourceUrl) {
+        inspectedNullSources.add(download.sourceUrl);
+      }
     }
     try {
       results.push(await createOrganizerPlanForDownload(download.id));
@@ -118,9 +182,15 @@ export async function inspectCompletedDownloads() {
   return {
     inspected: results.length,
     failed: failures.length,
+    skipped: skipped.length,
     plans: results.map((plan) => plan.id),
     failures,
+    skippedDownloads: skipped,
   };
+}
+
+async function organizerSourceExists(sourcePath: string) {
+  return Boolean(await fs.stat(sourcePath).catch(() => null));
 }
 
 async function recordOrganizerInspectionFailure(
@@ -555,6 +625,7 @@ export async function executeOrganizerPlan(planId: string, automatic = false) {
     throw new Error("Organizer plan has no files to archive");
   }
 
+  const moves: OrganizerMove[] = [];
   for (const item of plan.items) {
     const sourcePath = assertInsideConfiguredRoots(item.sourcePath, allowedRoots);
     const targetPath = assertInsideConfiguredRoots(item.targetPath, allowedRoots);
@@ -578,33 +649,117 @@ export async function executeOrganizerPlan(planId: string, automatic = false) {
       });
       throw new Error(`Source file is missing: ${sourcePath}`);
     }
-    await fs.mkdir(path.dirname(targetPath), { recursive: true });
     if (await exists(targetPath)) {
       throw new Error(`Target already exists: ${targetPath}`);
     }
-    await fs.rename(sourcePath, targetPath);
+    moves.push({ sourcePath, targetPath });
   }
 
-  const mediaTitle = await upsertMediaRecords(plan);
-
-  if (plan.download) {
-    await prisma.download.update({
-      where: { id: plan.download.id },
-      data: { archiveStatus: automatic ? "auto_archived" : "archived" },
-    });
-  }
-
-  const updated = await prisma.organizerPlan.update({
-    where: { id: plan.id },
+  const operation = await prisma.operationLog.create({
     data: {
-      status: automatic ? "AUTO_ARCHIVED" : "EXECUTED",
-      mediaTitleId: mediaTitle.id,
-      executedAt: new Date(),
+      domain: "ORGANIZER",
+      action: "EXECUTE_MOVE",
+      status: "STARTED",
+      entityType: "OrganizerPlan",
+      entityId: plan.id,
+      externalId: plan.download?.aria2Gid ?? null,
+      planId: plan.id,
+      details: {
+        automatic,
+        downloadId: plan.downloadId,
+        moves,
+      } as Prisma.InputJsonValue,
+      rollbackData: {
+        moves: moves.map((move) => ({
+          sourcePath: move.targetPath,
+          targetPath: move.sourcePath,
+        })),
+      } as Prisma.InputJsonValue,
     },
-    include: { items: true, candidate: true, download: true, mediaTitle: true },
   });
+  let aria2Guard: OrganizerAria2Guard | null = null;
+  let moved: OrganizerMove[] = [];
 
-  return updated;
+  try {
+    aria2Guard = await prepareOrganizerAria2Task(plan.download?.aria2Gid);
+    moved = await moveOrganizerFiles(moves);
+
+    const mediaTitle = await upsertMediaRecords(plan);
+
+    if (plan.download) {
+      await prisma.download.update({
+        where: { id: plan.download.id },
+        data: { archiveStatus: automatic ? "auto_archived" : "archived" },
+      });
+    }
+
+    const updated = await prisma.organizerPlan.update({
+      where: { id: plan.id },
+      data: {
+        status: automatic ? "AUTO_ARCHIVED" : "EXECUTED",
+        mediaTitleId: mediaTitle.id,
+        executedAt: new Date(),
+      },
+      include: { items: true, candidate: true, download: true, mediaTitle: true },
+    });
+
+    await prisma.operationLog
+      .update({
+        where: { id: operation.id },
+        data: {
+          status: "SUCCEEDED",
+          completedAt: new Date(),
+          rollbackData: {
+            moves: moves.map((move) => ({
+              sourcePath: move.targetPath,
+              targetPath: move.sourcePath,
+            })),
+            aria2: aria2Guard?.pausedByOrganizer
+              ? { action: "unpause", gid: aria2Guard.gid }
+              : null,
+          } as Prisma.InputJsonValue,
+        },
+      })
+      .catch(() => null);
+
+    return updated;
+  } catch (error) {
+    const rollback =
+      error instanceof OrganizerMoveError
+        ? error.rollback
+        : moved.length > 0
+          ? await rollbackOrganizerFiles(moved)
+          : emptyOrganizerRollback();
+    let aria2Restored = false;
+    let aria2RestoreError: string | null = null;
+    try {
+      aria2Restored = await restoreOrganizerAria2Task(aria2Guard);
+    } catch (restoreError) {
+      aria2RestoreError =
+        restoreError instanceof Error ? restoreError.message : "Unable to restore aria2 task";
+    }
+    const message = error instanceof Error ? error.message : "Organizer execution failed";
+    await prisma.operationLog
+      .update({
+        where: { id: operation.id },
+        data: {
+          status: "FAILED",
+          errorMessage: message,
+          completedAt: new Date(),
+          rollbackData: {
+            rollback,
+            aria2Restored,
+            aria2RestoreError,
+          } as Prisma.InputJsonValue,
+        },
+      })
+      .catch(() => null);
+    throw error;
+  }
+}
+
+function emptyOrganizerRollback(): OrganizerRollbackResult {
+  return { restored: [], skipped: [], errors: [] };
 }
 
 export function isAutoExecutableOrganizerPlan(plan: {

@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { jsonError, jsonResponse } from "@/lib/api";
+import { assertTrustedMutationOrigin, jsonError, jsonResponse } from "@/lib/api";
 import {
   createDownloadRepairPlan,
   DOWNLOAD_REPAIR_CONFIRMATION,
@@ -26,6 +26,7 @@ export async function GET() {
 
 export async function POST(request: Request) {
   try {
+    assertTrustedMutationOrigin(request);
     return jsonResponse(await executeDownloadRepairPlan(executeSchema.parse(await request.json())));
   } catch (error) {
     if (error instanceof DownloadRepairPlanStaleError) {

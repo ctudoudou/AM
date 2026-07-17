@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 import {
   buildDownloadDiagnostics,
+  classifyDownloadStall,
+  deriveDownloadProgressHealth,
   extractBtInfoHash,
   isCompleteDownloadFileSize,
   isMetadataOnlyAria2Status,
@@ -53,6 +55,20 @@ describe("aria2 download helpers", () => {
     });
   });
 
+  it("recognizes aria2 metadata paths that include the info hash suffix", () => {
+    expect(
+      buildDownloadDiagnostics({
+        aria2Gid: "metadata",
+        status: "ACTIVE",
+        aria2Files: [{ path: `[METADATA]${"a".repeat(40)}`, length: "0" }],
+      }),
+    ).toMatchObject({
+      reason: "metadata",
+      metadataOnly: true,
+      visibleFileCount: 0,
+    });
+  });
+
   it("explains active downloads with no speed as peer waits", () => {
     expect(
       buildDownloadDiagnostics({
@@ -76,6 +92,68 @@ describe("aria2 download helpers", () => {
         downloadSpeed: BigInt(50),
       }).etaSeconds,
     ).toBe(15);
+  });
+
+  it("classifies metadata and payload stalls with separate thresholds", () => {
+    const now = new Date("2026-07-17T12:00:00.000Z").getTime();
+
+    expect(
+      classifyDownloadStall(
+        {
+          status: "ACTIVE",
+          metadataOnly: true,
+          stalledSince: "2026-07-17T05:00:00.000Z",
+        },
+        now,
+      ),
+    ).toBe("cooling");
+    expect(
+      classifyDownloadStall(
+        {
+          status: "ACTIVE",
+          metadataOnly: true,
+          stalledSince: "2026-07-16T11:00:00.000Z",
+        },
+        now,
+      ),
+    ).toBe("needs_source");
+    expect(
+      classifyDownloadStall(
+        {
+          status: "ACTIVE",
+          metadataOnly: false,
+          stalledSince: "2026-07-14T11:00:00.000Z",
+        },
+        now,
+      ),
+    ).toBe("blocked");
+  });
+
+  it("resets stall tracking on byte progress and starts it on a zero-speed sync", () => {
+    const now = new Date("2026-07-17T12:00:00.000Z");
+    expect(
+      deriveDownloadProgressHealth({
+        previousCompletedBytes: BigInt(10),
+        nextCompletedBytes: BigInt(20),
+        previousLastProgressAt: null,
+        previousStalledSince: new Date("2026-07-17T10:00:00.000Z"),
+        nextStatus: "ACTIVE",
+        downloadSpeed: BigInt(0),
+        now,
+      }),
+    ).toEqual({ lastProgressAt: now, stalledSince: null });
+
+    expect(
+      deriveDownloadProgressHealth({
+        previousCompletedBytes: BigInt(20),
+        nextCompletedBytes: BigInt(20),
+        previousLastProgressAt: now,
+        previousStalledSince: null,
+        nextStatus: "ACTIVE",
+        downloadSpeed: BigInt(0),
+        now,
+      }),
+    ).toEqual({ lastProgressAt: now, stalledSince: now });
   });
 
   it("extracts and normalizes info hashes from aria2 duplicate errors and magnets", () => {
