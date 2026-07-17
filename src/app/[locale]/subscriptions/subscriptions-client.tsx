@@ -545,6 +545,9 @@ export function SubscriptionsClient({ locale }: { locale: Locale }) {
   }
 
   async function deleteRssSource(source: RssSource) {
+    if (!window.confirm(t.deleteRssSourceConfirm.replace("{name}", source.name))) {
+      return;
+    }
     const response = await fetch(`/api/rss-sources/${source.id}`, {
       method: "DELETE",
     });
@@ -801,6 +804,7 @@ export function SubscriptionsClient({ locale }: { locale: Locale }) {
                   </p>
                 </div>
                 <button
+                  aria-label={t.deleteRssSource.replace("{name}", source.name)}
                   className="icon-button"
                   onClick={() => void deleteRssSource(source)}
                   type="button"
@@ -882,6 +886,7 @@ export function SubscriptionsClient({ locale }: { locale: Locale }) {
           />
           <input
             accept=".torrent"
+            aria-label={t.torrentFile}
             onChange={(event) => setTorrentFile(event.target.files?.[0] ?? null)}
             type="file"
           />

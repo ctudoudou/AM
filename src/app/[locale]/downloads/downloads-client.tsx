@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { Loader2, Pause, Play, RefreshCw, RotateCw, Trash2 } from "lucide-react";
 import { getMessages } from "@/messages";
+import { buildDownloadPipeline, type PipelineStageState } from "@/lib/download-pipeline";
 import type { Locale } from "@/lib/i18n";
 
 type DownloadRecord = {
@@ -272,6 +273,7 @@ export function DownloadsClient({ locale }: { locale: Locale }) {
                 <p>
                   {formatAria2DetailLine(download, t)}
                 </p>
+                <DownloadPipelineStatus download={download} t={t} />
                 {download.aria2Gid ? <small>gid {download.aria2Gid}</small> : null}
                 {download.aria2Files?.length ? (
                   <div className="download-files">
@@ -372,17 +374,73 @@ export function DownloadsClient({ locale }: { locale: Locale }) {
   );
 }
 
+function DownloadPipelineStatus({ download, t }: { download: DownloadRecord; t: Messages }) {
+  const pipeline = buildDownloadPipeline(download);
+  const stages = [
+    { label: t.pipelineDownload, state: pipeline.download },
+    { label: t.pipelineOrganizer, state: pipeline.organizer },
+    { label: t.pipelineLibrary, state: pipeline.library },
+  ];
+  return (
+    <div className="download-pipeline" title={pipeline.blockedReason ?? undefined}>
+      {stages.map((stage, index) => (
+        <span className={`download-pipeline-stage ${stage.state}`} key={stage.label}>
+          <i aria-hidden="true" />
+          {stage.label}
+          <small>{pipelineStateLabel(stage.state, t)}</small>
+          {index < stages.length - 1 ? <b aria-hidden="true">→</b> : null}
+        </span>
+      ))}
+      {pipeline.blockedReason ? (
+        <em>{pipeline.blockedReason === "download_failed" ? t.pipelineDownloadFailed : pipeline.blockedReason}</em>
+      ) : null}
+    </div>
+  );
+}
+
+function pipelineStateLabel(state: PipelineStageState, t: Messages) {
+  return {
+    waiting: t.pipelineWaiting,
+    active: t.pipelineActive,
+    done: t.pipelineDone,
+    blocked: t.pipelineBlocked,
+  }[state];
+}
+
 function formatDownloadLine(download: DownloadRecord, t: Messages) {
   const latestPlan = download.organizerPlans?.[0];
   return [
-    download.candidate?.mediaType,
-    download.archiveStatus,
-    latestPlan ? `plan ${latestPlan.status}` : undefined,
+    formatDownloadMediaType(download.candidate?.mediaType, t),
+    download.archiveStatus === "archived"
+      ? `${t.pipelineLibrary}: ${t.pipelineDone}`
+      : download.archiveStatus === "organizer_failed"
+        ? `${t.pipelineOrganizer}: ${t.pipelineBlocked}`
+        : download.archiveStatus || undefined,
+    latestPlan ? `${t.pipelineOrganizer}: ${organizerPlanStatusLabel(latestPlan.status, t)}` : undefined,
     latestPlan?.items?.[0]?.targetPath || download.targetPath,
     download.errorMessage ? `${t.aria2Error}: ${download.errorMessage}` : undefined,
   ]
     .filter(Boolean)
     .join(" · ") || download.status;
+}
+
+function formatDownloadMediaType(mediaType: "ANIME" | "MOVIE" | "TV" | undefined, t: Messages) {
+  if (mediaType === "ANIME") return t.anime;
+  if (mediaType === "MOVIE") return t.movies;
+  if (mediaType === "TV") return t.tv;
+  return undefined;
+}
+
+function organizerPlanStatusLabel(status: string, t: Messages) {
+  return {
+    PENDING: t.organizerStatusPending,
+    NEEDS_REVIEW: t.organizerStatusNeedsReview,
+    CONFLICT: t.organizerStatusConflict,
+    FAILED: t.organizerStatusFailed,
+    EXECUTED: t.organizerStatusExecuted,
+    REJECTED: t.organizerStatusRejected,
+    AUTO_ARCHIVED: t.organizerStatusAutoArchived,
+  }[status] ?? status;
 }
 
 function formatAria2DetailLine(download: DownloadRecord, t: Messages) {
