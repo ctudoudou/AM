@@ -2573,12 +2573,126 @@ a {
   color: rgba(254, 240, 138, 0.95);
 }
 
+.download-reconciliation-select {
+  display: inline-flex;
+  min-height: 28px;
+  align-items: center;
+  justify-self: end;
+  flex-direction: row;
+  gap: 6px;
+  border-radius: 6px;
+  background: rgba(34, 197, 94, 0.1);
+  color: rgba(187, 247, 208, 0.95);
+  padding: 0 8px;
+  font-size: 11px;
+  line-height: 16px;
+  white-space: nowrap;
+}
+
+.download-reconciliation-select input {
+  width: 14px;
+  height: 14px;
+  margin: 0;
+}
+
 .download-reconciliation-more {
   display: block;
   color: var(--text-faint);
   padding: 8px 10px;
   font-size: 11px;
   line-height: 16px;
+}
+
+.download-reconciliation-execution {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: end;
+  gap: 10px;
+  border-top: 1px solid rgba(255, 255, 255, 0.06);
+  padding-top: 10px;
+}
+
+.download-reconciliation-execution label {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 4px 8px;
+}
+
+.download-reconciliation-execution label > span {
+  grid-column: 1 / -1;
+  color: var(--text-muted);
+  font-size: 11px;
+  line-height: 16px;
+}
+
+.download-reconciliation-execution code {
+  overflow: hidden;
+  align-self: center;
+  color: rgba(254, 240, 138, 0.78);
+  font-size: 10px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.download-reconciliation-execution input {
+  min-width: 260px;
+  height: 32px;
+  border: 1px solid var(--border-default);
+  border-radius: 8px;
+  background: rgba(0, 0, 0, 0.16);
+  color: var(--text-primary);
+  padding: 0 9px;
+  font-size: 11px;
+}
+
+.download-operation-log {
+  border-top: 1px solid rgba(255, 255, 255, 0.06);
+  padding-top: 8px;
+}
+
+.download-operation-log summary {
+  color: var(--text-muted);
+  font-size: 11px;
+  line-height: 18px;
+  cursor: pointer;
+}
+
+.download-operation-log > div {
+  display: grid;
+  gap: 4px;
+  margin-top: 6px;
+}
+
+.download-operation-log article {
+  display: grid;
+  grid-template-columns: minmax(160px, auto) 80px minmax(0, 1fr);
+  gap: 10px;
+  align-items: center;
+  border-radius: 7px;
+  background: rgba(0, 0, 0, 0.1);
+  padding: 6px 8px;
+}
+
+.download-operation-log span,
+.download-operation-log strong,
+.download-operation-log small {
+  overflow: hidden;
+  font-size: 10px;
+  line-height: 15px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.download-operation-log span {
+  color: var(--text-muted);
+}
+
+.download-operation-log strong {
+  color: var(--text-primary);
+}
+
+.download-operation-log small {
+  color: var(--text-faint);
 }
 
 .download-table {
@@ -5390,6 +5504,34 @@ a {
 
   .download-reconciliation-list em {
     justify-self: start;
+  }
+
+  .download-reconciliation-select {
+    justify-self: start;
+  }
+
+  .download-reconciliation-execution,
+  .download-reconciliation-execution label {
+    grid-template-columns: 1fr;
+  }
+
+  .download-reconciliation-execution code,
+  .download-reconciliation-execution input,
+  .download-reconciliation-execution button {
+    width: 100%;
+    min-width: 0;
+  }
+
+  .download-operation-log article {
+    grid-template-columns: 1fr;
+    gap: 2px;
+  }
+
+  .download-operation-log span,
+  .download-operation-log strong,
+  .download-operation-log small {
+    white-space: normal;
+    overflow-wrap: anywhere;
   }
 
   .download-table h3,

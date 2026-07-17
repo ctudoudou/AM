@@ -39,6 +39,18 @@ The response includes a stable plan hash. Apply selected executable actions with
 if the filesystem or database evidence changed. Resolved history is updated in place; the repair
 endpoint does not delete archived Organizer audit records.
 
+## Execution lifecycle
+
+Organizer execution performs a complete path/source/target preflight before changing aria2 or the
+filesystem. If the linked aria2 task is active or waiting, Kura pauses it before `MOVE` so a session
+restore cannot recreate the source while it is being archived. A missing historical GID is allowed,
+while an aria2 outage blocks the move because downloader state cannot be verified.
+
+Every execution creates an `OperationLog` entry. Multi-file moves are tracked as one operation; if a
+later move fails, earlier moves are renamed back in reverse order. A task paused by the organizer is
+resumed when execution fails. Successful operations keep the task paused and store an `unpause`
+rollback hint, preventing post-organizer redownload while preserving a reversible audit trail.
+
 ## Regeneration safety
 
 Single-plan regeneration verifies that at least one source file still exists, creates and validates

@@ -1,9 +1,19 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { createDownloadReconciliationPlan } from "@/lib/download-reconciliation";
-import { GET } from "./route";
+import {
+  createDownloadReconciliationPlan,
+  DOWNLOAD_RECONCILIATION_CONFIRMATION,
+  DownloadReconciliationPlanStaleError,
+  executeDownloadReconciliationPlan,
+} from "@/lib/download-reconciliation";
+import { GET, POST } from "./route";
 
 vi.mock("@/lib/download-reconciliation", () => ({
+  DOWNLOAD_RECONCILIATION_CONFIRMATION:
+    "I understand this pauses verified archived aria2 tasks",
+  DownloadReconciliationPlanStaleError: class extends Error {},
+  DownloadReconciliationValidationError: class extends Error {},
   createDownloadReconciliationPlan: vi.fn(),
+  executeDownloadReconciliationPlan: vi.fn(),
 }));
 
 describe("/api/downloads/reconciliation", () => {
@@ -33,6 +43,13 @@ describe("/api/downloads/reconciliation", () => {
       },
       items: [],
     });
+    vi.mocked(executeDownloadReconciliationPlan).mockResolvedValue({
+      planId: "a".repeat(64),
+      requested: 1,
+      succeeded: 1,
+      failed: 0,
+      results: [],
+    });
   });
 
   it("returns a read-only reconciliation plan", async () => {
@@ -43,5 +60,81 @@ describe("/api/downloads/reconciliation", () => {
       summary: { untrackedAria2: 1 },
     });
     expect(createDownloadReconciliationPlan).toHaveBeenCalledOnce();
+  });
+
+  it("executes an explicitly confirmed current reconciliation plan", async () => {
+    const response = await POST(
+      new Request("http://localhost/api/downloads/reconciliation", {
+        method: "POST",
+        body: JSON.stringify({
+          planId: "a".repeat(64),
+          actionIds: ["archived_active:one"],
+          confirmation: DOWNLOAD_RECONCILIATION_CONFIRMATION,
+        }),
+      }),
+    );
+
+    expect(response.status).toBe(200);
+    expect(executeDownloadReconciliationPlan).toHaveBeenCalledWith({
+      planId: "a".repeat(64),
+      actionIds: ["archived_active:one"],
+      confirmation: DOWNLOAD_RECONCILIATION_CONFIRMATION,
+    });
+  });
+
+  it("rejects a stale reconciliation plan", async () => {
+    vi.mocked(executeDownloadReconciliationPlan).mockRejectedValue(
+      new DownloadReconciliationPlanStaleError("stale plan"),
+    );
+
+    const response = await POST(
+      new Request("http://localhost/api/downloads/reconciliation", {
+        method: "POST",
+        body: JSON.stringify({
+          planId: "a".repeat(64),
+          actionIds: ["archived_active:one"],
+          confirmation: DOWNLOAD_RECONCILIATION_CONFIRMATION,
+        }),
+      }),
+    );
+
+    expect(response.status).toBe(409);
+    await expect(response.json()).resolves.toMatchObject({
+      error: "STALE_DOWNLOAD_RECONCILIATION_PLAN",
+    });
+  });
+
+  it("rejects execution without the exact confirmation phrase", async () => {
+    const response = await POST(
+      new Request("http://localhost/api/downloads/reconciliation", {
+        method: "POST",
+        body: JSON.stringify({
+          planId: "a".repeat(64),
+          actionIds: ["archived_active:one"],
+          confirmation: "yes",
+        }),
+      }),
+    );
+
+    expect(response.status).toBe(400);
+    expect(executeDownloadReconciliationPlan).not.toHaveBeenCalled();
+  });
+
+  it("rejects cross-origin pause requests", async () => {
+    const response = await POST(
+      new Request("http://localhost/api/downloads/reconciliation", {
+        method: "POST",
+        headers: { Origin: "https://malicious.example" },
+        body: JSON.stringify({
+          planId: "a".repeat(64),
+          actionIds: ["archived_active:one"],
+          confirmation: DOWNLOAD_RECONCILIATION_CONFIRMATION,
+        }),
+      }),
+    );
+
+    expect(response.status).toBe(403);
+    await expect(response.json()).resolves.toMatchObject({ error: "UNTRUSTED_ORIGIN" });
+    expect(executeDownloadReconciliationPlan).not.toHaveBeenCalled();
   });
 });

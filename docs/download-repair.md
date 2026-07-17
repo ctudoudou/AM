@@ -32,8 +32,28 @@ covered by failed-record repair. It reports:
 
 An archived active task is only marked as a safe pause candidate when every item in the latest
 executed organizer plan has a regular, non-symbolic-link library target inside a configured media
-library root and its byte length exactly matches the recorded organizer size. The endpoint never
-pauses, removes, adopts, or cleans a task; it only produces a stable evidence plan for review.
+library root and its byte length exactly matches the recorded organizer size.
+
+`POST /api/downloads/reconciliation` can pause explicitly selected safe candidates. It requires the
+current stable `planId`, unique `actionIds`, and the exact confirmation phrase
+`I understand this pauses verified archived aria2 tasks`. The plan is regenerated immediately
+before execution; state drift returns HTTP `409`. Review-only, ambiguous, already-paused, and
+unverified items are rejected. Each attempted pause is recorded in `OperationLog` with evidence and
+an `unpause` rollback hint. This endpoint never removes aria2 results or deletes files.
+
+Recent audit records are available from `GET /api/operations?domain=DOWNLOAD`. A successful
+`PAUSE_ARCHIVED_REDOWNLOAD` entry can be reversed with
+`POST /api/operations/{id}/rollback` and confirmation phrase
+`I understand this resumes the audited aria2 task`. Rollback creates a second audit record before
+calling aria2 `unpause`; unrelated, failed, or previously rolled-back operations are rejected.
+
+## Download health fields
+
+Migration `000016_download_health_operation_log` also records `lastProgressAt`, `stalledSince`,
+connection/seed counts, retry count, and the next retry time. Download diagnostics classify magnet
+metadata waits as cooling after 6 hours and `needs_source` after 24 hours. Payload downloads become
+cooling after 24 hours without progress and blocked after 72 hours. These states are diagnostic and
+do not automatically retry, pause, or delete tasks.
 
 ## Repair actions
 
@@ -55,6 +75,10 @@ Migration `000014_download_repair_identity` adds nullable `infoHash`, `supersede
 `repairNote` columns plus indexes and a self-referencing foreign key. The migration is additive, so
 the previous application version can continue reading existing download rows during a rolling
 deployment. The new application version requires the migration before serving the repair API.
+
+Migration `000016_download_health_operation_log` adds nullable progress-health fields to `Download`
+and the append-only `OperationLog` table. It is additive and does not rewrite existing downloads;
+the application requires it before executing reconciliation pause actions.
 
 The normal `migrate` service or `npm run prisma:migrate:deploy` applies the migration. Back up the
 PostgreSQL database and the persistent aria2 `/config` volume before applying repair actions.

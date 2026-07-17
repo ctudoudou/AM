@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { jsonError, jsonResponse } from "@/lib/api";
+import { assertTrustedMutationOrigin, jsonError, jsonResponse } from "@/lib/api";
 import { controlAria2Download } from "@/lib/downloads";
 
 export const dynamic = "force-dynamic";
@@ -14,6 +14,7 @@ type RouteContext = {
 
 export async function PATCH(request: Request, context: RouteContext) {
   try {
+    assertTrustedMutationOrigin(request);
     const { id } = await context.params;
     const { action } = actionSchema.parse(await request.json());
     return jsonResponse(await controlAria2Download(id, action));

@@ -44,6 +44,14 @@ type DownloadRecord = {
     visibleFileCount: number;
     metadataOnly: boolean;
     lastSyncedAt: string | null;
+    lastProgressAt: string | null;
+    stalledSince: string | null;
+    stalledForSeconds: number;
+    stallState: "none" | "cooling" | "needs_source" | "blocked";
+    peerCount: number | null;
+    seederCount: number | null;
+    retryCount: number;
+    nextRetryAt: string | null;
   };
   archiveStatus?: string | null;
   candidate?: {
@@ -107,12 +115,26 @@ type DownloadReconciliationPlan = {
     aria2Status: string;
     title: string | null;
     downloadId: string | null;
+    recommendedAction: "pause" | "keep_paused" | "remove_result" | "review";
     safeToPause: boolean;
     completedBytes: string;
     totalBytes: string;
     libraryTargets: Array<{ state: string }>;
   }>;
 };
+
+type DownloadOperationRecord = {
+  id: string;
+  action: string;
+  status: string;
+  entityId: string | null;
+  externalId: string | null;
+  errorMessage: string | null;
+  createdAt: string;
+};
+
+const downloadReconciliationConfirmation =
+  "I understand this pauses verified archived aria2 tasks";
 
 const downloadFilters: DownloadFilter[] = [
   "ALL",
@@ -144,6 +166,10 @@ export function DownloadsClient({ locale }: { locale: Locale }) {
   const [syncing, setSyncing] = useState(false);
   const [reconciling, setReconciling] = useState(false);
   const [reconciliation, setReconciliation] = useState<DownloadReconciliationPlan | null>(null);
+  const [selectedReconciliationActions, setSelectedReconciliationActions] = useState<string[]>([]);
+  const [reconciliationConfirmation, setReconciliationConfirmation] = useState("");
+  const [applyingReconciliation, setApplyingReconciliation] = useState(false);
+  const [downloadOperations, setDownloadOperations] = useState<DownloadOperationRecord[]>([]);
   const [pendingAction, setPendingAction] = useState("");
 
   const load = useCallback(async () => {
@@ -217,12 +243,25 @@ export function DownloadsClient({ locale }: { locale: Locale }) {
     setMessage("");
     setReconciling(true);
     try {
-      const response = await fetch("/api/downloads/reconciliation");
-      const body = await response.json().catch(() => null);
+      const [response, operationsResponse] = await Promise.all([
+        fetch("/api/downloads/reconciliation"),
+        fetch("/api/operations?domain=DOWNLOAD&limit=10"),
+      ]);
+      const [body, operationsBody] = await Promise.all([
+        response.json().catch(() => null),
+        operationsResponse.json().catch(() => null),
+      ]);
       if (!response.ok) {
         throw new Error(body?.message || t.downloadReconciliationLoadError);
       }
       setReconciliation(body as DownloadReconciliationPlan);
+      setDownloadOperations(
+        operationsResponse.ok && Array.isArray(operationsBody?.operations)
+          ? operationsBody.operations
+          : [],
+      );
+      setSelectedReconciliationActions([]);
+      setReconciliationConfirmation("");
     } catch (reconciliationError) {
       setError(
         reconciliationError instanceof Error
@@ -231,6 +270,41 @@ export function DownloadsClient({ locale }: { locale: Locale }) {
       );
     } finally {
       setReconciling(false);
+    }
+  }
+
+  async function applyReconciliation() {
+    if (!reconciliation || selectedReconciliationActions.length === 0) {
+      return;
+    }
+    setError("");
+    setMessage("");
+    setApplyingReconciliation(true);
+    try {
+      const response = await fetch("/api/downloads/reconciliation", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          planId: reconciliation.planId,
+          actionIds: selectedReconciliationActions,
+          confirmation: reconciliationConfirmation,
+        }),
+      });
+      const body = await response.json().catch(() => null);
+      if (!response.ok) {
+        throw new Error(body?.message || t.downloadReconciliationApplyError);
+      }
+      await reconcileDownloads();
+      setMessage(
+        `${t.downloadReconciliationPaused}: ${body?.succeeded ?? 0} · ${t.downloadReconciliationFailed}: ${body?.failed ?? 0}`,
+      );
+      await load();
+    } catch (applyError) {
+      setError(
+        applyError instanceof Error ? applyError.message : t.downloadReconciliationApplyError,
+      );
+    } finally {
+      setApplyingReconciliation(false);
     }
   }
 
@@ -315,7 +389,19 @@ export function DownloadsClient({ locale }: { locale: Locale }) {
           )}
         </div>
       ) : null}
-      {reconciliation ? <DownloadReconciliation plan={reconciliation} t={t} /> : null}
+      {reconciliation ? (
+        <DownloadReconciliation
+          applying={applyingReconciliation}
+          confirmation={reconciliationConfirmation}
+          onApply={() => void applyReconciliation()}
+          onConfirmationChange={setReconciliationConfirmation}
+          onSelectionChange={setSelectedReconciliationActions}
+          operations={downloadOperations}
+          plan={reconciliation}
+          selectedActionIds={selectedReconciliationActions}
+          t={t}
+        />
+      ) : null}
       <div className="download-table enhanced">
         {downloads.length === 0 ? (
           <p>{t.noDownloads}</p>
@@ -437,12 +523,30 @@ export function DownloadsClient({ locale }: { locale: Locale }) {
 }
 
 function DownloadReconciliation({
+  applying,
+  confirmation,
+  onApply,
+  onConfirmationChange,
+  onSelectionChange,
+  operations,
   plan,
+  selectedActionIds,
   t,
 }: {
+  applying: boolean;
+  confirmation: string;
+  onApply: () => void;
+  onConfirmationChange: (value: string) => void;
+  onSelectionChange: (value: string[]) => void;
+  operations: DownloadOperationRecord[];
   plan: DownloadReconciliationPlan;
+  selectedActionIds: string[];
   t: Messages;
 }) {
+  const selected = new Set(selectedActionIds);
+  const selectableItems = plan.items.filter(
+    (item) => item.safeToPause && item.recommendedAction === "pause",
+  );
   return (
     <section aria-live="polite" className="download-reconciliation">
       <div className="download-reconciliation-heading">
@@ -476,11 +580,24 @@ function DownloadReconciliation({
                 </span>
               </div>
               <span>{downloadReconciliationKindLabel(item.kind, t)}</span>
-              <em className={item.safeToPause ? "safe" : "review"}>
-                {item.safeToPause
-                  ? t.downloadReconciliationSafePauseCandidate
-                  : t.downloadReconciliationReviewRequired}
-              </em>
+              {item.safeToPause && item.recommendedAction === "pause" ? (
+                <label className="download-reconciliation-select">
+                  <input
+                    checked={selected.has(item.actionId)}
+                    onChange={(event) => {
+                      onSelectionChange(
+                        event.target.checked
+                          ? [...selectedActionIds, item.actionId]
+                          : selectedActionIds.filter((actionId) => actionId !== item.actionId),
+                      );
+                    }}
+                    type="checkbox"
+                  />
+                  {t.downloadReconciliationSafePauseCandidate}
+                </label>
+              ) : (
+                <em className="review">{t.downloadReconciliationReviewRequired}</em>
+              )}
             </article>
           ))}
           {plan.items.length > 20 ? (
@@ -490,8 +607,68 @@ function DownloadReconciliation({
           ) : null}
         </div>
       )}
+      {selectableItems.length > 0 ? (
+        <div className="download-reconciliation-execution">
+          <label>
+            <span>{t.downloadReconciliationConfirmation}</span>
+            <code>{downloadReconciliationConfirmation}</code>
+            <input
+              onChange={(event) => onConfirmationChange(event.target.value)}
+              placeholder={t.downloadReconciliationConfirmationPlaceholder}
+              type="text"
+              value={confirmation}
+            />
+          </label>
+          <button
+            disabled={
+              applying ||
+              selectedActionIds.length === 0 ||
+              confirmation !== downloadReconciliationConfirmation
+            }
+            onClick={onApply}
+            type="button"
+          >
+            {applying ? <Loader2 size={14} /> : <Pause size={14} />}
+            {t.downloadReconciliationPauseSelected} ({selectedActionIds.length})
+          </button>
+        </div>
+      ) : null}
+      {operations.length > 0 ? (
+        <details className="download-operation-log">
+          <summary>{t.downloadOperationLog}</summary>
+          <div>
+            {operations.map((operation) => (
+              <article key={operation.id}>
+                <span>{downloadOperationActionLabel(operation.action, t)}</span>
+                <strong>{downloadOperationStatusLabel(operation.status, t)}</strong>
+                <small>
+                  {operation.externalId ? `gid ${operation.externalId} · ` : ""}
+                  {formatDateTime(operation.createdAt)}
+                  {operation.errorMessage ? ` · ${operation.errorMessage}` : ""}
+                </small>
+              </article>
+            ))}
+          </div>
+        </details>
+      ) : null}
     </section>
   );
+}
+
+function downloadOperationActionLabel(action: string, t: Messages) {
+  return {
+    PAUSE_ARCHIVED_REDOWNLOAD: t.downloadOperationPauseArchived,
+    ROLLBACK_PAUSE_ARCHIVED_REDOWNLOAD: t.downloadOperationResumeArchived,
+  }[action] ?? action;
+}
+
+function downloadOperationStatusLabel(status: string, t: Messages) {
+  return {
+    STARTED: t.downloadOperationStarted,
+    SUCCEEDED: t.downloadOperationSucceeded,
+    FAILED: t.downloadOperationFailed,
+    ROLLED_BACK: t.downloadOperationRolledBack,
+  }[status] ?? status;
 }
 
 function downloadReconciliationKindLabel(
@@ -586,12 +763,36 @@ function formatAria2DetailLine(download: DownloadRecord, t: Messages) {
     `${t.aria2Progress}: ${formatBytes(completedBytes)} / ${formatBytes(totalBytes)}`,
     diagnostics?.etaSeconds ? `${t.aria2Eta}: ${formatDuration(diagnostics.etaSeconds)}` : undefined,
     reason ? `${t.aria2WaitingReason}: ${reason}` : undefined,
+    diagnostics?.peerCount !== null && diagnostics?.peerCount !== undefined
+      ? `${t.aria2Peers}: ${diagnostics.peerCount}`
+      : undefined,
+    diagnostics?.seederCount !== null && diagnostics?.seederCount !== undefined
+      ? `${t.aria2Seeders}: ${diagnostics.seederCount}`
+      : undefined,
+    diagnostics?.stallState && diagnostics.stallState !== "none"
+      ? `${downloadStallStateLabel(diagnostics.stallState, t)} · ${formatDuration(diagnostics.stalledForSeconds)}`
+      : undefined,
+    diagnostics?.retryCount ? `${t.aria2Retries}: ${diagnostics.retryCount}` : undefined,
+    diagnostics?.nextRetryAt
+      ? `${t.aria2NextRetry}: ${formatDateTime(diagnostics.nextRetryAt)}`
+      : undefined,
     diagnostics?.lastSyncedAt
       ? `${t.aria2LastSynced}: ${formatDateTime(diagnostics.lastSyncedAt)}`
       : undefined,
   ]
     .filter(Boolean)
     .join(" · ");
+}
+
+function downloadStallStateLabel(
+  state: "cooling" | "needs_source" | "blocked",
+  t: Messages,
+) {
+  return {
+    cooling: t.aria2StallCooling,
+    needs_source: t.aria2StallNeedsSource,
+    blocked: t.aria2StallBlocked,
+  }[state];
 }
 
 function formatReason(reason: DownloadReason | undefined, t: Messages) {

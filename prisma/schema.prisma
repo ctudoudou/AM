@@ -287,6 +287,12 @@ model Download {
   aria2Files     Json?
   errorMessage   String?
   lastSyncedAt   DateTime?
+  lastProgressAt DateTime?
+  stalledSince   DateTime?
+  lastPeerCount  Int?
+  lastSeederCount Int?
+  retryCount     Int               @default(0)
+  nextRetryAt    DateTime?
   archiveStatus  String?
   supersededById String?
   supersededBy   Download?         @relation("DownloadSupersession", fields: [supersededById], references: [id], onDelete: SetNull)
@@ -299,7 +305,29 @@ model Download {
   @@index([candidateId])
   @@index([infoHash])
   @@index([status])
+  @@index([status, stalledSince])
+  @@index([nextRetryAt])
   @@index([supersededById])
+}
+
+model OperationLog {
+  id          String    @id @default(cuid())
+  domain      String
+  action      String
+  status      String
+  entityType  String
+  entityId    String?
+  externalId  String?
+  planId      String?
+  details     Json?
+  rollbackData Json?
+  errorMessage String?
+  createdAt   DateTime  @default(now())
+  completedAt DateTime?
+
+  @@index([domain, createdAt])
+  @@index([entityType, entityId])
+  @@index([planId])
 }
 
 model WantedEpisode {

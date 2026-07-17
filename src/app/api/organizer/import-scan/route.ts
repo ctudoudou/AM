@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { jsonError, jsonResponse } from "@/lib/api";
+import { assertTrustedMutationOrigin, jsonError, jsonResponse } from "@/lib/api";
 import { scanImportDirectory } from "@/lib/import-scan";
 import { normalizeIntakeMediaType } from "@/lib/media-parser";
 import { getAppSettings } from "@/lib/settings";
@@ -13,6 +13,7 @@ const importScanSchema = z.object({
 
 export async function POST(request: Request) {
   try {
+    assertTrustedMutationOrigin(request);
     const input = importScanSchema.parse(await request.json());
     const settings = await getAppSettings();
     return jsonResponse(

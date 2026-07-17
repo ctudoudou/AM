@@ -1,8 +1,8 @@
 import { createHash } from "node:crypto";
 import fs from "node:fs/promises";
 import path from "node:path";
-import type { DownloadStatus, OrganizerPlanStatus } from "@prisma/client";
-import { listKnownDownloads, type Aria2Status } from "@/lib/aria2";
+import { Prisma, type DownloadStatus, type OrganizerPlanStatus } from "@prisma/client";
+import { listKnownDownloads, pauseAria2Download, type Aria2Status } from "@/lib/aria2";
 import { prisma } from "@/lib/db";
 import { extractBtInfoHash, normalizeBtInfoHash } from "@/lib/downloads";
 import { resolveDownloadPathInsideRoot } from "@/lib/download-repair";
@@ -15,6 +15,12 @@ export type DownloadReconciliationKind =
   | "untracked_metadata"
   | "untracked_error"
   | "ambiguous_match";
+
+export const DOWNLOAD_RECONCILIATION_CONFIRMATION =
+  "I understand this pauses verified archived aria2 tasks";
+
+export class DownloadReconciliationPlanStaleError extends Error {}
+export class DownloadReconciliationValidationError extends Error {}
 
 export type DownloadReconciliationRecord = {
   id: string;
@@ -88,6 +94,20 @@ export type DownloadReconciliationPlan = {
     byKind: Record<DownloadReconciliationKind, number>;
   };
   items: DownloadReconciliationItem[];
+};
+
+export type DownloadReconciliationExecutionResult = {
+  planId: string;
+  requested: number;
+  succeeded: number;
+  failed: number;
+  results: Array<{
+    actionId: string;
+    downloadId: string;
+    gid: string;
+    status: "succeeded" | "failed";
+    message: string;
+  }>;
 };
 
 export type DownloadReconciliationSnapshot = {
@@ -190,6 +210,131 @@ export async function createDownloadReconciliationPlan(): Promise<DownloadReconc
     targetEvidence,
     warnings,
   });
+}
+
+export async function executeDownloadReconciliationPlan(input: {
+  planId: string;
+  actionIds: string[];
+  confirmation: string;
+}): Promise<DownloadReconciliationExecutionResult> {
+  return executeDownloadReconciliationPlanFromSnapshot(
+    await createDownloadReconciliationPlan(),
+    input,
+  );
+}
+
+export async function executeDownloadReconciliationPlanFromSnapshot(
+  plan: DownloadReconciliationPlan,
+  input: {
+    planId: string;
+    actionIds: string[];
+    confirmation: string;
+  },
+): Promise<DownloadReconciliationExecutionResult> {
+  if (input.confirmation !== DOWNLOAD_RECONCILIATION_CONFIRMATION) {
+    throw new DownloadReconciliationValidationError(
+      "Download reconciliation confirmation phrase does not match.",
+    );
+  }
+  if (new Set(input.actionIds).size !== input.actionIds.length) {
+    throw new DownloadReconciliationValidationError(
+      "Download reconciliation action IDs must be unique.",
+    );
+  }
+
+  if (plan.planId !== input.planId) {
+    throw new DownloadReconciliationPlanStaleError(
+      "Download reconciliation plan is stale. Generate a new dry-run before pausing tasks.",
+    );
+  }
+  const selected = new Set(input.actionIds);
+  const items = plan.items.filter((item) => selected.has(item.actionId));
+  if (items.length !== selected.size) {
+    throw new DownloadReconciliationValidationError(
+      "One or more reconciliation action IDs are not part of the current plan.",
+    );
+  }
+  if (
+    items.some(
+      (item) =>
+        item.kind !== "archived_active" ||
+        !item.safeToPause ||
+        item.recommendedAction !== "pause" ||
+        !item.downloadId,
+    )
+  ) {
+    throw new DownloadReconciliationValidationError(
+      "Only verified archived redownloads with a current pause recommendation can be executed.",
+    );
+  }
+
+  const results: DownloadReconciliationExecutionResult["results"] = [];
+  for (const item of items) {
+    const downloadId = item.downloadId as string;
+    const audit = await prisma.operationLog.create({
+      data: {
+        domain: "DOWNLOAD",
+        action: "PAUSE_ARCHIVED_REDOWNLOAD",
+        status: "STARTED",
+        entityType: "Download",
+        entityId: downloadId,
+        externalId: item.gid,
+        planId: plan.planId,
+        details: {
+          actionId: item.actionId,
+          matchedBy: item.matchedBy,
+          aria2Status: item.aria2Status,
+          payloadFiles: item.payloadFiles,
+          libraryTargets: item.libraryTargets,
+        } as Prisma.InputJsonValue,
+        rollbackData: {
+          action: "unpause",
+          gid: item.gid,
+        } as Prisma.InputJsonValue,
+      },
+    });
+    try {
+      await pauseAria2Download(item.gid);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Unable to pause aria2 task";
+      await prisma.operationLog
+        .update({
+          where: { id: audit.id },
+          data: { status: "FAILED", errorMessage: message, completedAt: new Date() },
+        })
+        .catch(() => null);
+      results.push({
+        actionId: item.actionId,
+        downloadId,
+        gid: item.gid,
+        status: "failed",
+        message,
+      });
+      continue;
+    }
+
+    await prisma.operationLog
+      .update({
+        where: { id: audit.id },
+        data: { status: "SUCCEEDED", completedAt: new Date() },
+      })
+      .catch(() => null);
+    results.push({
+      actionId: item.actionId,
+      downloadId,
+      gid: item.gid,
+      status: "succeeded",
+      message: "Verified archived aria2 redownload was paused.",
+    });
+  }
+
+  return {
+    planId: plan.planId,
+    requested: items.length,
+    succeeded: results.filter((result) => result.status === "succeeded").length,
+    failed: results.filter((result) => result.status === "failed").length,
+    results,
+  };
 }
 
 export function buildDownloadReconciliationPlan(

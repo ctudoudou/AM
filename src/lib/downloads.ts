@@ -203,6 +203,8 @@ export async function syncSingleAria2Download(downloadId: string) {
           downloadSpeed: BigInt(0),
           errorMessage: `aria2 task is not available: ${message}`,
           lastSyncedAt: new Date(),
+          stalledSince: null,
+          nextRetryAt: nextDownloadRetryAt(download.retryCount, new Date()),
         },
       });
     }
@@ -237,6 +239,16 @@ export async function syncSingleAria2Download(downloadId: string) {
     downloadSpeed > 0 && totalBytes > completedBytes
       ? Number((totalBytes - completedBytes) / downloadSpeed)
       : null;
+  const now = new Date();
+  const health = deriveDownloadProgressHealth({
+    previousCompletedBytes: download.completedBytes,
+    nextCompletedBytes: completedBytes,
+    previousLastProgressAt: download.lastProgressAt,
+    previousStalledSince: download.stalledSince,
+    nextStatus,
+    downloadSpeed,
+    now,
+  });
   const updated = await prisma.download.update({
     where: { id: download.id },
     data: {
@@ -254,7 +266,13 @@ export async function syncSingleAria2Download(downloadId: string) {
       targetPath,
       aria2Files: (status.files ?? []) as Prisma.InputJsonValue,
       errorMessage: status.errorMessage ?? null,
-      lastSyncedAt: new Date(),
+      lastSyncedAt: now,
+      lastProgressAt: health.lastProgressAt,
+      stalledSince: health.stalledSince,
+      lastPeerCount: nonnegativeInteger(status.connections),
+      lastSeederCount: nonnegativeInteger(status.numSeeders),
+      nextRetryAt:
+        nextStatus === "FAILED" ? nextDownloadRetryAt(download.retryCount, now) : null,
     },
   });
   if (nextStatus === "COMPLETED") {
@@ -340,6 +358,9 @@ async function completeFromExistingTargetIfPossible(
       etaSeconds: null,
       errorMessage: null,
       lastSyncedAt: new Date(),
+      lastProgressAt: new Date(),
+      stalledSince: null,
+      nextRetryAt: null,
     },
   });
   await finalizeCompletedDownload(updated);
@@ -439,7 +460,15 @@ export type DownloadDiagnosticsInput = {
   errorMessage?: string | null;
   archiveStatus?: string | null;
   lastSyncedAt?: Date | string | null;
+  lastProgressAt?: Date | string | null;
+  stalledSince?: Date | string | null;
+  lastPeerCount?: number | null;
+  lastSeederCount?: number | null;
+  retryCount?: number | null;
+  nextRetryAt?: Date | string | null;
 };
+
+export type DownloadStallState = "none" | "cooling" | "needs_source" | "blocked";
 
 export type DownloadDiagnostics = {
   reason:
@@ -459,6 +488,14 @@ export type DownloadDiagnostics = {
   visibleFileCount: number;
   metadataOnly: boolean;
   lastSyncedAt: string | null;
+  lastProgressAt: string | null;
+  stalledSince: string | null;
+  stalledForSeconds: number;
+  stallState: DownloadStallState;
+  peerCount: number | null;
+  seederCount: number | null;
+  retryCount: number;
+  nextRetryAt: string | null;
 };
 
 export function buildDownloadDiagnostics(download: DownloadDiagnosticsInput): DownloadDiagnostics {
@@ -477,6 +514,12 @@ export function buildDownloadDiagnostics(download: DownloadDiagnosticsInput): Do
       : speed > 0 && total > completed
         ? Number((total - completed) / speed)
         : null;
+  const stalledSince = isoDate(download.stalledSince);
+  const stallState = classifyDownloadStall({
+    status: download.status,
+    metadataOnly,
+    stalledSince: download.stalledSince,
+  });
 
   return {
     reason: inferDownloadReason(download, {
@@ -493,6 +536,72 @@ export function buildDownloadDiagnostics(download: DownloadDiagnosticsInput): Do
     visibleFileCount: visibleFiles.length,
     metadataOnly,
     lastSyncedAt: download.lastSyncedAt ? new Date(download.lastSyncedAt).toISOString() : null,
+    lastProgressAt: isoDate(download.lastProgressAt),
+    stalledSince,
+    stalledForSeconds: stalledSince
+      ? Math.max(0, Math.floor((Date.now() - new Date(stalledSince).getTime()) / 1000))
+      : 0,
+    stallState,
+    peerCount: nullableNonnegativeInteger(download.lastPeerCount),
+    seederCount: nullableNonnegativeInteger(download.lastSeederCount),
+    retryCount: nullableNonnegativeInteger(download.retryCount) ?? 0,
+    nextRetryAt: isoDate(download.nextRetryAt),
+  };
+}
+
+export function classifyDownloadStall(
+  input: {
+    status: string;
+    metadataOnly: boolean;
+    stalledSince?: Date | string | null;
+  },
+  now = Date.now(),
+): DownloadStallState {
+  if (!["ACTIVE", "WAITING"].includes(input.status) || !input.stalledSince) {
+    return "none";
+  }
+  const stalledAt = new Date(input.stalledSince).getTime();
+  if (!Number.isFinite(stalledAt)) {
+    return "none";
+  }
+  const stalledHours = Math.max(0, now - stalledAt) / 3_600_000;
+  if (input.metadataOnly) {
+    if (stalledHours >= 24) {
+      return "needs_source";
+    }
+    return stalledHours >= 6 ? "cooling" : "none";
+  }
+  if (stalledHours >= 72) {
+    return "blocked";
+  }
+  return stalledHours >= 24 ? "cooling" : "none";
+}
+
+export function deriveDownloadProgressHealth(input: {
+  previousCompletedBytes?: bigint | number | string | null;
+  nextCompletedBytes: bigint;
+  previousLastProgressAt?: Date | null;
+  previousStalledSince?: Date | null;
+  nextStatus: string;
+  downloadSpeed: bigint;
+  now: Date;
+}) {
+  const previous = BigInt(bigintString(input.previousCompletedBytes));
+  const progressing = input.nextCompletedBytes > previous || input.downloadSpeed > BigInt(0);
+  const active = input.nextStatus === "ACTIVE" || input.nextStatus === "WAITING";
+  if (!active) {
+    return {
+      lastProgressAt:
+        input.nextCompletedBytes > previous ? input.now : input.previousLastProgressAt ?? null,
+      stalledSince: null,
+    };
+  }
+  if (progressing) {
+    return { lastProgressAt: input.now, stalledSince: null };
+  }
+  return {
+    lastProgressAt: input.previousLastProgressAt ?? null,
+    stalledSince: input.previousStalledSince ?? input.now,
   };
 }
 
@@ -614,6 +723,32 @@ function bigintString(value: bigint | number | string | null | undefined) {
   return "0";
 }
 
+function nonnegativeInteger(value: string | undefined) {
+  if (!value || !/^\d+$/.test(value)) {
+    return null;
+  }
+  return Math.max(0, Number.parseInt(value, 10));
+}
+
+function nullableNonnegativeInteger(value: number | null | undefined) {
+  return typeof value === "number" && Number.isFinite(value)
+    ? Math.max(0, Math.trunc(value))
+    : null;
+}
+
+function isoDate(value: Date | string | null | undefined) {
+  if (!value) {
+    return null;
+  }
+  const date = new Date(value);
+  return Number.isFinite(date.getTime()) ? date.toISOString() : null;
+}
+
+function nextDownloadRetryAt(retryCount: number | null | undefined, now: Date) {
+  const delayHours = Math.min(72, 2 ** Math.max(0, retryCount ?? 0));
+  return new Date(now.getTime() + delayHours * 3_600_000);
+}
+
 export async function controlAria2Download(
   downloadId: string,
   action: "pause" | "resume" | "remove" | "sync" | "retry",
@@ -713,6 +848,9 @@ export async function retryFailedDownload(downloadId: string) {
       errorMessage: null,
       archiveStatus: null,
       lastSyncedAt: new Date(),
+      stalledSince: null,
+      nextRetryAt: null,
+      retryCount: { increment: 1 },
     },
   });
   if (download.candidateId) {
