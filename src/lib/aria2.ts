@@ -69,7 +69,7 @@ export async function aria2Request<T>(method: string, params: unknown[] = []) {
   return payload.result as T;
 }
 
-export type Aria2DownloadOptions = Record<string, string | number | boolean>;
+export type Aria2DownloadOptions = Record<string, string | number | boolean | string[]>;
 
 function buildDownloadOptions(dir?: string, options: Aria2DownloadOptions = {}) {
   return {
@@ -87,7 +87,15 @@ export async function addMagnetToAria2(
   dir?: string,
   options: Aria2DownloadOptions = {},
 ) {
-  return aria2Request<string>("addUri", [[magnetUrl], buildDownloadOptions(dir, options)]);
+  return addHttpUrlToAria2(magnetUrl, dir, options);
+}
+
+export async function addHttpUrlToAria2(
+  url: string,
+  dir?: string,
+  options: Aria2DownloadOptions = {},
+) {
+  return aria2Request<string>("addUri", [[url], buildDownloadOptions(dir, options)]);
 }
 
 export async function addTorrentToAria2(

@@ -11,6 +11,7 @@ const envSchema = z.object({
   TV_LIBRARY_DIR: z.string().default("/data/library/tv"),
   METADATA_DIR: z.string().default("/data/metadata"),
   TRANSCODES_DIR: z.string().default("/data/transcodes"),
+  VIDEO_RESOLVER_CHROMIUM_PATH: z.string().default(""),
   ARIA2_RPC_URL: z.string().url().default("http://localhost:6800/jsonrpc"),
   ARIA2_RPC_SECRET: z.string().default(""),
   OPENROUTER_API_KEY: z.string().default(""),

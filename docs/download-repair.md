@@ -1,5 +1,31 @@
 # Download repair operations
 
+## Video source link imports
+
+The Downloads page accepts URLs handled by installed source plugins. The first
+built-in adapter supports AGE detail and play URLs. Detail pages are inspected
+before any task is created: repeated playback lines are grouped as fallback
+sources for the same episode instead of being treated as duplicate episodes.
+
+The web process uses an isolated, cookie-free Chromium context only to observe
+the final public media request. It does not embed the third-party iframe and it
+does not persist signed media URLs. Direct MP4 results are range-probed, queued
+through aria2 into `DOWNLOADS_DIR`, tracked as normal `Download` records, and
+then enter the existing Organizer dry-run workflow.
+
+Safety boundaries:
+
+- only explicitly installed provider hostnames are accepted;
+- initial URLs, redirects, browser requests, and final media URLs are rejected
+  when they resolve to private or unsafe networks;
+- DRM, login, CAPTCHA, HLS, and DASH sources are not downloaded by the P0
+  adapter;
+- a source page is inspected again before queueing and stale plans are rejected;
+- failed imports can be retried, which resolves a fresh temporary media URL.
+
+Outside the official Docker image, install Chromium and set
+`VIDEO_RESOLVER_CHROMIUM_PATH` when it is not available at a standard path.
+
 Kura repairs download history through a dry-run-first API that reconciles PostgreSQL records,
 aria2 tasks, and files under `DOWNLOADS_DIR`.
 

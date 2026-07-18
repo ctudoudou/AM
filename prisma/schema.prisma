@@ -74,6 +74,12 @@ enum WantedEpisodeStatus {
   IGNORED
 }
 
+enum VideoSourceImportStatus {
+  RESOLVING
+  QUEUED
+  FAILED
+}
+
 enum TitleDisplayMode {
   GLOBAL
   ZH_HANT
@@ -299,6 +305,7 @@ model Download {
   superseded     Download[]        @relation("DownloadSupersession")
   repairNote     String?
   organizerPlans OrganizerPlan[]
+  videoSourceImport VideoSourceImport?
   createdAt      DateTime          @default(now())
   updatedAt      DateTime          @updatedAt
 
@@ -328,6 +335,34 @@ model OperationLog {
   @@index([domain, createdAt])
   @@index([entityType, entityId])
   @@index([planId])
+}
+
+model VideoSourceImport {
+  id               String                  @id @default(cuid())
+  provider         String
+  sourceItemId     String
+  episodeKey       String
+  sourcePageUrl    String
+  title            String
+  seasonNumber     Int                     @default(1)
+  episodeNumber    Float
+  posterUrl        String?
+  selectedSourceId String?
+  mediaFormat      String?
+  mediaHost        String?
+  sizeBytes        BigInt?
+  outputFilename   String?
+  status           VideoSourceImportStatus @default(RESOLVING)
+  errorMessage     String?
+  candidateId      String?                 @unique
+  candidate        ReleaseCandidate?       @relation(fields: [candidateId], references: [id], onDelete: SetNull)
+  downloadId       String?                 @unique
+  download         Download?               @relation(fields: [downloadId], references: [id], onDelete: SetNull)
+  createdAt        DateTime                 @default(now())
+  updatedAt        DateTime                 @updatedAt
+
+  @@unique([provider, sourceItemId, episodeKey])
+  @@index([status, updatedAt])
 }
 
 model WantedEpisode {
@@ -445,6 +480,7 @@ model ReleaseCandidate {
   downloads         Download[]
   organizerPlans    OrganizerPlan[]
   wantedEpisodes    WantedEpisode[]
+  videoSourceImport VideoSourceImport?
   createdAt         DateTime               @default(now())
   updatedAt         DateTime               @updatedAt
 

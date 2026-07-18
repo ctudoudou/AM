@@ -5,6 +5,7 @@ import { Loader2, Pause, Play, RefreshCw, RotateCw, ScanSearch, Trash2 } from "l
 import { getMessages } from "@/messages";
 import { buildDownloadPipeline, type PipelineStageState } from "@/lib/download-pipeline";
 import type { Locale } from "@/lib/i18n";
+import { VideoSourceImportPanel } from "./video-source-import";
 
 type DownloadRecord = {
   id: string;
@@ -357,6 +358,14 @@ export function DownloadsClient({ locale }: { locale: Locale }) {
           </button>
         </div>
       </div>
+      <VideoSourceImportPanel
+        locale={locale}
+        onQueued={() => {
+          setFilter("ALL");
+          setPage(1);
+          void load();
+        }}
+      />
       <div className="filter-tabs">
         {downloadFilters.map((status) => (
           <button

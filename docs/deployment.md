@@ -162,6 +162,7 @@ or your container platform secrets.
 | `STAGING_DIR` | Recommended | Temporary staging directory for organization work. | `/data/staging` |
 | `METADATA_DIR` | Recommended | Metadata, artwork, and local cache directory. | `/data/metadata` |
 | `TRANSCODES_DIR` | Recommended | HLS/transcode output directory. | `/data/transcodes` |
+| `VIDEO_RESOLVER_CHROMIUM_PATH` | Optional | Chromium executable used by server-side video source plugins. The official web image configures this automatically. | `/usr/bin/chromium-browser` |
 | `OPENROUTER_API_KEY` | Optional | Enables AI-assisted candidate grouping and organizer review. | empty or secret |
 | `OPENROUTER_MODEL` | Optional | OpenRouter model name. | `glm5.1` |
 | `TMDB_API_KEY` | Optional | Optional movie/TV metadata provider. | empty or secret |
@@ -332,8 +333,9 @@ library.repairEpisodeNumbering
 - `web`: Next.js App Router UI and API.
 - `worker`: background process backed by PostgreSQL/pg-boss schedules.
 - `postgres`: application database.
-- `aria2`: BT/magnet downloader controlled through JSON-RPC.
+- `aria2`: BT/magnet and resolved direct-HTTP downloader controlled through JSON-RPC.
 - `ffmpeg`: installed in container images for HLS/transcode preparation.
+- `chromium`: installed only in the web image and used headlessly to resolve public dynamic player pages; Kura never embeds the third-party player.
 
 The worker schedules RSS fetches, aria2 sync, and automatic organizer execution.
 The web app can also trigger jobs manually through `/api/jobs/run`.

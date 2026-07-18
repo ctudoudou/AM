@@ -56,7 +56,8 @@ ENV NODE_ENV=production
 ENV HOSTNAME=0.0.0.0
 ENV PORT=3000
 ENV KURA_AUTO_MIGRATE=false
-RUN apk add --no-cache ffmpeg
+ENV VIDEO_RESOLVER_CHROMIUM_PATH=/usr/bin/chromium-browser
+RUN apk add --no-cache chromium ffmpeg
 COPY --from=builder /app/public ./public
 COPY --from=builder /app/.next/standalone ./
 COPY --from=builder /app/.next/static ./.next/static
