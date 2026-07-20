@@ -9,7 +9,6 @@ import type { Locale } from "@/lib/i18n";
 type DownloadRecord = {
   id: string;
   aria2Gid?: string | null;
-  sourceUrl: string;
   title?: string | null;
   status: string;
   progress: number;
@@ -21,7 +20,6 @@ type DownloadRecord = {
     path?: string;
     length?: string;
     completedLength?: string;
-    selected?: string;
   }> | null;
   targetPath?: string | null;
   errorMessage?: string | null;
@@ -63,7 +61,7 @@ type DownloadRecord = {
     id: string;
     status: string;
     reason?: string | null;
-    items: Array<{ targetPath: string; conflict: boolean }>;
+    items: Array<{ targetPath: string }>;
   }>;
 };
 

@@ -1,5 +1,5 @@
 import path from "node:path";
-import type { CandidateStatus, MediaType } from "@prisma/client";
+import type { MediaType } from "@prisma/client";
 import { prisma } from "@/lib/db";
 import { normalizeTitleAliases } from "@/lib/anime-parser";
 import { parseMediaReleaseTitle, type ParsedMediaRelease } from "@/lib/media-parser";
@@ -88,7 +88,6 @@ type CandidateSnapshot = {
   id: string;
   groupId: string | null;
   mediaType: MediaType;
-  status: CandidateStatus;
   rawTitle: string;
   parsedTitle: string;
   normalizedTitle: string;
@@ -102,6 +101,12 @@ type CandidateSnapshot = {
   } | null;
 };
 
+type CandidateAnalysis = {
+  candidate: CandidateSnapshot;
+  parsed: ParsedMediaRelease;
+  resource: ReturnType<typeof classifyReleaseResource>;
+};
+
 export async function scanDataHealth(): Promise<DataHealthScan> {
   const [candidates, groups, activePlans, pollutedMediaFiles, pollutedMediaFileCount, noisyMovieAliases] =
     await Promise.all([
@@ -109,7 +114,15 @@ export async function scanDataHealth(): Promise<DataHealthScan> {
         where: {
           status: { in: ["NEW", "READY", "REVIEW", "SUBSCRIBED", "DOWNLOADED"] },
         },
-        include: {
+        select: {
+          id: true,
+          groupId: true,
+          mediaType: true,
+          rawTitle: true,
+          parsedTitle: true,
+          normalizedTitle: true,
+          episodeNumber: true,
+          season: true,
           group: {
             select: {
               id: true,
@@ -122,17 +135,32 @@ export async function scanDataHealth(): Promise<DataHealthScan> {
         orderBy: { updatedAt: "desc" },
       }),
       prisma.releaseCandidateGroup.findMany({
-        include: {
+        select: {
+          id: true,
+          displayTitle: true,
+          normalizedTitle: true,
+          aliases: true,
           _count: { select: { candidates: true, subscriptions: true } },
         },
         orderBy: { updatedAt: "desc" },
       }),
       prisma.organizerPlan.findMany({
         where: { status: { in: ["PENDING", "NEEDS_REVIEW", "CONFLICT", "FAILED"] } },
-        include: {
-          items: true,
+        select: {
+          id: true,
+          status: true,
+          reason: true,
+          items: {
+            select: {
+              sourcePath: true,
+              targetPath: true,
+            },
+          },
           candidate: {
-            include: {
+            select: {
+              mediaType: true,
+              parsedTitle: true,
+              normalizedTitle: true,
               group: {
                 select: {
                   displayTitle: true,
@@ -160,10 +188,14 @@ export async function scanDataHealth(): Promise<DataHealthScan> {
       listNoisyMovieMetadataAliases(),
     ]);
 
-  const replay = collectReplayIssues(candidates);
-  const nonVideoCandidates = collectNonVideoCandidateIssues(candidates);
-  const pollutedGroups = collectPollutedGroups(groups, candidates);
-  const splitGroups = collectSplitGroups(candidates);
+  // Parsing a release title is the most CPU-intensive part of this scan. Keep one
+  // analysis per candidate and share it across every detector instead of replaying
+  // the parser independently for drift, polluted-group, and split-group checks.
+  const candidateAnalyses = analyzeCandidates(candidates);
+  const replay = collectReplayIssues(candidateAnalyses);
+  const nonVideoCandidates = collectNonVideoCandidateIssues(candidateAnalyses);
+  const pollutedGroups = collectPollutedGroups(groups, candidateAnalyses);
+  const splitGroups = collectSplitGroups(candidateAnalyses);
   const organizerIssues = collectOrganizerIssues(activePlans);
   const movieAliasIssues = collectNoisyMovieAliasIssues(noisyMovieAliases);
   const issues: DataHealthIssue[] = [
@@ -203,9 +235,9 @@ export async function scanDataHealth(): Promise<DataHealthScan> {
       score,
       candidatesScanned: candidates.length,
       parserReplayIssues: replay.count,
-      pollutedGroups: pollutedGroups.reduce((sum, issue) => sum + issue.count, 0),
-      splitGroups: splitGroups.length,
-      organizerIssues: organizerIssues.reduce((sum, issue) => sum + issue.count, 0),
+      pollutedGroups: sumDataHealthIssueCounts(pollutedGroups),
+      splitGroups: sumDataHealthIssueCounts(splitGroups),
+      organizerIssues: sumDataHealthIssueCounts(organizerIssues),
       pollutedMediaFiles: pollutedMediaFileCount,
       noisyMovieMetadataAliases: noisyMovieAliases.length,
       autoFixableIssues: issues.filter((issue) => issue.autoFixable).length,
@@ -282,15 +314,36 @@ export function isSuspiciousTitleToken(value: string) {
   );
 }
 
-function collectReplayIssues(candidates: CandidateSnapshot[]) {
-  const samples = candidates
-    .map((candidate) => detectCandidateReplayIssue(candidate))
-    .filter((issue): issue is NonNullable<typeof issue> => Boolean(issue));
+export function sumDataHealthIssueCounts(issues: Array<Pick<DataHealthIssue, "count">>) {
+  return issues.reduce((sum, issue) => sum + issue.count, 0);
+}
+
+function analyzeCandidates(candidates: CandidateSnapshot[]): CandidateAnalysis[] {
+  return candidates.map((candidate) => ({
+    candidate,
+    parsed: parseMediaReleaseTitle(candidate.rawTitle, candidate.mediaType),
+    resource: classifyReleaseResource(candidate.rawTitle),
+  }));
+}
+
+function collectReplayIssues(analyses: CandidateAnalysis[]) {
+  let count = 0;
+  const samples: Array<NonNullable<ReturnType<typeof detectCandidateReplayIssue>>> = [];
+  for (const { candidate, parsed } of analyses) {
+    const issue = detectCandidateReplayIssue(candidate, parsed);
+    if (!issue) {
+      continue;
+    }
+    count += 1;
+    if (samples.length < maxIssueSamples) {
+      samples.push(issue);
+    }
+  }
 
   return {
-    count: samples.length,
+    count,
     issues:
-      samples.length > 0
+      count > 0
         ? [
             {
               id: "parser-replay",
@@ -299,24 +352,29 @@ function collectReplayIssues(candidates: CandidateSnapshot[]) {
               title: "Parser replay drift",
               description:
                 "Current parser output differs from stored candidate title, episode, season, or group identity.",
-              count: samples.length,
+              count,
               autoFixable: true,
-              samples: samples.slice(0, maxIssueSamples),
+              samples,
             },
           ]
         : [],
   };
 }
 
-function collectNonVideoCandidateIssues(candidates: CandidateSnapshot[]) {
-  const samples = candidates
-    .map((candidate) => ({
-      candidate,
-      resource: classifyReleaseResource(candidate.rawTitle),
-    }))
-    .filter((item) => item.resource.kind === "NON_VIDEO");
+function collectNonVideoCandidateIssues(analyses: CandidateAnalysis[]) {
+  let count = 0;
+  const samples: CandidateAnalysis[] = [];
+  for (const analysis of analyses) {
+    if (analysis.resource.kind !== "NON_VIDEO") {
+      continue;
+    }
+    count += 1;
+    if (samples.length < maxIssueSamples) {
+      samples.push(analysis);
+    }
+  }
 
-  if (samples.length === 0) {
+  if (count === 0) {
     return [];
   }
 
@@ -328,9 +386,9 @@ function collectNonVideoCandidateIssues(candidates: CandidateSnapshot[]) {
       title: "Non-video RSS candidates",
       description:
         "RSS intake contains music, album, or audio-only releases that should not enter anime candidate grouping.",
-      count: samples.length,
+      count,
       autoFixable: true,
-      samples: samples.slice(0, maxIssueSamples).map(({ candidate, resource }) => ({
+      samples: samples.map(({ candidate, resource }) => ({
         id: candidate.id,
         rawTitle: candidate.rawTitle,
         parsedTitle: candidate.parsedTitle,
@@ -346,17 +404,19 @@ function collectPollutedGroups(
     id: string;
     displayTitle: string;
     normalizedTitle: string;
+    aliases: unknown;
     _count: { candidates: number; subscriptions: number };
   }>,
-  candidates: CandidateSnapshot[],
+  analyses: CandidateAnalysis[],
 ) {
-  const candidatesByGroup = new Map<string, CandidateSnapshot[]>();
-  for (const candidate of candidates) {
+  const candidatesByGroup = new Map<string, CandidateAnalysis[]>();
+  for (const analysis of analyses) {
+    const { candidate } = analysis;
     if (!candidate.groupId) {
       continue;
     }
     const list = candidatesByGroup.get(candidate.groupId) ?? [];
-    list.push(candidate);
+    list.push(analysis);
     candidatesByGroup.set(candidate.groupId, list);
   }
 
@@ -371,9 +431,9 @@ function collectPollutedGroups(
     if (scoped.length === 0) {
       return false;
     }
-    const mismatches = scoped.filter((candidate) => {
-      const parsed = parseMediaReleaseTitle(candidate.rawTitle, candidate.mediaType);
-      return parsed.normalizedTitle !== group.normalizedTitle && !groupAliases(group).has(parsed.normalizedTitle);
+    const aliases = groupAliases(group);
+    const mismatches = scoped.filter(({ parsed }) => {
+      return parsed.normalizedTitle !== group.normalizedTitle && !aliases.has(parsed.normalizedTitle);
     });
     return mismatches.length >= Math.max(2, Math.ceil(scoped.length * 0.8));
   });
@@ -403,18 +463,22 @@ function collectPollutedGroups(
   ];
 }
 
-function collectSplitGroups(candidates: CandidateSnapshot[]) {
-  const parsedTargets = new Map<string, Map<string, CandidateSnapshot[]>>();
-  for (const candidate of candidates) {
+function collectSplitGroups(analyses: CandidateAnalysis[]) {
+  const parsedTargets = new Map<
+    string,
+    Map<string, { count: number; title: string }>
+  >();
+  for (const { candidate, parsed } of analyses) {
     if (!candidate.groupId) {
       continue;
     }
-    const parsed = parseMediaReleaseTitle(candidate.rawTitle, candidate.mediaType);
     const key = `${parsed.mediaType}:${parsed.normalizedTitle}:${parsed.season ?? 1}`;
-    const groups = parsedTargets.get(key) ?? new Map<string, CandidateSnapshot[]>();
-    const list = groups.get(candidate.groupId) ?? [];
-    list.push(candidate);
-    groups.set(candidate.groupId, list);
+    const groups = parsedTargets.get(key) ?? new Map<string, { count: number; title: string }>();
+    const existing = groups.get(candidate.groupId);
+    groups.set(candidate.groupId, {
+      count: (existing?.count ?? 0) + 1,
+      title: existing?.title ?? candidate.group?.displayTitle ?? candidate.parsedTitle,
+    });
     parsedTargets.set(key, groups);
   }
 
@@ -422,10 +486,10 @@ function collectSplitGroups(candidates: CandidateSnapshot[]) {
     .filter(([, groups]) => groups.size > 1)
     .map(([key, groups]) => ({
       key,
-      groups: [...groups.entries()].map(([groupId, items]) => ({
+      groups: [...groups.entries()].map(([groupId, group]) => ({
         groupId,
-        count: items.length,
-        title: items[0]?.group?.displayTitle ?? items[0]?.parsedTitle,
+        count: group.count,
+        title: group.title,
       })),
     }));
 

@@ -74,7 +74,7 @@ export default async function TvTitlePage({
           <div className="anime-detail-nav">
             <a className="anime-back-link" href={`/${locale}/tv`}>
               <ArrowLeft size={14} />
-              {t.backToLibrary}
+              {t.backToTv}
             </a>
           </div>
           <div className="anime-detail-main">

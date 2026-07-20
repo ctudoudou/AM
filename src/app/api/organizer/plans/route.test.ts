@@ -42,7 +42,11 @@ describe("/api/organizer/plans", () => {
 
     expect(response.status).toBe(200);
     expect(organizerPlan.findMany).toHaveBeenCalledWith(
-      expect.objectContaining({ skip: 100, take: 50 }),
+      expect.objectContaining({
+        skip: 100,
+        take: 50,
+        where: expect.not.objectContaining({ resolvedAt: null }),
+      }),
     );
     expect(body.page).toEqual({
       page: 3,
@@ -52,6 +56,103 @@ describe("/api/organizer/plans", () => {
       hasNext: true,
       hasPrevious: true,
     });
+  });
+
+  it("selects only fields required by the organizer list and automation assessment", async () => {
+    organizerPlan.count.mockResolvedValue(0);
+
+    await GET(new Request("http://localhost/api/organizer/plans?page=1&pageSize=50"));
+
+    expect(organizerPlan.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        select: expect.objectContaining({
+          id: true,
+          metadata: true,
+          items: {
+            select: expect.objectContaining({
+              id: true,
+              sourcePath: true,
+              targetPath: true,
+              fileType: true,
+            }),
+          },
+          candidate: {
+            select: expect.objectContaining({
+              parsedTitle: true,
+              normalizedTitle: true,
+              group: {
+                select: expect.objectContaining({
+                  displayTitle: true,
+                  normalizedTitle: true,
+                  aliases: true,
+                }),
+              },
+            }),
+          },
+        }),
+      }),
+    );
+    expect(organizerPlan.findMany.mock.calls[0]?.[0]).not.toHaveProperty("include");
+  });
+
+  it("returns a compact organizer DTO without provider metadata or assessment-only fields", async () => {
+    organizerPlan.findMany.mockResolvedValue([
+      {
+        id: "plan-1",
+        mediaType: "ANIME",
+        status: "PENDING",
+        confidence: 0.95,
+        reason: "ready",
+        autoExecutable: true,
+        metadata: {
+          title: "Some Anime",
+          posterUrl: "https://image.example/poster.jpg",
+          year: 2026,
+          synopsis: "large synopsis",
+          raw: { providerPayload: "large payload" },
+        },
+        candidate: {
+          mediaType: "ANIME",
+          parsedTitle: "Some Anime",
+          normalizedTitle: "some anime",
+          group: {
+            displayTitle: "Some Anime",
+            normalizedTitle: "some anime",
+            aliases: ["assessment-only alias"],
+          },
+        },
+        items: [
+          {
+            id: "item-1",
+            sourcePath: "/data/import/episode.mkv",
+            targetPath: "/data/anime/episode.mkv",
+            fileType: "video",
+            conflict: false,
+            conflictReason: null,
+          },
+        ],
+      },
+    ]);
+    organizerPlan.count.mockResolvedValue(1);
+    organizerPlan.groupBy.mockResolvedValue([]);
+
+    const response = await GET(
+      new Request("http://localhost/api/organizer/plans?view=all&page=1&pageSize=25"),
+    );
+    const body = await response.json();
+
+    expect(body.plans[0].metadata).toEqual({
+      title: "Some Anime",
+      posterUrl: "https://image.example/poster.jpg",
+      year: 2026,
+    });
+    expect(body.plans[0].candidate).toEqual({
+      parsedTitle: "Some Anime",
+      group: { displayTitle: "Some Anime" },
+    });
+    expect(body.plans[0].items[0]).not.toHaveProperty("fileType");
+    expect(JSON.stringify(body.plans[0])).not.toContain("providerPayload");
+    expect(JSON.stringify(body.plans[0])).not.toContain("assessment-only alias");
   });
 
   it("keeps the active view scoped to plans with file items", async () => {

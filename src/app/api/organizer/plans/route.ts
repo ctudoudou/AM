@@ -16,7 +16,8 @@ export async function GET(request: Request) {
     const url = new URL(request.url);
     const view = url.searchParams.get("view") ?? "active";
     const status = url.searchParams.get("status");
-    const includeResolved = url.searchParams.get("includeResolved") === "true";
+    const includeResolved =
+      view === "all" || url.searchParams.get("includeResolved") === "true";
     const page = clampPositiveInt(Number(url.searchParams.get("page")), 1, 10_000);
     const requestedPageSize = Number(url.searchParams.get("pageSize"));
     const requestedLimit = Number(url.searchParams.get("limit"));
@@ -58,11 +59,38 @@ export async function GET(request: Request) {
         orderBy: { updatedAt: "desc" },
         skip,
         take: pageSize,
-        include: {
-          items: true,
-          candidate: { include: { group: true } },
-          download: true,
-          mediaTitle: true,
+        select: {
+          id: true,
+          mediaType: true,
+          status: true,
+          confidence: true,
+          reason: true,
+          autoExecutable: true,
+          metadata: true,
+          items: {
+            select: {
+              id: true,
+              sourcePath: true,
+              targetPath: true,
+              fileType: true,
+              conflict: true,
+              conflictReason: true,
+            },
+          },
+          candidate: {
+            select: {
+              mediaType: true,
+              parsedTitle: true,
+              normalizedTitle: true,
+              group: {
+                select: {
+                  displayTitle: true,
+                  normalizedTitle: true,
+                  aliases: true,
+                },
+              },
+            },
+          },
         },
       }),
       prisma.organizerPlan.count({ where }),
@@ -90,7 +118,28 @@ export async function GET(request: Request) {
       prisma.organizerPlan.count(),
     ]);
     const plansWithAutomation = plans.map((plan) => ({
-      ...plan,
+      id: plan.id,
+      mediaType: plan.mediaType,
+      status: plan.status,
+      confidence: plan.confidence,
+      reason: plan.reason,
+      autoExecutable: plan.autoExecutable,
+      metadata: summarizeMetadata(plan.metadata),
+      candidate: plan.candidate
+        ? {
+            parsedTitle: plan.candidate.parsedTitle,
+            group: plan.candidate.group
+              ? { displayTitle: plan.candidate.group.displayTitle }
+              : null,
+          }
+        : null,
+      items: plan.items.map((item) => ({
+        id: item.id,
+        sourcePath: item.sourcePath,
+        targetPath: item.targetPath,
+        conflict: item.conflict,
+        conflictReason: item.conflictReason,
+      })),
       automation: assessOrganizerPlanAutomation(plan),
     }));
     return jsonResponse({
@@ -115,6 +164,18 @@ export async function GET(request: Request) {
   } catch (error) {
     return jsonError(error);
   }
+}
+
+function summarizeMetadata(metadata: Prisma.JsonValue | null) {
+  if (!metadata || Array.isArray(metadata) || typeof metadata !== "object") {
+    return null;
+  }
+
+  return {
+    title: typeof metadata.title === "string" ? metadata.title : undefined,
+    posterUrl: typeof metadata.posterUrl === "string" ? metadata.posterUrl : undefined,
+    year: typeof metadata.year === "number" ? metadata.year : undefined,
+  };
 }
 
 function clampPositiveInt(value: number, fallback: number, max: number) {

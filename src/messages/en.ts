@@ -535,6 +535,7 @@ export const en = {
   rewatch: "Rewatch",
   backToLibrary: "Back to library",
   backToMovies: "Back to movies",
+  backToTv: "Back to TV",
   playbackLoadError: "Unable to load playback information.",
   transcodeStartError: "Unable to start HLS preparation.",
   transcodePreparing: "Preparing playback...",
