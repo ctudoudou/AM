@@ -11,6 +11,10 @@ const envSchema = z.object({
   TV_LIBRARY_DIR: z.string().default("/data/library/tv"),
   METADATA_DIR: z.string().default("/data/metadata"),
   TRANSCODES_DIR: z.string().default("/data/transcodes"),
+  FFMPEG_HWACCEL: z
+    .enum(["auto", "software", "videotoolbox", "nvidia", "qsv", "vaapi"])
+    .default("auto"),
+  FFMPEG_VAAPI_DEVICE: z.string().default("/dev/dri/renderD128"),
   ARIA2_RPC_URL: z.string().url().default("http://localhost:6800/jsonrpc"),
   ARIA2_RPC_SECRET: z.string().default(""),
   OPENROUTER_API_KEY: z.string().default(""),

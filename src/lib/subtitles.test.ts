@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   buildEmbeddedSubtitleLabel,
+  buildSubtitleTranslationBatches,
   embeddedSubtitleOutputFormatForCodec,
   embeddedSubtitleStreamsFromProbe,
   formatWebVtt,
@@ -9,6 +10,7 @@ import {
   parseWebVtt,
   subtitleFormatForCodec,
   subtitleMatchesMediaFile,
+  validateTranslatedCueBatch,
 } from "./subtitles";
 
 describe("inferSubtitleLanguage", () => {
@@ -95,6 +97,39 @@ describe("embedded subtitle helpers", () => {
     expect(buildEmbeddedSubtitleLabel({ index: 3, tags: {} }, "zh-Hans", "srt")).toBe(
       "简体中文 · SRT",
     );
+  });
+});
+
+describe("subtitle translation helpers", () => {
+  it("batches cues by both cue count and payload size", () => {
+    expect(
+      buildSubtitleTranslationBatches(
+        [
+          { index: 0, text: "1234" },
+          { index: 1, text: "5678" },
+          { index: 2, text: "90" },
+        ],
+        { maxCues: 2, maxCharacters: 6 },
+      ),
+    ).toEqual([
+      [{ index: 0, text: "1234" }],
+      [{ index: 1, text: "5678" }, { index: 2, text: "90" }],
+    ]);
+  });
+
+  it("rejects duplicate indexes returned by the LLM", () => {
+    expect(() =>
+      validateTranslatedCueBatch(
+        [
+          { index: 0, text: "Hello" },
+          { index: 1, text: "World" },
+        ],
+        [
+          { index: 0, text: "你好" },
+          { index: 0, text: "世界" },
+        ],
+      ),
+    ).toThrow("duplicate cue index");
   });
 });
 

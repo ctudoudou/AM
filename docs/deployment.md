@@ -162,7 +162,9 @@ or your container platform secrets.
 | `STAGING_DIR` | Recommended | Temporary staging directory for organization work. | `/data/staging` |
 | `METADATA_DIR` | Recommended | Metadata, artwork, and local cache directory. | `/data/metadata` |
 | `TRANSCODES_DIR` | Recommended | HLS/transcode output directory. | `/data/transcodes` |
-| `OPENROUTER_API_KEY` | Optional | Enables AI-assisted candidate grouping and organizer review. | empty or secret |
+| `FFMPEG_HWACCEL` | Optional | HLS acceleration preference: `auto`, `software`, `videotoolbox`, `nvidia`, `qsv`, or `vaapi`. Unsupported hardware safely falls back to `libx264`. | `auto` |
+| `FFMPEG_VAAPI_DEVICE` | Optional | Render device used by VA-API. The device must be passed into the web container. | `/dev/dri/renderD128` |
+| `OPENROUTER_API_KEY` | Optional | Enables AI-assisted candidate grouping, organizer review, and subtitle translation. | empty or secret |
 | `OPENROUTER_MODEL` | Optional | OpenRouter model name. | `glm5.1` |
 | `TMDB_API_KEY` | Optional | Optional movie/TV metadata provider. | empty or secret |
 | `OMDB_API_KEY` | Optional | Optional metadata compatibility source for movies and TV. | empty or secret |
@@ -183,6 +185,40 @@ or your container platform secrets.
 
 All configured file roots should stay under `DATA_ROOT` for predictable NAS
 safety checks.
+
+### FFmpeg hardware acceleration
+
+Kura probes the FFmpeg encoders and hardware acceleration methods available to
+the web process. `auto` tries VideoToolbox on macOS, NVIDIA NVENC when NVIDIA
+devices are visible, then Intel Quick Sync or VA-API when a render device is
+available. A failed hardware start is retried with the next safe backend and
+ultimately `libx264`.
+
+Linux containers do not receive GPU devices automatically. For Intel or AMD
+VA-API, add the render device to your Compose deployment:
+
+```yaml
+services:
+  web:
+    devices:
+      - /dev/dri:/dev/dri
+```
+
+The container image must also provide the matching userspace driver and an
+FFmpeg build that lists the desired decoder/encoder. NVIDIA deployments should
+use the NVIDIA Container Toolkit and expose the GPU to the `web` service.
+
+### Subtitle translation
+
+The watch page can translate discovered VTT, SRT, ASS, and SSA tracks into
+Simplified or Traditional Chinese with the configured OpenRouter model.
+Non-WebVTT sources are normalized into a cached WebVTT file under
+`METADATA_DIR/subtitles` before translation. Translation requests are batched,
+validated against the original cue indexes, and written atomically as a new
+selectable track; the source subtitle is never overwritten.
+
+Subtitle dialogue is sent to the configured external model provider. Leave
+`OPENROUTER_API_KEY` empty if subtitle text must remain entirely local.
 
 ## LAN mDNS Discovery
 

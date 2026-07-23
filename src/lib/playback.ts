@@ -6,26 +6,49 @@ import { Readable } from "node:stream";
 import { execFile, spawn } from "node:child_process";
 import { promisify } from "node:util";
 import { prisma } from "@/lib/db";
+import { serverEnv } from "@/lib/env";
 import { getAppSettings } from "@/lib/settings";
+import {
+  buildHlsFfmpegArgs,
+  inferBrowserPlaybackMode,
+  isBrowserCompatibleH264,
+  parseFfmpegEncoders,
+  parseFfmpegHwaccels,
+  selectTranscodePlans,
+  updateFfmpegProgress,
+  type FfmpegCapabilities,
+  type FfmpegProgress,
+  type TranscodePlan,
+} from "@/lib/transcode-profile";
 
 const execFileAsync = promisify(execFile);
-const directPlayExtensions = new Set([".mp4", ".m4v", ".webm", ".mov"]);
 const hlsContentTypes = new Map([
   [".m3u8", "application/vnd.apple.mpegurl"],
   [".ts", "video/mp2t"],
   [".m4s", "video/iso.segment"],
   [".mp4", "video/mp4"],
 ]);
-const activeTranscodes = new Map<
-  string,
-  { child: ChildProcess; cancelled: boolean; transcodeDir: string }
->();
+type ActiveTranscode = {
+  child: ChildProcess | null;
+  cancelled: boolean;
+  transcodeDir: string;
+  durationSec: number | null;
+  fallbackFrom: string[];
+  plan: TranscodePlan | null;
+  progress: FfmpegProgress;
+};
+
+const activeTranscodes = new Map<string, ActiveTranscode>();
+const hlsCacheKeys = new Map<string, string>();
+let ffmpegCapabilitiesPromise: Promise<FfmpegCapabilities> | null = null;
 
 type ProbeStream = {
   codec_type?: string;
   codec_name?: string;
   width?: number;
   height?: number;
+  duration?: string;
+  pix_fmt?: string;
 };
 
 type ProbeResult = {
@@ -47,28 +70,76 @@ export async function getPlaybackDescriptor(mediaFileId: string) {
       },
     },
   });
-  const playbackMode = file.playbackMode ?? inferDirectPlayback(file.absolutePath);
-  const direct = playbackMode === "DIRECT";
   const sourcePath = assertInsideRoots(
     file.absolutePath,
     allowedPlaybackRoots((await getAppSettings()).directories),
   );
-  const probe = await probeMedia(sourcePath);
-  const sourceDurationSec = parseProbeDuration(probe);
-
+  const active = activeTranscodes.get(mediaFileId);
+  const probe = active ? null : await probeMedia(sourcePath);
+  const sourceDurationSec = active?.durationSec ?? (probe ? parseProbeDuration(probe) : null);
+  const video = probe?.streams?.find((stream) => stream.codec_type === "video");
+  const audio = probe?.streams?.find((stream) => stream.codec_type === "audio");
+  const directMode = active
+    ? null
+    : inferBrowserPlaybackMode({
+        filePath: sourcePath,
+        videoCodec: video?.codec_name ?? file.videoCodec,
+        audioCodec: audio?.codec_name ?? file.audioCodec,
+        pixelFormat: video?.pix_fmt,
+      });
+  const direct = directMode === "DIRECT";
+  const hlsOutputExists = !direct && file.transcodePath
+    ? await exists(file.transcodePath)
+    : false;
+  const playbackMode = direct
+    ? "DIRECT"
+    : file.playbackMode === "HLS_REMUX" || file.playbackMode === "HLS_TRANSCODE"
+      ? file.playbackMode
+      : null;
+  const transcodeStatus = direct
+    ? "NOT_REQUIRED"
+    : file.transcodeStatus === "NOT_REQUIRED"
+      ? "PENDING"
+      : file.transcodeStatus === "PROCESSING" && !active
+        ? "PENDING"
+        : file.transcodeStatus === "READY" && !hlsOutputExists
+          ? "PENDING"
+          : file.transcodeStatus;
   return {
     mediaFile: file,
     direct,
     playbackMode,
-    transcodeStatus: direct ? "NOT_REQUIRED" : file.transcodeStatus,
+    transcodeStatus,
     sourceDurationSec,
     streamUrl: direct ? `/api/media-files/${file.id}/stream` : null,
     hlsUrl:
       !direct &&
       file.transcodePath &&
-      (file.transcodeStatus === "READY" ||
-        (file.transcodeStatus === "PROCESSING" && (await exists(file.transcodePath))))
-        ? `/api/media-files/${file.id}/hls/master.m3u8`
+      hlsOutputExists &&
+      (transcodeStatus === "READY" ||
+        transcodeStatus === "PROCESSING")
+        ? `/api/media-files/${file.id}/hls/master.m3u8${hlsCacheKeys.has(mediaFileId)
+          ? `?session=${hlsCacheKeys.get(mediaFileId)}`
+          : ""}`
+        : null,
+    transcodeProgress: active
+      ? {
+          ...active.progress,
+          backend: active.plan?.backend ?? "remux",
+          engine: active.plan?.label ?? "Stream copy",
+          hardwareAccelerated: active.plan?.hardwareAccelerated ?? false,
+          fallbackFrom: active.fallbackFrom,
+        }
+      : transcodeStatus === "READY"
+        ? {
+            positionSec: sourceDurationSec ?? 0,
+            percent: 100,
+            speed: null,
+            backend: playbackMode === "HLS_REMUX" ? "remux" : null,
+            engine: playbackMode === "HLS_REMUX" ? "Stream copy" : null,
+            hardwareAccelerated: false,
+            fallbackFrom: [],
+          }
         : null,
     progress: file.episode?.progress[0] ?? null,
   };
@@ -80,9 +151,18 @@ export async function prepareHlsPlayback(mediaFileId: string) {
     where: { id: mediaFileId },
   });
   const sourcePath = assertInsideRoots(file.absolutePath, allowedPlaybackRoots(settings.directories));
-  const directMode = inferDirectPlayback(sourcePath);
+  const probe = await probeMedia(sourcePath);
+  const video = probe.streams?.find((stream) => stream.codec_type === "video");
+  const audio = probe.streams?.find((stream) => stream.codec_type === "audio");
+  const directMode = inferBrowserPlaybackMode({
+    filePath: sourcePath,
+    videoCodec: video?.codec_name ?? file.videoCodec,
+    audioCodec: audio?.codec_name ?? file.audioCodec,
+    pixelFormat: video?.pix_fmt,
+  });
 
   if (directMode === "DIRECT") {
+    hlsCacheKeys.delete(mediaFileId);
     return prisma.mediaFile.update({
       where: { id: mediaFileId },
       data: {
@@ -93,7 +173,10 @@ export async function prepareHlsPlayback(mediaFileId: string) {
     });
   }
 
-  if (file.transcodeStatus === "PROCESSING" || file.transcodeStatus === "READY") {
+  if (file.transcodeStatus === "READY" && file.transcodePath && await exists(file.transcodePath)) {
+    return file;
+  }
+  if (file.transcodeStatus === "PROCESSING" && activeTranscodes.has(mediaFileId)) {
     return file;
   }
 
@@ -102,12 +185,9 @@ export async function prepareHlsPlayback(mediaFileId: string) {
     allowedPlaybackRoots(settings.directories),
   );
   await fs.mkdir(transcodeDir, { recursive: true });
-  const probe = await probeMedia(sourcePath);
-  const video = probe.streams?.find((stream) => stream.codec_type === "video");
-  const audio = probe.streams?.find((stream) => stream.codec_type === "audio");
   const resolution =
     video?.width && video.height ? `${video.width}x${video.height}` : file.resolution;
-  const videoCopy = video?.codec_name === "h264";
+  const videoCopy = isBrowserCompatibleH264(video?.codec_name, video?.pix_fmt);
   const audioCopy = audio?.codec_name === "aac";
   const playbackMode = videoCopy ? "HLS_REMUX" : "HLS_TRANSCODE";
   const playlistPath = path.join(transcodeDir, "master.m3u8");
@@ -127,92 +207,44 @@ export async function prepareHlsPlayback(mediaFileId: string) {
       audioCodec: audio?.codec_name ?? file.audioCodec,
     },
   });
-
-  const codecArgs = videoCopy
-    ? ["-c:v", "copy"]
-    : [
-        "-c:v",
-        "libx264",
-        "-preset",
-        "veryfast",
-        "-crf",
-        "18",
-        "-profile:v",
-        "high",
-        "-pix_fmt",
-        "yuv420p",
-        "-force_key_frames",
-        "expr:gte(t,n_forced*2)",
-      ];
-  const audioArgs = audioCopy ? ["-c:a", "copy"] : ["-c:a", "aac", "-b:a", "192k"];
-  const args = [
-    "-hide_banner",
-    "-y",
-    "-i",
-    sourcePath,
-    "-map",
-    "0:v:0",
-    "-map",
-    "0:a:0?",
-    "-sn",
-    ...codecArgs,
-    ...audioArgs,
-    "-f",
-    "hls",
-    "-hls_time",
-    "2",
-    "-hls_playlist_type",
-    "event",
-    "-hls_flags",
-    "independent_segments+temp_file",
-    "-hls_segment_filename",
-    segmentPath,
-    playlistPath,
-  ];
-
   stopActiveTranscode(mediaFileId);
-  const child = spawn("ffmpeg", args, {
-    stdio: ["ignore", "ignore", "pipe"],
-  });
-  const active = { child, cancelled: false, transcodeDir };
+  hlsCacheKeys.set(mediaFileId, `${Date.now().toString(36)}-0`);
+  const plans = videoCopy
+    ? [null]
+    : selectTranscodePlans({
+        capabilities: await detectFfmpegCapabilities(),
+        preference: serverEnv.FFMPEG_HWACCEL,
+        height: video?.height,
+        vaapiDevice: serverEnv.FFMPEG_VAAPI_DEVICE,
+      });
+  const active: ActiveTranscode = {
+    child: null,
+    cancelled: false,
+    transcodeDir,
+    durationSec: parseProbeDuration(probe),
+    fallbackFrom: [],
+    plan: plans[0],
+    progress: { positionSec: 0, percent: 0, speed: null },
+  };
   activeTranscodes.set(mediaFileId, active);
-  const stderr: string[] = [];
-  child.stderr.setEncoding("utf8");
-  child.stderr.on("data", (chunk: string) => {
-    stderr.push(chunk);
-    if (stderr.join("").length > 8_000) {
-      stderr.shift();
-    }
-  });
-  child.on("close", async (code) => {
+  try {
+    await startTranscodeAttempt({
+      active,
+      audioCopy,
+      mediaFileId,
+      plans,
+      playlistPath,
+      segmentPath,
+      sourcePath,
+    });
+  } catch (error) {
     activeTranscodes.delete(mediaFileId);
-    if (active.cancelled) {
-      await fs.rm(transcodeDir, { recursive: true, force: true }).catch(() => undefined);
-      await prisma.mediaFile.update({
-        where: { id: mediaFileId },
-        data: {
-          transcodeStatus: "PENDING",
-          transcodePath: null,
-          transcodeError: "HLS preparation stopped because playback was closed.",
-        },
-      }).catch(() => undefined);
-      return;
-    }
-    await prisma.mediaFile.update({
-      where: { id: mediaFileId },
-      data:
-        code === 0
-          ? {
-              transcodeStatus: "READY",
-              transcodeError: null,
-              transcodedAt: new Date(),
-            }
-          : {
-              transcodeStatus: "FAILED",
-              transcodeError: stderr.join("").slice(-4_000) || `ffmpeg exited with ${code}`,
-            },
-    }).catch(() => undefined);
-  });
+    await markTranscodeFailed(
+      mediaFileId,
+      error instanceof Error ? error.message : "Unable to start FFmpeg.",
+    );
+    throw error;
+  }
 
   await waitForFile(playlistPath, 4_000);
   return prisma.mediaFile.findUniqueOrThrow({ where: { id: mediaFileId } });
@@ -228,6 +260,7 @@ export async function stopHlsPlayback(mediaFileId: string) {
   }
 
   stopActiveTranscode(mediaFileId);
+  hlsCacheKeys.delete(mediaFileId);
   if (file.transcodePath) {
     const transcodeRoot = assertInsideRoots(
       path.dirname(file.transcodePath),
@@ -311,13 +344,114 @@ function stopActiveTranscode(mediaFileId: string) {
   if (!active) {
     return;
   }
+  activeTranscodes.delete(mediaFileId);
   active.cancelled = true;
-  active.child.kill("SIGTERM");
+  active.child?.kill("SIGTERM");
   setTimeout(() => {
-    if (!active.child.killed) {
+    if (active.child && !active.child.killed) {
       active.child.kill("SIGKILL");
     }
   }, 2_000);
+}
+
+async function startTranscodeAttempt(input: {
+  active: ActiveTranscode;
+  audioCopy: boolean;
+  mediaFileId: string;
+  plans: Array<TranscodePlan | null>;
+  playlistPath: string;
+  segmentPath: string;
+  sourcePath: string;
+}, planIndex = 0): Promise<void> {
+  const plan = input.plans[planIndex] ?? null;
+  const cacheKey = hlsCacheKeys.get(input.mediaFileId)?.split("-")[0] ?? Date.now().toString(36);
+  hlsCacheKeys.set(input.mediaFileId, `${cacheKey}-${planIndex}`);
+  input.active.plan = plan;
+  input.active.progress = { positionSec: 0, percent: 0, speed: null };
+  await fs.rm(input.active.transcodeDir, { recursive: true, force: true });
+  await fs.mkdir(input.active.transcodeDir, { recursive: true });
+
+  const child = spawn("ffmpeg", buildHlsFfmpegArgs({
+    sourcePath: input.sourcePath,
+    playlistPath: input.playlistPath,
+    segmentPath: input.segmentPath,
+    plan,
+    videoCopy: plan === null,
+    audioCopy: input.audioCopy,
+  }), {
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  input.active.child = child;
+  const stderr: string[] = [];
+  let progressBuffer = "";
+
+  child.stdout?.setEncoding("utf8");
+  child.stdout?.on("data", (chunk: string) => {
+    progressBuffer += chunk;
+    const lines = progressBuffer.split(/\r?\n/);
+    progressBuffer = lines.pop() ?? "";
+    for (const line of lines) {
+      input.active.progress = updateFfmpegProgress(
+        input.active.progress,
+        line,
+        input.active.durationSec,
+      );
+    }
+  });
+  child.stderr?.setEncoding("utf8");
+  child.stderr?.on("data", (chunk: string) => {
+    stderr.push(chunk);
+    while (stderr.join("").length > 8_000) {
+      stderr.shift();
+    }
+  });
+  child.on("error", (error) => {
+    stderr.push(error.message);
+  });
+  child.on("close", async (code) => {
+    if (input.active.cancelled || activeTranscodes.get(input.mediaFileId) !== input.active) {
+      return;
+    }
+    if (code !== 0 && planIndex + 1 < input.plans.length) {
+      input.active.fallbackFrom.push(plan?.label ?? "Stream copy");
+      try {
+        await startTranscodeAttempt(input, planIndex + 1);
+      } catch (error) {
+        activeTranscodes.delete(input.mediaFileId);
+        await markTranscodeFailed(
+          input.mediaFileId,
+          error instanceof Error ? error.message : "Unable to start FFmpeg fallback.",
+        );
+      }
+      return;
+    }
+
+    await prisma.mediaFile.update({
+      where: { id: input.mediaFileId },
+      data:
+        code === 0
+          ? {
+              transcodeStatus: "READY",
+              transcodeError: null,
+              transcodedAt: new Date(),
+            }
+          : {
+              transcodeStatus: "FAILED",
+              transcodeError: stderr.join("").slice(-4_000) || `ffmpeg exited with ${code}`,
+          },
+    }).catch(() => undefined);
+    activeTranscodes.delete(input.mediaFileId);
+  });
+}
+
+async function markTranscodeFailed(mediaFileId: string, message: string) {
+  await prisma.mediaFile.update({
+    where: { id: mediaFileId },
+    data: {
+      transcodeStatus: "FAILED",
+      transcodeError: message.slice(-4_000),
+    },
+  }).catch(() => undefined);
 }
 
 async function probeMedia(filePath: string): Promise<ProbeResult> {
@@ -338,8 +472,35 @@ async function probeMedia(filePath: string): Promise<ProbeResult> {
 }
 
 function parseProbeDuration(probe: ProbeResult) {
-  const duration = Number(probe.format?.duration);
-  return Number.isFinite(duration) && duration > 0 ? Math.floor(duration) : null;
+  const duration = Math.max(
+    Number(probe.format?.duration) || 0,
+    ...(probe.streams ?? []).map((stream) => Number(stream.duration) || 0),
+  );
+  return Number.isFinite(duration) && duration > 0
+    ? Math.round(duration * 1_000) / 1_000
+    : null;
+}
+
+async function detectFfmpegCapabilities(): Promise<FfmpegCapabilities> {
+  ffmpegCapabilitiesPromise ??= Promise.all([
+    execFileAsync("ffmpeg", ["-hide_banner", "-encoders"], { maxBuffer: 2_000_000 })
+      .then(({ stdout }) => parseFfmpegEncoders(stdout))
+      .catch(() => new Set<string>()),
+    execFileAsync("ffmpeg", ["-hide_banner", "-hwaccels"], { maxBuffer: 200_000 })
+      .then(({ stdout }) => parseFfmpegHwaccels(stdout))
+      .catch(() => new Set<string>()),
+    exists(serverEnv.FFMPEG_VAAPI_DEVICE),
+    Promise.all([exists("/dev/nvidia0"), exists("/dev/nvidiactl")]).then((results) =>
+      results.some(Boolean),
+    ),
+  ]).then(([encoders, hwaccels, vaapiDeviceAvailable, nvidiaDeviceAvailable]) => ({
+    encoders,
+    hwaccels,
+    platform: process.platform,
+    nvidiaDeviceAvailable,
+    vaapiDeviceAvailable,
+  }));
+  return ffmpegCapabilitiesPromise;
 }
 
 async function exists(targetPath: string) {
@@ -360,10 +521,6 @@ async function waitForFile(targetPath: string, timeoutMs: number) {
     await new Promise((resolve) => setTimeout(resolve, 250));
   }
   return false;
-}
-
-function inferDirectPlayback(filePath: string) {
-  return directPlayExtensions.has(path.extname(filePath).toLowerCase()) ? "DIRECT" : null;
 }
 
 function parseRange(rangeHeader: string | null, size: number) {

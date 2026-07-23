@@ -25,6 +25,7 @@ import {
 } from "lucide-react";
 import { getMessages } from "@/messages";
 import type { Locale } from "@/lib/i18n";
+import { resolvePlaybackDuration } from "@/lib/transcode-profile";
 
 type WatchMediaFile = {
   id: string;
@@ -63,6 +64,15 @@ type PlaybackDescriptor = {
   streamUrl?: string | null;
   hlsUrl?: string | null;
   mediaFile: WatchMediaFile;
+  transcodeProgress?: {
+    positionSec: number;
+    percent: number | null;
+    speed: string | null;
+    backend: string | null;
+    engine: string | null;
+    hardwareAccelerated: boolean;
+    fallbackFrom: string[];
+  } | null;
 };
 
 type SubtitleTrackDescriptor = {
@@ -74,6 +84,7 @@ type SubtitleTrackDescriptor = {
   sourceName: string | null;
   isDefault: boolean;
   canPlay: boolean;
+  canTranslate: boolean;
   url: string;
 };
 
@@ -229,17 +240,6 @@ export function WatchClient({
     [t.subtitleTranslateDone, t.subtitleTranslateError],
   );
 
-  const stopHls = useCallback(() => {
-    const current = descriptorRef.current;
-    if (current?.direct || current?.transcodeStatus !== "PROCESSING") {
-      return;
-    }
-    void fetch(`/api/media-files/${mediaFileId}/transcode`, {
-      method: "DELETE",
-      keepalive: true,
-    }).catch(() => undefined);
-  }, [mediaFileId]);
-
   const flushProgress = useCallback((options?: {
     beacon?: boolean;
     force?: boolean;
@@ -249,13 +249,17 @@ export function WatchClient({
       return undefined;
     }
 
+    const durationSec =
+      Number.isFinite(durationRef.current) && durationRef.current > 0
+        ? Math.floor(durationRef.current)
+        : undefined;
     const payload: WatchProgressPayload = {
       episodeId,
-      positionSec: Math.floor(currentTimeRef.current),
-      durationSec:
-        Number.isFinite(durationRef.current) && durationRef.current > 0
-          ? Math.floor(durationRef.current)
-          : undefined,
+      positionSec: Math.max(
+        0,
+        Math.min(Math.floor(currentTimeRef.current), durationSec ?? Number.MAX_SAFE_INTEGER),
+      ),
+      durationSec,
     };
     const progressKey = JSON.stringify(payload);
     if (!options?.force && progressKey === lastProgressKeyRef.current) {
@@ -331,15 +335,6 @@ export function WatchClient({
   }, []);
 
   useEffect(() => {
-    const stopOnPageHide = () => stopHls();
-    window.addEventListener("pagehide", stopOnPageHide);
-    return () => {
-      window.removeEventListener("pagehide", stopOnPageHide);
-      stopHls();
-    };
-  }, [stopHls]);
-
-  useEffect(() => {
     if (!descriptor || descriptor.direct || descriptor.hlsUrl) {
       return;
     }
@@ -358,7 +353,7 @@ export function WatchClient({
     }
     const timer = window.setInterval(() => {
       void load();
-    }, 5000);
+    }, 2000);
     return () => window.clearInterval(timer);
   }, [descriptor, load]);
 
@@ -452,10 +447,9 @@ export function WatchClient({
               <MediaPlayer
                 aspectRatio="16/9"
                 className="kura-media-player"
+                duration={sourceDurationSec ?? undefined}
                 onDurationChange={(nextDuration) => {
-                  durationRef.current = Number.isFinite(nextDuration)
-                    ? nextDuration
-                    : durationRef.current;
+                  durationRef.current = resolvePlaybackDuration(sourceDurationSec, nextDuration);
                 }}
                 onEnded={() => {
                   if (durationRef.current > 0) {
@@ -571,6 +565,38 @@ export function WatchClient({
             <ListVideo size={16} />
           </button>
         </div>
+        {descriptor?.transcodeStatus === "PROCESSING" && descriptor.transcodeProgress ? (
+          <div className="watch-transcode-progress">
+            <div>
+              <span>{t.transcodeProgress}</span>
+              <strong>
+                {descriptor.transcodeProgress.percent !== null
+                  ? `${Math.floor(descriptor.transcodeProgress.percent)}%`
+                  : formatPlaybackTime(descriptor.transcodeProgress.positionSec)}
+              </strong>
+            </div>
+            <progress
+              aria-label={t.transcodeProgress}
+              max={100}
+              value={descriptor.transcodeProgress.percent ?? undefined}
+            />
+            <small>
+              {descriptor.transcodeProgress.engine ?? t.transcodeSoftware}
+              {" · "}
+              {descriptor.transcodeProgress.backend === "remux"
+                ? t.transcodeStreamCopy
+                : descriptor.transcodeProgress.hardwareAccelerated
+                  ? t.transcodeHardware
+                  : t.transcodeSoftware}
+              {descriptor.transcodeProgress.speed
+                ? ` · ${t.transcodeSpeed} ${descriptor.transcodeProgress.speed}`
+                : ""}
+              {descriptor.transcodeProgress.fallbackFrom.length > 0
+                ? ` · ${t.transcodeFallback}`
+                : ""}
+            </small>
+          </div>
+        ) : null}
         <div className="watch-underbar">
           {previousEpisode ? (
             <a href={`/${locale}/watch/${previousEpisode.id}`}>
@@ -647,15 +673,21 @@ export function WatchClient({
           ) : (
             <div className="watch-subtitle-list">
               {subtitleTracks.map((track) => (
-                <div className={track.canPlay ? "" : "muted"} key={track.id}>
+                <div className={track.canPlay || track.canTranslate ? "" : "muted"} key={track.id}>
                   <Captions size={14} />
                   <span>
                     <strong>{track.label}</strong>
                     <small>
-                      {track.sourceName ?? track.kind} · {track.canPlay ? t.subtitlePlayable : t.subtitleUnsupported}
+                      {track.sourceName ?? track.kind}
+                      {" · "}
+                      {track.canPlay
+                        ? t.subtitlePlayable
+                        : track.canTranslate
+                          ? t.subtitleTranslatable
+                          : t.subtitleUnsupported}
                     </small>
                   </span>
-                  {track.canPlay && !isChineseSubtitleTrack(track) ? (
+                  {track.canTranslate && !isChineseSubtitleTrack(track) ? (
                     <div className="watch-subtitle-translate-actions">
                       <button
                         disabled={Boolean(translatingSubtitleId)}
@@ -789,6 +821,16 @@ function isChineseSubtitleTrack(track: SubtitleTrackDescriptor) {
 
 function currentEpisodeLabel(episode: EpisodeLink) {
   return `S${String(episode.seasonNumber).padStart(2, "0")}E${String(episode.number).padStart(2, "0")}`;
+}
+
+function formatPlaybackTime(seconds: number) {
+  const rounded = Math.max(0, Math.floor(seconds));
+  const hours = Math.floor(rounded / 3600);
+  const minutes = Math.floor((rounded % 3600) / 60);
+  const remainingSeconds = rounded % 60;
+  return hours > 0
+    ? `${hours}:${String(minutes).padStart(2, "0")}:${String(remainingSeconds).padStart(2, "0")}`
+    : `${minutes}:${String(remainingSeconds).padStart(2, "0")}`;
 }
 
 function mimeTypeForFile(fileName?: string | null) {

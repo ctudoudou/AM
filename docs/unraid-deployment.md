@@ -59,6 +59,8 @@ MOVIES_LIBRARY_DIR=/data/library/movies
 TV_LIBRARY_DIR=/data/library/tv
 METADATA_DIR=/data/metadata
 TRANSCODES_DIR=/data/transcodes
+FFMPEG_HWACCEL=auto
+FFMPEG_VAAPI_DEVICE=/dev/dri/renderD128
 
 ARIA2_RPC_URL=http://your-aria2-host:6800/jsonrpc
 ARIA2_RPC_SECRET=change-this-secret
@@ -290,6 +292,14 @@ With the recommended mapping, paths should stay under:
 ### Transcoding is slow
 
 Put `/mnt/user/Kura/transcodes` on SSD/cache storage if possible. HLS preparation writes many small files.
+
+Kura automatically uses an available VideoToolbox, NVENC, Quick Sync, or
+VA-API H.264 backend and falls back to `libx264` if hardware initialization
+fails. On Unraid, expose `/dev/dri` to the Kura web container for Intel/AMD
+hardware acceleration, or expose an NVIDIA GPU through the NVIDIA runtime.
+Verify that the container FFmpeg build lists the expected hardware decoder and
+encoder. Set `FFMPEG_HWACCEL=software` to disable hardware acceleration while
+diagnosing driver issues.
 
 ### kura.local does not resolve
 
