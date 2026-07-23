@@ -73,6 +73,46 @@ describe("/api/downloads", () => {
     });
   });
 
+  it("returns a compact list projection and strips bulky aria2 file metadata", async () => {
+    vi.mocked(prisma.download.findMany).mockResolvedValue([
+      {
+        id: "download-1",
+        status: "ACTIVE",
+        progress: 0.5,
+        aria2Files: [
+          { path: "[METADATA]example", length: "0", uris: [{ uri: "magnet:?large" }] },
+          { path: "/downloads/episode-1.mkv", length: "100", completedLength: "50", uris: [{ uri: "https://tracker.example" }] },
+          { path: "/downloads/episode-2.mkv", length: "200", completedLength: "20", uris: [{ uri: "https://tracker.example" }] },
+          { path: "/downloads/episode-3.mkv", length: "300", completedLength: "0", uris: [{ uri: "https://tracker.example" }] },
+          { path: "/downloads/episode-4.mkv", length: "400", completedLength: "0", uris: [{ uri: "https://tracker.example" }] },
+        ],
+        candidate: null,
+        organizerPlans: [],
+      },
+    ] as never);
+
+    const response = await GET(new Request("http://localhost/api/downloads"));
+    const body = await response.json();
+
+    expect(prisma.download.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        select: expect.objectContaining({
+          id: true,
+          aria2Files: true,
+          candidate: expect.any(Object),
+          organizerPlans: expect.any(Object),
+        }),
+      }),
+    );
+    expect(prisma.download.findMany.mock.calls[0]?.[0]).not.toHaveProperty("include");
+    expect(body.downloads[0].aria2Files).toEqual([
+      { path: "/downloads/episode-1.mkv", length: "100", completedLength: "50" },
+      { path: "/downloads/episode-2.mkv", length: "200", completedLength: "20" },
+      { path: "/downloads/episode-3.mkv", length: "300", completedLength: "0" },
+    ]);
+    expect(JSON.stringify(body.downloads[0])).not.toContain("tracker.example");
+  });
+
   it("caps page size and ignores unknown statuses", async () => {
     await GET(
       new Request("http://localhost/api/downloads?status=UNKNOWN&page=invalid&pageSize=1000"),

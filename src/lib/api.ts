@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { Prisma } from "@prisma/client";
 import { ZodError } from "zod";
 
 export class UntrustedMutationOriginError extends Error {}
@@ -49,12 +50,68 @@ export function jsonError(error: unknown) {
     );
   }
 
-  const message = error instanceof Error ? error.message : "Unexpected error";
+  if (isNotFoundError(error)) {
+    return NextResponse.json(
+      {
+        error: "NOT_FOUND",
+        message: errorMessage(error, "Requested resource was not found."),
+      },
+      { status: 404 },
+    );
+  }
+
+  if (isPathBoundaryError(error)) {
+    return NextResponse.json(
+      {
+        error: "PATH_OUTSIDE_ALLOWED_ROOT",
+        message: errorMessage(error, "Requested path is outside the allowed roots."),
+      },
+      { status: 403 },
+    );
+  }
+
+  if (process.env.NODE_ENV === "production") {
+    console.error("Unhandled API error", error);
+  }
   return NextResponse.json(
     {
       error: "INTERNAL_ERROR",
-      message,
+      message: errorMessage(error, "An unexpected server error occurred."),
     },
     { status: 500 },
   );
+}
+
+function isNotFoundError(error: unknown) {
+  if (
+    error instanceof Prisma.PrismaClientKnownRequestError &&
+    error.code === "P2025"
+  ) {
+    return true;
+  }
+
+  return (
+    error instanceof Error &&
+    "code" in error &&
+    (error as NodeJS.ErrnoException).code === "ENOENT"
+  );
+}
+
+function isPathBoundaryError(error: unknown) {
+  if (!(error instanceof Error)) {
+    return false;
+  }
+
+  return (
+    /\bpath is outside configured\b/i.test(error.message) ||
+    /\bpath must be inside data_root\b/i.test(error.message) ||
+    /\bdirectory must (?:stay|be) inside\b/i.test(error.message)
+  );
+}
+
+function errorMessage(error: unknown, productionMessage: string) {
+  if (process.env.NODE_ENV === "production") {
+    return productionMessage;
+  }
+  return error instanceof Error ? error.message : productionMessage;
 }

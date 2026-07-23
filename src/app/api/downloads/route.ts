@@ -29,16 +29,45 @@ export async function GET(request: Request) {
         orderBy: { updatedAt: "desc" },
         skip: (page - 1) * pageSize,
         take: pageSize,
-        include: {
+        select: {
+          id: true,
+          aria2Gid: true,
+          title: true,
+          status: true,
+          progress: true,
+          totalBytes: true,
+          completedBytes: true,
+          downloadSpeed: true,
+          etaSeconds: true,
+          aria2Files: true,
+          targetPath: true,
+          errorMessage: true,
+          lastSyncedAt: true,
+          lastProgressAt: true,
+          stalledSince: true,
+          lastPeerCount: true,
+          lastSeederCount: true,
+          retryCount: true,
+          nextRetryAt: true,
+          archiveStatus: true,
           candidate: {
-            include: {
-              group: true,
+            select: {
+              mediaType: true,
+              parsedTitle: true,
+              group: {
+                select: { displayTitle: true },
+              },
             },
           },
           organizerPlans: {
             orderBy: { createdAt: "desc" },
             take: 1,
-            include: { items: true },
+            select: {
+              id: true,
+              status: true,
+              reason: true,
+              items: { select: { targetPath: true } },
+            },
           },
         },
       }),
@@ -59,6 +88,7 @@ export async function GET(request: Request) {
       downloads: downloads.map((download) => ({
         ...download,
         aria2Diagnostics: buildDownloadDiagnostics(download),
+        aria2Files: summarizeAria2Files(download.aria2Files),
       })),
       aria2,
       pagination: {
@@ -73,6 +103,23 @@ export async function GET(request: Request) {
   } catch (error) {
     return jsonError(error);
   }
+}
+
+function summarizeAria2Files(value: unknown) {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  return value
+    .filter((file): file is Record<string, unknown> => typeof file === "object" && file !== null)
+    .map((file) => ({
+      path: typeof file.path === "string" ? file.path : undefined,
+      length: typeof file.length === "string" ? file.length : undefined,
+      completedLength:
+        typeof file.completedLength === "string" ? file.completedLength : undefined,
+    }))
+    .filter((file) => file.path && !file.path.startsWith("[METADATA]"))
+    .slice(0, 3);
 }
 
 function isDownloadStatus(value: string | null): value is DownloadStatus {

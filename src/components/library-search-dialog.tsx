@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { Film, Loader2, Search, Sparkles, Tv, X } from "lucide-react";
 import type { Locale } from "@/lib/i18n";
 import {
@@ -19,9 +20,47 @@ const sources = [
   { mediaType: "TV", endpoint: "/api/library/tv", path: "/tv" },
 ] as const;
 
+const focusableSelector = [
+  "a[href]",
+  "button:not([disabled])",
+  "input:not([disabled])",
+  "select:not([disabled])",
+  "textarea:not([disabled])",
+  '[tabindex]:not([tabindex="-1"])',
+].join(",");
+
+export function resolveDialogTabTarget(
+  focusableElements: HTMLElement[],
+  activeElement: Element | null,
+  shiftKey: boolean,
+) {
+  if (focusableElements.length === 0) {
+    return null;
+  }
+
+  const activeIndex = focusableElements.indexOf(activeElement as HTMLElement);
+  if (shiftKey && activeIndex <= 0) {
+    return focusableElements.at(-1) ?? null;
+  }
+  if (!shiftKey && (activeIndex === -1 || activeIndex === focusableElements.length - 1)) {
+    return focusableElements[0] ?? null;
+  }
+  return null;
+}
+
+export function restoreDialogTrigger(trigger: Pick<HTMLElement, "focus" | "isConnected"> | null) {
+  if (!trigger?.isConnected) {
+    return false;
+  }
+  trigger.focus();
+  return true;
+}
+
 export function LibrarySearchDialog({ locale }: { locale: Locale }) {
   const t = getMessages(locale);
+  const dialogRef = useRef<HTMLElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
+  const triggerRef = useRef<HTMLButtonElement>(null);
   const [open, setOpen] = useState(false);
   const [loaded, setLoaded] = useState(false);
   const [loading, setLoading] = useState(false);
@@ -72,19 +111,67 @@ export function LibrarySearchDialog({ locale }: { locale: Locale }) {
         event.preventDefault();
         show();
       }
-      if (event.key === "Escape") {
-        hide();
-      }
     };
     window.addEventListener("keydown", handleShortcut);
     return () => window.removeEventListener("keydown", handleShortcut);
-  }, [hide, show]);
+  }, [show]);
 
   useEffect(() => {
-    if (open) {
-      window.requestAnimationFrame(() => inputRef.current?.focus());
+    if (!open) {
+      return;
     }
-  }, [open]);
+
+    const previousOverflow = document.body.style.overflow;
+    const trigger = triggerRef.current;
+    const backgroundElement = trigger?.closest<HTMLElement>(".app-shell") ?? null;
+    const backgroundState = backgroundElement ? {
+      ariaHidden: backgroundElement.getAttribute("aria-hidden"),
+      inert: backgroundElement.inert,
+    } : null;
+
+    inputRef.current?.focus();
+    document.body.style.overflow = "hidden";
+    if (backgroundElement) {
+      backgroundElement.inert = true;
+      backgroundElement.setAttribute("aria-hidden", "true");
+    }
+
+    const handleDialogKeydown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        event.stopPropagation();
+        hide();
+        return;
+      }
+      if (event.key !== "Tab") {
+        return;
+      }
+
+      const focusableElements = Array.from(
+        dialogRef.current?.querySelectorAll<HTMLElement>(focusableSelector) ?? [],
+      ).filter((element) => element.getClientRects().length > 0);
+      const target = resolveDialogTabTarget(focusableElements, document.activeElement, event.shiftKey);
+      if (target) {
+        event.preventDefault();
+        target.focus();
+      }
+    };
+
+    window.addEventListener("keydown", handleDialogKeydown, true);
+    return () => {
+      window.removeEventListener("keydown", handleDialogKeydown, true);
+      document.body.style.overflow = previousOverflow;
+      if (backgroundElement && backgroundState) {
+        backgroundElement.inert = backgroundState.inert;
+        if (backgroundState.ariaHidden === null) {
+          backgroundElement.removeAttribute("aria-hidden");
+        } else {
+          backgroundElement.setAttribute("aria-hidden", backgroundState.ariaHidden);
+        }
+      }
+      window.requestAnimationFrame(() => restoreDialogTrigger(trigger));
+    };
+  }, [hide, open]);
 
   return (
     <>
@@ -94,6 +181,7 @@ export function LibrarySearchDialog({ locale }: { locale: Locale }) {
         aria-haspopup="dialog"
         className="sidebar-search"
         onClick={show}
+        ref={triggerRef}
         type="button"
       >
         <Search size={14} />
@@ -101,7 +189,7 @@ export function LibrarySearchDialog({ locale }: { locale: Locale }) {
         <kbd>⌘K</kbd>
       </button>
 
-      {open ? (
+      {open && typeof document !== "undefined" ? createPortal(
         <div
           className="library-search-backdrop"
           onMouseDown={(event) => {
@@ -111,16 +199,18 @@ export function LibrarySearchDialog({ locale }: { locale: Locale }) {
           }}
         >
           <section
+            aria-describedby="library-search-description"
             aria-labelledby="library-search-title"
             aria-modal="true"
             className="library-search-dialog"
             id="library-search-dialog"
+            ref={dialogRef}
             role="dialog"
           >
             <header>
               <div>
                 <h2 id="library-search-title">{t.globalSearchTitle}</h2>
-                <p>{t.globalSearchDescription}</p>
+                <p id="library-search-description">{t.globalSearchDescription}</p>
               </div>
               <button aria-label={t.closeSearch} className="library-search-close" onClick={hide} type="button">
                 <X size={16} />
@@ -132,6 +222,7 @@ export function LibrarySearchDialog({ locale }: { locale: Locale }) {
                 onChange={(event) => setQuery(event.target.value)}
                 placeholder={t.globalSearchPlaceholder}
                 ref={inputRef}
+                type="search"
                 value={query}
               />
             </label>
@@ -163,7 +254,8 @@ export function LibrarySearchDialog({ locale }: { locale: Locale }) {
               )}
             </div>
           </section>
-        </div>
+        </div>,
+        document.body,
       ) : null}
     </>
   );

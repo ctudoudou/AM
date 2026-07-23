@@ -535,6 +535,7 @@ export const zhHans = {
   rewatch: "重新播放",
   backToLibrary: "返回动漫库",
   backToMovies: "返回电影库",
+  backToTv: "返回电视剧库",
   playbackLoadError: "无法加载播放信息。",
   transcodeStartError: "无法开始准备 HLS 播放。",
   transcodePreparing: "正在准备播放...",

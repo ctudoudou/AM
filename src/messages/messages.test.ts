@@ -21,4 +21,12 @@ describe("messages", () => {
     expect(zhHant.animeLibrary).toBe("動漫庫");
     expect(zhHant.noSubtitleTracks).toContain("還沒有字幕");
   });
+
+  it("uses media-specific back labels on detail pages", () => {
+    expect(en.backToLibrary).toBe("Back to library");
+    expect(en.backToMovies).toBe("Back to movies");
+    expect(en.backToTv).toBe("Back to TV");
+    expect(zhHans.backToTv).toBe("返回电视剧库");
+    expect(zhHant.backToTv).toBe("返回電視劇庫");
+  });
 });
