@@ -1,6 +1,7 @@
 import { createReadStream } from "node:fs";
 import fs from "node:fs/promises";
 import path from "node:path";
+import { randomUUID } from "node:crypto";
 import { execFile } from "node:child_process";
 import { Readable } from "node:stream";
 import { promisify } from "node:util";
@@ -15,14 +16,17 @@ import { getAppSettings } from "@/lib/settings";
 
 const execFileAsync = promisify(execFile);
 const subtitleExtensions = new Set([".vtt", ".srt", ".ass", ".ssa"]);
-const playableSubtitleFormats = new Set(["vtt", "srt", "ass", "ssa"]);
+const playableSubtitleFormats = new Set(["vtt", "ass", "ssa"]);
+const translatableSubtitleFormats = new Set(["vtt", "srt", "ass", "ssa"]);
 const subtitleContentTypes = new Map([
   ["vtt", "text/vtt; charset=utf-8"],
   ["srt", "application/x-subrip; charset=utf-8"],
   ["ass", "text/plain; charset=utf-8"],
   ["ssa", "text/plain; charset=utf-8"],
 ]);
-const subtitleTranslationBatchSize = 40;
+const subtitleTranslationBatchMaxCues = 60;
+const subtitleTranslationBatchMaxCharacters = 6_000;
+const subtitleTranslationConcurrency = 2;
 
 export type SubtitleTrackDescriptor = {
   id: string;
@@ -33,6 +37,7 @@ export type SubtitleTrackDescriptor = {
   sourceName: string | null;
   isDefault: boolean;
   canPlay: boolean;
+  canTranslate: boolean;
   url: string;
 };
 
@@ -238,15 +243,26 @@ export async function translateSubtitleTrack(
   if (!track.mediaFileId || !track.sourcePath) {
     throw new Error("Subtitle track has no local source file.");
   }
-  if (track.format.toLowerCase() !== "vtt") {
-    throw new Error("Subtitle translation currently requires a WebVTT subtitle track.");
+  const sourceFormat = track.format.toLowerCase();
+  if (!translatableSubtitleFormats.has(sourceFormat)) {
+    throw new Error("Selected subtitle format cannot be translated.");
   }
   if (track.language === targetLanguage || track.language === "zh") {
     throw new Error("Selected subtitle track is already Chinese.");
   }
 
   const sourcePath = assertInsideRoots(track.sourcePath, allowedSubtitleRoots(settings.directories));
-  const source = await fs.readFile(sourcePath, "utf8");
+  const outputDir = assertInsideRoots(
+    path.join(settings.directories.metadataDir, "subtitles", track.mediaFileId),
+    [path.resolve(settings.directories.metadataDir)],
+  );
+  await fs.mkdir(outputDir, { recursive: true });
+  const source = await readSubtitleAsWebVtt({
+    sourcePath,
+    sourceFormat,
+    outputDir,
+    trackId: track.id,
+  });
   const parsed = parseWebVtt(source);
   const translatableCues = parsed.cues
     .map((cue, index) => ({ index, text: cue.text.trim() }))
@@ -255,18 +271,25 @@ export async function translateSubtitleTrack(
     throw new Error("Subtitle track has no translatable cues.");
   }
 
+  const batches = buildSubtitleTranslationBatches(translatableCues);
   const translated = new Map<number, string>();
-  for (let offset = 0; offset < translatableCues.length; offset += subtitleTranslationBatchSize) {
-    const batch = translatableCues.slice(offset, offset + subtitleTranslationBatchSize);
-    const translatedBatch = await translateSubtitleCuesWithOpenRouter({
-      targetLanguage,
-      cues: batch,
-      context: {
-        title: track.mediaFile?.episode?.season.media.primaryTitle ?? null,
-        sourceLanguage: track.language,
-      },
-    });
-    validateTranslatedCueBatch(batch, translatedBatch);
+  const translatedBatches = await mapWithConcurrency(
+    batches,
+    subtitleTranslationConcurrency,
+    async (batch) => {
+      const translatedBatch = await translateSubtitleCuesWithOpenRouter({
+        targetLanguage,
+        cues: batch,
+        context: {
+          title: track.mediaFile?.episode?.season.media.primaryTitle ?? null,
+          sourceLanguage: track.language,
+        },
+      });
+      validateTranslatedCueBatch(batch, translatedBatch);
+      return translatedBatch;
+    },
+  );
+  for (const translatedBatch of translatedBatches) {
     for (const cue of translatedBatch) {
       translated.set(cue.index, cue.text.trim());
     }
@@ -278,16 +301,11 @@ export async function translateSubtitleTrack(
       text: translated.get(index) ?? cue.text,
     })),
   });
-  const outputDir = assertInsideRoots(
-    path.join(settings.directories.metadataDir, "subtitles", track.mediaFileId),
-    [path.resolve(settings.directories.metadataDir)],
-  );
-  await fs.mkdir(outputDir, { recursive: true });
   const outputPath = assertInsideRoots(
     path.join(outputDir, `translated-${targetLanguage}-from-${track.id}.vtt`),
     [path.resolve(settings.directories.metadataDir)],
   );
-  await fs.writeFile(outputPath, output);
+  await writeFileAtomically(outputPath, output);
 
   const translatedTrack = await prisma.subtitleTrack.upsert({
     where: {
@@ -430,8 +448,40 @@ type WebVttCue = {
   text: string;
 };
 
+export function buildSubtitleTranslationBatches(
+  cues: Array<{ index: number; text: string }>,
+  options?: { maxCues?: number; maxCharacters?: number },
+) {
+  const maxCues = options?.maxCues ?? subtitleTranslationBatchMaxCues;
+  const maxCharacters = options?.maxCharacters ?? subtitleTranslationBatchMaxCharacters;
+  const batches: Array<Array<{ index: number; text: string }>> = [];
+  let current: Array<{ index: number; text: string }> = [];
+  let currentCharacters = 0;
+
+  for (const cue of cues) {
+    const cueCharacters = cue.text.length;
+    if (
+      current.length > 0 &&
+      (current.length >= maxCues || currentCharacters + cueCharacters > maxCharacters)
+    ) {
+      batches.push(current);
+      current = [];
+      currentCharacters = 0;
+    }
+    current.push(cue);
+    currentCharacters += cueCharacters;
+  }
+  if (current.length > 0) {
+    batches.push(current);
+  }
+  return batches;
+}
+
 export function parseWebVtt(source: string) {
-  const normalized = source.replace(/\r\n/g, "\n").replace(/\r/g, "\n");
+  const normalized = source
+    .replace(/^\uFEFF/, "")
+    .replace(/\r\n/g, "\n")
+    .replace(/\r/g, "\n");
   const blocks = normalized
     .split(/\n{2,}/)
     .map((block) => block.trim())
@@ -475,7 +525,7 @@ export function formatWebVtt(input: { cues: WebVttCue[] }) {
   ].join("\n");
 }
 
-function validateTranslatedCueBatch(
+export function validateTranslatedCueBatch(
   source: Array<{ index: number; text: string }>,
   translated: Array<{ index: number; text: string }>,
 ) {
@@ -483,14 +533,126 @@ function validateTranslatedCueBatch(
     throw new Error("Subtitle translation returned the wrong number of cues.");
   }
   const sourceIndexes = new Set(source.map((cue) => cue.index));
+  const translatedIndexes = new Set<number>();
   for (const cue of translated) {
     if (!sourceIndexes.has(cue.index)) {
       throw new Error("Subtitle translation returned an unexpected cue index.");
     }
+    if (translatedIndexes.has(cue.index)) {
+      throw new Error("Subtitle translation returned a duplicate cue index.");
+    }
+    translatedIndexes.add(cue.index);
     if (!cue.text.trim()) {
       throw new Error("Subtitle translation returned an empty cue.");
     }
   }
+  if (translatedIndexes.size !== sourceIndexes.size) {
+    throw new Error("Subtitle translation omitted one or more cues.");
+  }
+}
+
+async function readSubtitleAsWebVtt(input: {
+  sourcePath: string;
+  sourceFormat: string;
+  outputDir: string;
+  trackId: string;
+}) {
+  if (input.sourceFormat === "vtt") {
+    return fs.readFile(input.sourcePath, "utf8");
+  }
+
+  const normalizedPath = assertInsideRoots(
+    path.join(input.outputDir, `translation-source-${input.trackId}.vtt`),
+    [path.resolve(input.outputDir)],
+  );
+  const sourceStat = await fs.stat(input.sourcePath);
+  const normalizedStat = await fs.stat(normalizedPath).catch(() => null);
+  if (normalizedStat?.isFile() && normalizedStat.size > 0 && normalizedStat.mtimeMs >= sourceStat.mtimeMs) {
+    return fs.readFile(normalizedPath, "utf8");
+  }
+
+  const temporaryPath = temporarySiblingPath(normalizedPath);
+  await fs.rm(temporaryPath, { force: true }).catch(() => undefined);
+  try {
+    await execFileAsync("ffmpeg", [
+      "-hide_banner",
+      "-y",
+      "-nostdin",
+      "-i",
+      input.sourcePath,
+      "-map",
+      "0:0",
+      "-c:s",
+      "webvtt",
+      temporaryPath,
+    ]);
+    const stat = await fs.stat(temporaryPath);
+    if (!stat.isFile() || stat.size === 0) {
+      throw new Error("FFmpeg produced an empty WebVTT subtitle.");
+    }
+    await replaceFile(temporaryPath, normalizedPath);
+    return fs.readFile(normalizedPath, "utf8");
+  } catch (error) {
+    await fs.rm(temporaryPath, { force: true }).catch(() => undefined);
+    throw new Error(
+      `Unable to convert ${input.sourceFormat.toUpperCase()} subtitles to WebVTT: ${
+        error instanceof Error ? error.message : "FFmpeg failed"
+      }`,
+    );
+  }
+}
+
+async function writeFileAtomically(targetPath: string, content: string) {
+  const temporaryPath = temporarySiblingPath(targetPath);
+  try {
+    await fs.writeFile(temporaryPath, content, "utf8");
+    await replaceFile(temporaryPath, targetPath);
+  } catch (error) {
+    await fs.rm(temporaryPath, { force: true }).catch(() => undefined);
+    throw error;
+  }
+}
+
+async function replaceFile(sourcePath: string, targetPath: string) {
+  try {
+    await fs.rename(sourcePath, targetPath);
+  } catch (error) {
+    const code = error instanceof Error && "code" in error ? error.code : null;
+    if (code !== "EEXIST" && code !== "EPERM") {
+      throw error;
+    }
+    await fs.rm(targetPath, { force: true });
+    await fs.rename(sourcePath, targetPath);
+  }
+}
+
+function temporarySiblingPath(targetPath: string) {
+  const extension = path.extname(targetPath);
+  return path.join(
+    path.dirname(targetPath),
+    `.${path.basename(targetPath, extension)}.tmp-${process.pid}-${randomUUID()}${extension}`,
+  );
+}
+
+async function mapWithConcurrency<T, TResult>(
+  items: T[],
+  concurrency: number,
+  mapper: (item: T, index: number) => Promise<TResult>,
+) {
+  const results = new Array<TResult>(items.length);
+  let nextIndex = 0;
+  const workers = Array.from(
+    { length: Math.min(Math.max(1, concurrency), items.length) },
+    async () => {
+      while (nextIndex < items.length) {
+        const index = nextIndex;
+        nextIndex += 1;
+        results[index] = await mapper(items[index], index);
+      }
+    },
+  );
+  await Promise.all(workers);
+  return results;
 }
 
 async function probeEmbeddedSubtitleStreams(mediaPath: string) {
@@ -621,6 +783,7 @@ function toSubtitleTrackDescriptor(track: {
     sourceName: track.sourceName,
     isDefault: track.isDefault,
     canPlay: playableSubtitleFormats.has(format),
+    canTranslate: translatableSubtitleFormats.has(format),
     url: `/api/subtitles/${track.id}/file`,
   } satisfies SubtitleTrackDescriptor;
 }

@@ -57,6 +57,8 @@ services:
       TV_LIBRARY_DIR: /data/library/tv
       METADATA_DIR: /data/metadata
       TRANSCODES_DIR: /data/transcodes
+      FFMPEG_HWACCEL: ${FFMPEG_HWACCEL:-auto}
+      FFMPEG_VAAPI_DEVICE: ${FFMPEG_VAAPI_DEVICE:-/dev/dri/renderD128}
       ARIA2_RPC_URL: http://aria2:6800/jsonrpc
       ARIA2_RPC_SECRET: ${ARIA2_RPC_SECRET:-change-me}
       OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
