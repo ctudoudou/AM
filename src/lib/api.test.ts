@@ -1,6 +1,66 @@
 import { Prisma } from "@prisma/client";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { jsonError } from "./api";
+import {
+  assertTrustedMutationOrigin,
+  jsonError,
+  UntrustedMutationOriginError,
+} from "./api";
+
+describe("assertTrustedMutationOrigin", () => {
+  it("accepts a direct same-origin mutation", () => {
+    const request = new Request("http://192.168.8.7:3023/api/organizer/plans/plan/execute", {
+      method: "POST",
+      headers: {
+        Host: "192.168.8.7:3023",
+        Origin: "http://192.168.8.7:3023",
+      },
+    });
+
+    expect(() => assertTrustedMutationOrigin(request)).not.toThrow();
+  });
+
+  it("accepts the public Host when Next.js sees an internal container URL", () => {
+    const request = new Request("http://0.0.0.0:3000/api/organizer/plans/plan/execute", {
+      method: "POST",
+      headers: {
+        Host: "192.168.8.7:3023",
+        Origin: "http://192.168.8.7:3023",
+      },
+    });
+
+    expect(() => assertTrustedMutationOrigin(request)).not.toThrow();
+  });
+
+  it("accepts a same-origin mutation forwarded through a TLS proxy", () => {
+    const request = new Request("http://kura-web:3000/api/organizer/plans/plan/execute", {
+      method: "POST",
+      headers: {
+        Host: "kura-web:3000",
+        Origin: "https://kura.example",
+        "X-Forwarded-Host": "kura.example",
+        "X-Forwarded-Proto": "https",
+      },
+    });
+
+    expect(() => assertTrustedMutationOrigin(request)).not.toThrow();
+  });
+
+  it("continues to reject a cross-origin mutation", () => {
+    const request = new Request("http://kura-web:3000/api/organizer/plans/plan/execute", {
+      method: "POST",
+      headers: {
+        Host: "192.168.8.7:3023",
+        Origin: "https://malicious.example",
+        "X-Forwarded-Host": "192.168.8.7:3023",
+        "X-Forwarded-Proto": "http",
+      },
+    });
+
+    expect(() => assertTrustedMutationOrigin(request)).toThrow(
+      UntrustedMutationOriginError,
+    );
+  });
+});
 
 describe("jsonError", () => {
   afterEach(() => {

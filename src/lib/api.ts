@@ -5,13 +5,60 @@ import { ZodError } from "zod";
 export class UntrustedMutationOriginError extends Error {}
 
 export function assertTrustedMutationOrigin(request: Request) {
-  const origin = request.headers.get("origin");
-  if (!origin) {
+  const originHeader = request.headers.get("origin");
+  if (!originHeader) {
     return;
   }
-  const expectedOrigin = new URL(request.url).origin;
-  if (origin !== expectedOrigin) {
+  const origin = normalizeHttpOrigin(originHeader);
+  if (!origin || !trustedRequestOrigins(request).has(origin)) {
     throw new UntrustedMutationOriginError("Cross-origin mutation requests are not allowed.");
+  }
+}
+
+function trustedRequestOrigins(request: Request) {
+  const requestUrl = new URL(request.url);
+  const origins = new Set([requestUrl.origin]);
+  const forwardedProtocol =
+    normalizeForwardedProtocol(firstForwardedValue(request.headers.get("x-forwarded-proto"))) ??
+    requestUrl.protocol;
+  const host = firstForwardedValue(request.headers.get("host"));
+  const forwardedHost = firstForwardedValue(request.headers.get("x-forwarded-host"));
+
+  for (const authority of [host, forwardedHost]) {
+    const origin = originFromAuthority(forwardedProtocol, authority);
+    if (origin) {
+      origins.add(origin);
+    }
+  }
+  return origins;
+}
+
+function firstForwardedValue(value: string | null) {
+  return value?.split(",", 1)[0]?.trim() || null;
+}
+
+function normalizeForwardedProtocol(value: string | null) {
+  const protocol = value?.toLowerCase().replace(/:$/, "");
+  return protocol === "http" || protocol === "https" ? `${protocol}:` : null;
+}
+
+function originFromAuthority(protocol: string, authority: string | null) {
+  if (!authority || !["http:", "https:"].includes(protocol)) {
+    return null;
+  }
+  try {
+    return new URL(`${protocol}//${authority}`).origin;
+  } catch {
+    return null;
+  }
+}
+
+function normalizeHttpOrigin(value: string) {
+  try {
+    const origin = new URL(value);
+    return ["http:", "https:"].includes(origin.protocol) ? origin.origin : null;
+  } catch {
+    return null;
   }
 }
 
