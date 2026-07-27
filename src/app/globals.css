@@ -918,6 +918,10 @@ a {
   animation: spin 0.9s linear infinite;
 }
 
+.lucide-loader-circle {
+  animation: spin 0.9s linear infinite;
+}
+
 @keyframes spin {
   to {
     transform: rotate(360deg);
@@ -2888,6 +2892,7 @@ a {
   display: flex;
   min-height: 28px;
   align-items: center;
+  gap: 8px;
   color: var(--text-muted);
   font-size: 12px;
 }
@@ -3159,6 +3164,198 @@ a {
 .organizer-paths em {
   color: rgba(254, 202, 202, 0.95);
   font-style: normal;
+}
+
+.organizer-confirm-dialog {
+  width: min(860px, 100%);
+}
+
+.organizer-confirm-warning {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  margin-top: 16px;
+  border: 1px solid rgba(248, 113, 113, 0.2);
+  border-radius: 12px;
+  background: rgba(248, 113, 113, 0.07);
+  color: rgba(254, 202, 202, 0.94);
+  padding: 12px;
+}
+
+.organizer-confirm-warning svg {
+  flex: 0 0 auto;
+  margin-top: 1px;
+}
+
+.organizer-confirm-warning strong,
+.organizer-confirm-warning span {
+  display: block;
+}
+
+.organizer-confirm-warning strong {
+  font-size: 13px;
+  line-height: 18px;
+}
+
+.organizer-confirm-warning span {
+  margin-top: 2px;
+  color: rgba(254, 202, 202, 0.72);
+  font-size: 12px;
+  line-height: 18px;
+}
+
+.organizer-confirm-paths {
+  display: flex;
+  max-height: 280px;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 14px;
+  overflow: auto;
+}
+
+.organizer-confirm-paths > div {
+  display: grid;
+  grid-template-columns: 72px minmax(0, 1fr);
+  gap: 6px 10px;
+  border: 1px solid rgba(255, 255, 255, 0.055);
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.025);
+  padding: 10px;
+}
+
+.organizer-confirm-paths span {
+  color: var(--text-faint);
+  font-size: 11px;
+  line-height: 17px;
+}
+
+.organizer-confirm-paths code,
+.organizer-confirm-paths strong {
+  min-width: 0;
+  color: rgba(255, 255, 255, 0.74);
+  font-family: var(--font-geist-mono), ui-monospace, monospace;
+  font-size: 11px;
+  font-weight: 500;
+  line-height: 17px;
+  overflow-wrap: anywhere;
+}
+
+.settings-panel .organizer-confirm-check {
+  display: flex;
+  flex-direction: row;
+  align-items: flex-start;
+  gap: 10px;
+  margin-top: 14px;
+  border: 1px solid rgba(255, 255, 255, 0.07);
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.03);
+  color: var(--text-muted);
+  padding: 11px 12px;
+  font-size: 12px;
+  line-height: 18px;
+  cursor: pointer;
+}
+
+.settings-panel .organizer-confirm-check input {
+  width: 16px;
+  height: 16px;
+  min-width: 16px;
+  flex: 0 0 auto;
+  margin: 1px 0 0;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  padding: 0;
+  accent-color: #ef4444;
+}
+
+.organizer-dialog-alert {
+  margin-top: 12px;
+}
+
+.organizer-repair-list {
+  display: flex;
+  max-height: 400px;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 14px;
+  overflow: auto;
+}
+
+.organizer-repair-list > p {
+  margin: 0;
+  border: 1px solid rgba(255, 255, 255, 0.055);
+  border-radius: 12px;
+  color: var(--text-muted);
+  padding: 16px;
+  font-size: 12px;
+}
+
+.settings-panel .organizer-repair-list label {
+  display: grid;
+  flex-direction: initial;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: start;
+  gap: 10px;
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.026);
+  padding: 11px;
+  cursor: pointer;
+}
+
+.settings-panel .organizer-repair-list label.disabled {
+  opacity: 0.58;
+  cursor: default;
+}
+
+.settings-panel .organizer-repair-list input {
+  width: 16px;
+  height: 16px;
+  min-width: 16px;
+  margin: 2px 0 0;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  padding: 0;
+  accent-color: #10b981;
+}
+
+.organizer-repair-list strong,
+.organizer-repair-list span,
+.organizer-repair-list p {
+  display: block;
+}
+
+.organizer-repair-list strong {
+  color: var(--text-primary);
+  font-size: 12px;
+  line-height: 18px;
+}
+
+.organizer-repair-list span {
+  margin-top: 2px;
+  color: rgba(167, 243, 208, 0.86);
+  font-size: 11px;
+  line-height: 16px;
+}
+
+.organizer-repair-list p {
+  margin: 3px 0 0;
+  color: var(--text-faint);
+  font-size: 11px;
+  line-height: 17px;
+}
+
+.organizer-repair-list em {
+  border: 1px solid rgba(255, 255, 255, 0.07);
+  border-radius: 999px;
+  color: var(--text-muted);
+  padding: 3px 8px;
+  font-size: 10px;
+  font-style: normal;
+  line-height: 15px;
+  white-space: nowrap;
 }
 
 .library-workspace {
@@ -5531,6 +5728,19 @@ a {
 
   .organizer-filter-groups {
     grid-template-columns: 1fr;
+  }
+
+  .organizer-confirm-paths > div {
+    grid-template-columns: 1fr;
+  }
+
+  .settings-panel .organizer-repair-list label {
+    grid-template-columns: auto minmax(0, 1fr);
+  }
+
+  .organizer-repair-list em {
+    grid-column: 2;
+    justify-self: start;
   }
 
   .filter-tabs {
