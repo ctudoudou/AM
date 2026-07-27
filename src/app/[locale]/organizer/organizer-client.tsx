@@ -1,7 +1,8 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
+  AlertTriangle,
   Check,
   CheckCheck,
   FolderSearch,
@@ -13,6 +14,11 @@ import {
 } from "lucide-react";
 import { getMessages } from "@/messages";
 import type { Locale } from "@/lib/i18n";
+import {
+  ORGANIZER_PLAN_EXECUTION_CONFIRMATION,
+  ORGANIZER_REPAIR_CONFIRMATION,
+} from "@/lib/organizer-confirmations";
+import type { OrganizerRepairPlan } from "@/lib/organizer-repair";
 
 type OrganizerPlan = {
   id: string;
@@ -85,6 +91,8 @@ type OrganizerPage = {
   hasPrevious: boolean;
 };
 
+type PlanAction = "execute" | "reject" | "regenerate";
+
 export function OrganizerClient({ locale }: { locale: Locale }) {
   const t = getMessages(locale);
   const [plans, setPlans] = useState<OrganizerPlan[]>([]);
@@ -101,25 +109,38 @@ export function OrganizerClient({ locale }: { locale: Locale }) {
   });
   const [importDraft, setImportDraft] = useState({ root: "", mediaType: "AUTO" });
   const [importing, setImporting] = useState(false);
+  const [inspecting, setInspecting] = useState(false);
   const [reviewing, setReviewing] = useState(false);
   const [autoExecuting, setAutoExecuting] = useState(false);
-  const [repairing, setRepairing] = useState(false);
-  const [regeneratingId, setRegeneratingId] = useState<string | null>(null);
+  const [repairLoading, setRepairLoading] = useState(false);
+  const [repairExecuting, setRepairExecuting] = useState(false);
+  const [repairPlan, setRepairPlan] = useState<OrganizerRepairPlan | null>(null);
+  const [repairSelection, setRepairSelection] = useState<string[]>([]);
+  const [pendingExecution, setPendingExecution] = useState<OrganizerPlan | null>(null);
+  const [executionAcknowledged, setExecutionAcknowledged] = useState(false);
+  const [planAction, setPlanAction] = useState<{ id: string; action: PlanAction } | null>(null);
   const [status, setStatus] = useState("");
   const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState("");
+  const loadRequestId = useRef(0);
 
   const load = useCallback(async () => {
+    const requestId = ++loadRequestId.current;
+    setRefreshing(true);
     try {
-      const response = await fetch(`/api/organizer/plans?${organizerPlanParams(filter, planPage)}`);
-      if (!response.ok) {
-        throw new Error(t.organizerLoadError);
-      }
-      const body = (await response.json()) as {
+      const body = await requestJson<{
         plans: OrganizerPlan[];
         stats?: OrganizerStats;
         page?: OrganizerPage;
-      };
+      }>(
+        `/api/organizer/plans?${organizerPlanParams(filter, planPage)}`,
+        undefined,
+        t.organizerLoadError,
+      );
+      if (requestId !== loadRequestId.current) {
+        return;
+      }
       if (body.page && body.page.page > body.page.totalPages) {
         setPlanPage(body.page.totalPages);
         return;
@@ -138,23 +159,32 @@ export function OrganizerClient({ locale }: { locale: Locale }) {
       );
       setError("");
     } catch (loadError) {
-      setError(loadError instanceof Error ? loadError.message : t.organizerLoadError);
+      if (requestId === loadRequestId.current) {
+        setError(loadError instanceof Error ? loadError.message : t.organizerLoadError);
+      }
     } finally {
-      setLoading(false);
+      if (requestId === loadRequestId.current) {
+        setLoading(false);
+        setRefreshing(false);
+      }
     }
   }, [filter, planPage, t.organizerLoadError]);
 
   const loadImportRoot = useCallback(async () => {
-    const response = await fetch("/api/settings");
-    if (!response.ok) {
-      return;
+    try {
+      const body = await requestJson<OrganizerSettings>(
+        "/api/settings",
+        undefined,
+        t.organizerLoadError,
+      );
+      setImportDraft((current) => ({
+        ...current,
+        root: current.root.trim() ? current.root : body.directories.importRoot,
+      }));
+    } catch {
+      // The configured import path is optional context; the organizer list can still be used.
     }
-    const body = (await response.json()) as OrganizerSettings;
-    setImportDraft((current) => ({
-      ...current,
-      root: current.root.trim() ? current.root : body.directories.importRoot,
-    }));
-  }, []);
+  }, [t.organizerLoadError]);
 
   useEffect(() => {
     const timeout = window.setTimeout(() => {
@@ -170,170 +200,267 @@ export function OrganizerClient({ locale }: { locale: Locale }) {
     return () => window.clearTimeout(timeout);
   }, [loadImportRoot]);
 
-  async function runInspect() {
-    setStatus("");
-    const response = await fetch("/api/jobs/run", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ job: "organizer.inspectCompletedDownloads" }),
-    });
-    if (!response.ok) {
-      const body = await response.json().catch(() => null);
-      setError(body?.message || t.organizerLoadError);
+  useEffect(() => {
+    if (!pendingExecution && !repairPlan) {
       return;
     }
-    await load();
+    function closeDialog(event: KeyboardEvent) {
+      if (event.key !== "Escape" || planAction || repairExecuting) {
+        return;
+      }
+      setPendingExecution(null);
+      setExecutionAcknowledged(false);
+      setRepairPlan(null);
+      setRepairSelection([]);
+    }
+    window.addEventListener("keydown", closeDialog);
+    return () => window.removeEventListener("keydown", closeDialog);
+  }, [pendingExecution, planAction, repairExecuting, repairPlan]);
+
+  async function runInspect() {
+    setInspecting(true);
+    setStatus("");
+    setError("");
+    try {
+      await requestJson(
+        "/api/jobs/run",
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ job: "organizer.inspectCompletedDownloads" }),
+        },
+        t.organizerLoadError,
+      );
+      setStatus(t.inspectCompletedDone);
+      await load();
+    } catch (inspectError) {
+      setError(errorMessage(inspectError, t.organizerLoadError));
+    } finally {
+      setInspecting(false);
+    }
   }
 
   async function runAiReview() {
     setReviewing(true);
     setStatus("");
     setError("");
-    const response = await fetch("/api/jobs/run", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ job: "organizer.aiReviewPlans" }),
-    });
-    setReviewing(false);
-    if (!response.ok) {
-      const body = await response.json().catch(() => null);
-      setError(body?.message || t.aiReviewPlansError);
-      return;
+    try {
+      const body = await requestJson<{
+        result?: { reviewed?: number; filteredItems?: number; flagged?: number; skipped?: number };
+      }>(
+        "/api/jobs/run",
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ job: "organizer.aiReviewPlans" }),
+        },
+        t.aiReviewPlansError,
+      );
+      setStatus(
+        `${t.aiReviewPlansDone} ${t.organizerReviewed}: ${body.result?.reviewed ?? 0}, ${t.organizerFiltered}: ${body.result?.filteredItems ?? 0}, ${t.organizerFlagged}: ${body.result?.flagged ?? 0}, ${t.organizerSkipped}: ${body.result?.skipped ?? 0}.`,
+      );
+      await load();
+    } catch (reviewError) {
+      setError(errorMessage(reviewError, t.aiReviewPlansError));
+    } finally {
+      setReviewing(false);
     }
-    const body = (await response.json()) as {
-      result?: { reviewed?: number; filteredItems?: number; flagged?: number; skipped?: number };
-    };
-    setStatus(
-      `${t.aiReviewPlansDone} reviewed: ${body.result?.reviewed ?? 0}, filtered: ${body.result?.filteredItems ?? 0}, flagged: ${body.result?.flagged ?? 0}, skipped: ${body.result?.skipped ?? 0}.`,
-    );
-    await load();
   }
 
   async function runAutoExecute() {
     setAutoExecuting(true);
     setStatus("");
     setError("");
-    const response = await fetch("/api/jobs/run", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ job: "organizer.autoExecuteReadyPlans" }),
-    });
-    setAutoExecuting(false);
-    if (!response.ok) {
-      const body = await response.json().catch(() => null);
-      setError(body?.message || t.autoExecuteOrganizerPlansError);
-      return;
+    try {
+      const body = await requestJson<{
+        result?: { inspected?: number; executed?: number; skipped?: number; failed?: number };
+      }>(
+        "/api/jobs/run",
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ job: "organizer.autoExecuteReadyPlans" }),
+        },
+        t.autoExecuteOrganizerPlansError,
+      );
+      setStatus(
+        `${t.autoExecuteOrganizerPlansDone} ${t.organizerInspected}: ${body.result?.inspected ?? 0}, ${t.organizerExecuted}: ${body.result?.executed ?? 0}, ${t.organizerSkipped}: ${body.result?.skipped ?? 0}, ${t.organizerFailed}: ${body.result?.failed ?? 0}.`,
+      );
+      await load();
+    } catch (executeError) {
+      setError(errorMessage(executeError, t.autoExecuteOrganizerPlansError));
+    } finally {
+      setAutoExecuting(false);
     }
-    const body = (await response.json()) as {
-      result?: { inspected?: number; executed?: number; skipped?: number; failed?: number };
-    };
-    setStatus(
-      `${t.autoExecuteOrganizerPlansDone} inspected: ${body.result?.inspected ?? 0}, executed: ${body.result?.executed ?? 0}, skipped: ${body.result?.skipped ?? 0}, failed: ${body.result?.failed ?? 0}.`,
-    );
-    await load();
   }
 
-  async function runRepairPipeline() {
-    setRepairing(true);
+  async function openRepairPlan() {
+    setRepairLoading(true);
     setStatus("");
     setError("");
-    const jobs = [
-      "organizer.cleanupPollutedPlans",
-      "organizer.cleanupStalePlans",
-      "downloads.syncAria2",
-      "organizer.inspectCompletedDownloads",
-      "organizer.aiReviewPlans",
-      "library.mergeDuplicateAnimeTitles",
-      "library.mergeDuplicateTvTitles",
-      "library.repairEpisodeNumbering",
-    ];
-    const results: Array<{ job: string; result: Record<string, unknown> }> = [];
-
-    for (const job of jobs) {
-      const response = await fetch("/api/jobs/run", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ job }),
-      });
-      if (!response.ok) {
-        const body = await response.json().catch(() => null);
-        setRepairing(false);
-        setError(body?.message || t.repairOrganizerPipelineError);
-        return;
-      }
-      const body = (await response.json()) as { result?: Record<string, unknown> };
-      results.push({ job, result: body.result ?? {} });
+    try {
+      const plan = await requestJson<OrganizerRepairPlan>(
+        "/api/organizer/repair",
+        undefined,
+        t.repairOrganizerPipelineError,
+      );
+      setRepairPlan(plan);
+      setRepairSelection(
+        plan.items
+          .filter((item) => item.executable && item.confidence === "high")
+          .map((item) => item.actionId),
+      );
+    } catch (repairError) {
+      setError(errorMessage(repairError, t.repairOrganizerPipelineError));
+    } finally {
+      setRepairLoading(false);
     }
+  }
 
-    setRepairing(false);
-    setStatus(formatRepairSummary(t, results));
-    await load();
+  async function executeRepairPlan() {
+    if (!repairPlan || repairSelection.length === 0) {
+      return;
+    }
+    setRepairExecuting(true);
+    setStatus("");
+    setError("");
+    try {
+      const body = await requestJson<{
+        succeeded: number;
+        failed: number;
+      }>(
+        "/api/organizer/repair",
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            planId: repairPlan.planId,
+            actionIds: repairSelection,
+            confirmation: ORGANIZER_REPAIR_CONFIRMATION,
+          }),
+        },
+        t.repairOrganizerPipelineError,
+      );
+      setStatus(
+        `${t.repairOrganizerPipelineDone} ${t.organizerSucceeded}: ${body.succeeded}, ${t.organizerFailed}: ${body.failed}.`,
+      );
+      setRepairPlan(null);
+      setRepairSelection([]);
+      await load();
+    } catch (repairError) {
+      setError(errorMessage(repairError, t.repairOrganizerPipelineError));
+    } finally {
+      setRepairExecuting(false);
+    }
   }
 
   async function runImportScan() {
     setImporting(true);
     setError("");
     setStatus("");
-    const response = await fetch("/api/organizer/import-scan", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(importDraft),
-    });
-    setImporting(false);
-    if (!response.ok) {
-      const body = await response.json().catch(() => null);
-      setError(body?.message || t.importScanError);
-      return;
+    try {
+      const body = await requestJson<{
+        planned: number;
+        skipped: number;
+        lowConfidence: number;
+      }>(
+        "/api/organizer/import-scan",
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(importDraft),
+        },
+        t.importScanError,
+      );
+      setStatus(
+        `${t.importScanCreated} ${t.importScanPlanned}: ${body.planned}, ${t.importScanSkipped}: ${body.skipped}, ${t.importScanReview}: ${body.lowConfidence}.`,
+      );
+      await load();
+    } catch (importError) {
+      setError(errorMessage(importError, t.importScanError));
+    } finally {
+      setImporting(false);
     }
-    const body = (await response.json()) as { planned: number; skipped: number; lowConfidence: number };
-    setStatus(
-      `${t.importScanCreated} ${t.importScanPlanned}: ${body.planned}, ${t.importScanSkipped}: ${body.skipped}, ${t.importScanReview}: ${body.lowConfidence}.`,
-    );
-    await load();
   }
 
-  async function execute(plan: OrganizerPlan) {
+  function requestExecution(plan: OrganizerPlan) {
     if (!canExecutePlan(plan)) {
       setError(t.organizerExecuteError);
       return;
     }
-    const response = await fetch(`/api/organizer/plans/${plan.id}/execute`, {
-      method: "POST",
-    });
-    if (!response.ok) {
-      const body = await response.json().catch(() => null);
-      setError(body?.message || t.organizerExecuteError);
+    setStatus("");
+    setError("");
+    setExecutionAcknowledged(false);
+    setPendingExecution(plan);
+  }
+
+  async function execute(plan: OrganizerPlan) {
+    if (!canExecutePlan(plan) || !executionAcknowledged) {
+      setError(t.organizerExecutionAcknowledgeRequired);
       return;
     }
-    await load();
+    setPlanAction({ id: plan.id, action: "execute" });
+    setStatus("");
+    setError("");
+    try {
+      await requestJson(
+        `/api/organizer/plans/${plan.id}/execute`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            confirmation: ORGANIZER_PLAN_EXECUTION_CONFIRMATION,
+          }),
+        },
+        t.organizerExecuteError,
+      );
+      setPendingExecution(null);
+      setExecutionAcknowledged(false);
+      setStatus(t.organizerExecuteDone);
+      await load();
+    } catch (executeError) {
+      setError(errorMessage(executeError, t.organizerExecuteError));
+    } finally {
+      setPlanAction(null);
+    }
   }
 
   async function reject(plan: OrganizerPlan) {
-    const response = await fetch(`/api/organizer/plans/${plan.id}/reject`, {
-      method: "POST",
-    });
-    if (!response.ok) {
-      const body = await response.json().catch(() => null);
-      setError(body?.message || t.organizerRejectError);
-      return;
+    setPlanAction({ id: plan.id, action: "reject" });
+    setStatus("");
+    setError("");
+    try {
+      await requestJson(
+        `/api/organizer/plans/${plan.id}/reject`,
+        { method: "POST" },
+        t.organizerRejectError,
+      );
+      setStatus(t.organizerRejectDone);
+      await load();
+    } catch (rejectError) {
+      setError(errorMessage(rejectError, t.organizerRejectError));
+    } finally {
+      setPlanAction(null);
     }
-    await load();
   }
 
   async function regenerate(plan: OrganizerPlan) {
-    setRegeneratingId(plan.id);
+    setPlanAction({ id: plan.id, action: "regenerate" });
     setStatus("");
     setError("");
-    const response = await fetch(`/api/organizer/plans/${plan.id}/regenerate`, {
-      method: "POST",
-    });
-    setRegeneratingId(null);
-    if (!response.ok) {
-      const body = await response.json().catch(() => null);
-      setError(body?.message || t.organizerRegenerateError);
-      return;
+    try {
+      await requestJson(
+        `/api/organizer/plans/${plan.id}/regenerate`,
+        { method: "POST" },
+        t.organizerRegenerateError,
+      );
+      setStatus(t.organizerRegenerateDone);
+      await load();
+    } catch (regenerateError) {
+      setError(errorMessage(regenerateError, t.organizerRegenerateError));
+    } finally {
+      setPlanAction(null);
     }
-    await load();
   }
 
   if (loading) {
@@ -345,32 +472,48 @@ export function OrganizerClient({ locale }: { locale: Locale }) {
     );
   }
 
+  const workflowBusy =
+    importing ||
+    inspecting ||
+    reviewing ||
+    autoExecuting ||
+    repairLoading ||
+    repairExecuting;
+  const mutationBusy = workflowBusy || planAction !== null;
+
   return (
-    <section className="settings-panel wide">
+    <section
+      aria-busy={refreshing || mutationBusy}
+      className="settings-panel wide"
+    >
       <div className="settings-panel-heading">
         <div>
           <h2>{t.organizerPlans}</h2>
           <p>{t.organizerPlansDescription}</p>
         </div>
         <div className="toolbar-actions">
-          <button disabled={repairing} onClick={() => void runRepairPipeline()} type="button">
-            {repairing ? <Loader2 size={14} /> : <ShieldCheck size={14} />}
+          <button
+            disabled={mutationBusy}
+            onClick={() => void openRepairPlan()}
+            type="button"
+          >
+            {repairLoading ? <Loader2 size={14} /> : <ShieldCheck size={14} />}
             {t.repairOrganizerPipeline}
           </button>
           <button
-            disabled={autoExecuting || (stats ? stats.autoExecutable === 0 : false)}
+            disabled={mutationBusy || (stats ? stats.autoExecutable === 0 : false)}
             onClick={() => void runAutoExecute()}
             type="button"
           >
             {autoExecuting ? <Loader2 size={14} /> : <CheckCheck size={14} />}
             {t.autoExecuteOrganizerPlans}
           </button>
-          <button disabled={reviewing} onClick={() => void runAiReview()} type="button">
+          <button disabled={mutationBusy} onClick={() => void runAiReview()} type="button">
             {reviewing ? <Loader2 size={14} /> : <WandSparkles size={14} />}
             {t.aiReviewPlans}
           </button>
-          <button onClick={runInspect} type="button">
-            <RefreshCw size={14} />
+          <button disabled={mutationBusy} onClick={() => void runInspect()} type="button">
+            {inspecting ? <Loader2 size={14} /> : <RefreshCw size={14} />}
             {t.inspectCompleted}
           </button>
         </div>
@@ -396,7 +539,11 @@ export function OrganizerClient({ locale }: { locale: Locale }) {
           <option value="MOVIE">{t.movies}</option>
           <option value="TV">{t.tv}</option>
         </select>
-        <button disabled={importing || !importDraft.root.trim()} onClick={() => void runImportScan()} type="button">
+        <button
+          disabled={mutationBusy || !importDraft.root.trim()}
+          onClick={() => void runImportScan()}
+          type="button"
+        >
           {importing ? <Loader2 size={14} /> : <FolderSearch size={14} />}
           {t.importScan}
         </button>
@@ -441,14 +588,23 @@ export function OrganizerClient({ locale }: { locale: Locale }) {
           </div>
         </div>
       </div>
-      {error ? <div className="settings-alert">{error}</div> : null}
-      {status ? <div className="settings-success">{status}</div> : null}
+      {error ? (
+        <div className="settings-alert" role="alert">
+          {error}
+        </div>
+      ) : null}
+      {status ? (
+        <div aria-live="polite" className="settings-success">
+          {status}
+        </div>
+      ) : null}
       <div className="organizer-result-summary">
         <span>
           {filter === "ALL"
             ? `${t.allOrganizerPlans}: ${pageInfo.total}`
             : `${formatOrganizerFilter(filter, t)}: ${pageInfo.total} · ${t.allOrganizerPlans}: ${stats?.all ?? "-"}`}
         </span>
+        {refreshing ? <Loader2 aria-label={t.loading} size={13} /> : null}
       </div>
       <div className="organizer-list">
         {plans.length === 0 ? (
@@ -457,11 +613,8 @@ export function OrganizerClient({ locale }: { locale: Locale }) {
           plans.map((plan) => {
             const executable = canExecutePlan(plan);
             const rejectable = canRejectPlan(plan);
-            const title =
-              plan.metadata?.title ||
-              plan.candidate?.group?.displayTitle ||
-              plan.candidate?.parsedTitle ||
-              t.unknownTitle;
+            const title = organizerPlanTitle(plan, t);
+            const activeAction = planAction?.id === plan.id ? planAction.action : null;
             return (
               <article key={plan.id}>
                 <div className="organizer-plan-heading">
@@ -489,7 +642,7 @@ export function OrganizerClient({ locale }: { locale: Locale }) {
                         ) : null}
                       </div>
                       <p>
-                        {formatMediaType(plan.mediaType, t)} · {plan.reason || "-"}
+                        {formatMediaType(plan.mediaType, t)} · {formatOrganizerReason(plan.reason, t)}
                       </p>
                       <p className="organizer-plan-hint">{organizerPlanHint(plan, t)}</p>
                     </div>
@@ -497,11 +650,11 @@ export function OrganizerClient({ locale }: { locale: Locale }) {
                   <div className="toolbar-actions">
                     {canRegeneratePlan(plan) ? (
                       <button
-                        disabled={regeneratingId === plan.id}
+                        disabled={mutationBusy}
                         onClick={() => void regenerate(plan)}
                         type="button"
                       >
-                        {regeneratingId === plan.id ? (
+                        {activeAction === "regenerate" ? (
                           <Loader2 size={14} />
                         ) : (
                           <RefreshCw size={14} />
@@ -510,19 +663,19 @@ export function OrganizerClient({ locale }: { locale: Locale }) {
                       </button>
                     ) : null}
                     <button
-                      disabled={!executable}
-                      onClick={() => void execute(plan)}
+                      disabled={!executable || mutationBusy}
+                      onClick={() => requestExecution(plan)}
                       type="button"
                     >
-                      <Check size={14} />
+                      {activeAction === "execute" ? <Loader2 size={14} /> : <Check size={14} />}
                       {t.execute}
                     </button>
                     <button
-                      disabled={!rejectable}
+                      disabled={!rejectable || mutationBusy}
                       onClick={() => void reject(plan)}
                       type="button"
                     >
-                      <X size={14} />
+                      {activeAction === "reject" ? <Loader2 size={14} /> : <X size={14} />}
                       {t.reject}
                     </button>
                   </div>
@@ -565,12 +718,252 @@ export function OrganizerClient({ locale }: { locale: Locale }) {
           </div>
         </div>
       ) : null}
+      {pendingExecution ? (
+        <div
+          className="strategy-dialog-backdrop"
+          onMouseDown={() => {
+            if (!planAction) {
+              setPendingExecution(null);
+              setExecutionAcknowledged(false);
+            }
+          }}
+          role="presentation"
+        >
+          <section
+            aria-labelledby="organizer-execution-dialog-title"
+            aria-modal="true"
+            className="strategy-dialog organizer-confirm-dialog"
+            onMouseDown={(event) => event.stopPropagation()}
+            role="dialog"
+          >
+            <div className="strategy-dialog-heading">
+              <div>
+                <h2 id="organizer-execution-dialog-title">{t.organizerExecutionTitle}</h2>
+                <p>{t.organizerExecutionDescription}</p>
+              </div>
+              <button
+                aria-label={t.organizerExecutionCancel}
+                className="strategy-dialog-close"
+                disabled={Boolean(planAction)}
+                onClick={() => {
+                  setPendingExecution(null);
+                  setExecutionAcknowledged(false);
+                }}
+                type="button"
+              >
+                <X size={16} />
+              </button>
+            </div>
+            <div className="organizer-confirm-warning">
+              <AlertTriangle size={18} />
+              <div>
+                <strong>{t.organizerExecutionWarningTitle}</strong>
+                <span>{t.organizerExecutionWarning}</span>
+              </div>
+            </div>
+            <div className="strategy-summary-grid organizer-confirm-summary">
+              <div>
+                <span>{t.organizerExecutionMedia}</span>
+                <strong>{organizerPlanTitle(pendingExecution, t)}</strong>
+              </div>
+              <div>
+                <span>{t.organizerConfidence}</span>
+                <strong>{Math.round(pendingExecution.confidence * 100)}%</strong>
+              </div>
+              <div>
+                <span>{t.organizerExecutionFiles}</span>
+                <strong>{pendingExecution.items.length}</strong>
+              </div>
+              <div>
+                <span>{t.organizerStatusFilters}</span>
+                <strong>{formatOrganizerStatus(pendingExecution.status, t)}</strong>
+              </div>
+            </div>
+            <div className="organizer-confirm-paths">
+              {pendingExecution.items.map((item) => (
+                <div key={item.id}>
+                  <span>{t.organizerExecutionSource}</span>
+                  <code>{item.sourcePath}</code>
+                  <span>{t.organizerExecutionTarget}</span>
+                  <strong>{item.targetPath}</strong>
+                </div>
+              ))}
+            </div>
+            <label className="organizer-confirm-check">
+              <input
+                autoFocus
+                checked={executionAcknowledged}
+                disabled={Boolean(planAction)}
+                onChange={(event) => setExecutionAcknowledged(event.target.checked)}
+                type="checkbox"
+              />
+              <span>{t.organizerExecutionAcknowledge}</span>
+            </label>
+            {error ? (
+              <div className="settings-alert organizer-dialog-alert" role="alert">
+                {error}
+              </div>
+            ) : null}
+            <div className="strategy-dialog-actions">
+              <button
+                disabled={Boolean(planAction)}
+                onClick={() => {
+                  setPendingExecution(null);
+                  setExecutionAcknowledged(false);
+                }}
+                type="button"
+              >
+                {t.organizerExecutionCancel}
+              </button>
+              <button
+                className="danger-button"
+                disabled={!executionAcknowledged || Boolean(planAction)}
+                onClick={() => void execute(pendingExecution)}
+                type="button"
+              >
+                {planAction?.action === "execute" ? <Loader2 size={14} /> : <Check size={14} />}
+                {t.organizerExecutionConfirm} ({pendingExecution.items.length})
+              </button>
+            </div>
+          </section>
+        </div>
+      ) : null}
+      {repairPlan ? (
+        <div
+          className="strategy-dialog-backdrop"
+          onMouseDown={() => {
+            if (!repairExecuting) {
+              setRepairPlan(null);
+              setRepairSelection([]);
+            }
+          }}
+          role="presentation"
+        >
+          <section
+            aria-labelledby="organizer-repair-dialog-title"
+            aria-modal="true"
+            className="strategy-dialog organizer-repair-dialog"
+            onMouseDown={(event) => event.stopPropagation()}
+            role="dialog"
+          >
+            <div className="strategy-dialog-heading">
+              <div>
+                <h2 id="organizer-repair-dialog-title">{t.organizerRepairPreviewTitle}</h2>
+                <p>{t.organizerRepairPreviewDescription}</p>
+              </div>
+              <button
+                aria-label={t.organizerExecutionCancel}
+                className="strategy-dialog-close"
+                disabled={repairExecuting}
+                onClick={() => {
+                  setRepairPlan(null);
+                  setRepairSelection([]);
+                }}
+                type="button"
+              >
+                <X size={16} />
+              </button>
+            </div>
+            <div className="strategy-summary-grid organizer-repair-summary">
+              <div>
+                <span>{t.organizerRepairPlans}</span>
+                <strong>{repairPlan.summary.plans}</strong>
+              </div>
+              <div>
+                <span>{t.organizerRepairActions}</span>
+                <strong>{repairPlan.summary.actions}</strong>
+              </div>
+              <div>
+                <span>{t.organizerRepairExecutable}</span>
+                <strong>{repairPlan.summary.executable}</strong>
+              </div>
+              <div>
+                <span>{t.organizerRepairReview}</span>
+                <strong>{repairPlan.summary.review}</strong>
+              </div>
+            </div>
+            <div className="organizer-repair-list">
+              {repairPlan.items.length === 0 ? (
+                <p>{t.organizerRepairEmpty}</p>
+              ) : (
+                repairPlan.items.map((item) => (
+                  <label className={!item.executable ? "disabled" : ""} key={item.actionId}>
+                    <input
+                      checked={repairSelection.includes(item.actionId)}
+                      disabled={!item.executable || repairExecuting}
+                      onChange={(event) =>
+                        setRepairSelection((current) =>
+                          event.target.checked
+                            ? [...current, item.actionId]
+                            : current.filter((actionId) => actionId !== item.actionId),
+                        )
+                      }
+                      type="checkbox"
+                    />
+                    <div>
+                      <strong>
+                        {item.title || t.unknownTitle}
+                        {item.episode ? ` · E${item.episode}` : ""}
+                      </strong>
+                      <span>{formatOrganizerRepairKind(item.kind, t)}</span>
+                      <p>{organizerRepairKindDescription(item.kind, t)}</p>
+                    </div>
+                    <em>
+                      {item.executable
+                        ? formatOrganizerRepairConfidence(item.confidence, t)
+                        : t.organizerRepairReviewOnly}
+                    </em>
+                  </label>
+                ))
+              )}
+            </div>
+            {error ? (
+              <div className="settings-alert organizer-dialog-alert" role="alert">
+                {error}
+              </div>
+            ) : null}
+            <div className="strategy-dialog-actions">
+              <button
+                disabled={repairExecuting}
+                onClick={() => {
+                  setRepairPlan(null);
+                  setRepairSelection([]);
+                }}
+                type="button"
+              >
+                {t.organizerExecutionCancel}
+              </button>
+              <button
+                className="strategy-confirm-button"
+                disabled={repairExecuting || repairSelection.length === 0}
+                onClick={() => void executeRepairPlan()}
+                type="button"
+              >
+                {repairExecuting ? <Loader2 size={14} /> : <ShieldCheck size={14} />}
+                {t.organizerRepairApply} ({repairSelection.length})
+              </button>
+            </div>
+          </section>
+        </div>
+      ) : null}
     </section>
   );
 }
 
 function getTitleInitial(title: string) {
   return title.trim().slice(0, 1).toUpperCase() || "?";
+}
+
+function organizerPlanTitle(
+  plan: OrganizerPlan,
+  t: ReturnType<typeof getMessages>,
+) {
+  return (
+    plan.metadata?.title ||
+    plan.candidate?.group?.displayTitle ||
+    plan.candidate?.parsedTitle ||
+    t.unknownTitle
+  );
 }
 
 function canExecutePlan(plan: OrganizerPlan) {
@@ -703,7 +1096,9 @@ function confidenceBadgeClass(confidence: number) {
 
 function organizerPlanHint(plan: OrganizerPlan, t: ReturnType<typeof getMessages>) {
   if (plan.automation && !plan.automation.autoExecutable && plan.automation.reasons.length > 0) {
-    return plan.automation.reasons.join(" ");
+    return plan.automation.reasons
+      .map((reason) => formatOrganizerAutomationReason(reason, t))
+      .join(" ");
   }
   if (plan.items.length === 0) {
     return t.organizerNoFilesHint;
@@ -727,6 +1122,55 @@ function organizerPlanHint(plan: OrganizerPlan, t: ReturnType<typeof getMessages
     return t.organizerRejectedHint;
   }
   return t.organizerReadyToExecuteHint;
+}
+
+function formatOrganizerReason(
+  reason: string | null | undefined,
+  t: ReturnType<typeof getMessages>,
+) {
+  if (!reason) {
+    return "-";
+  }
+  if (reason === "Ready for confirmation") {
+    return t.organizerReasonReady;
+  }
+  if (reason === "Needs manual confirmation") {
+    return t.organizerReasonNeedsReview;
+  }
+  if (reason === "Metadata needs manual confirmation") {
+    return t.organizerReasonMetadataReview;
+  }
+  if (reason === "Rejected by user") {
+    return t.organizerReasonRejected;
+  }
+  if (reason === "Organizer plan has unresolved episode identity.") {
+    return t.organizerReasonUnresolvedEpisode;
+  }
+  return reason;
+}
+
+function formatOrganizerAutomationReason(
+  reason: string,
+  t: ReturnType<typeof getMessages>,
+) {
+  const messages: Record<string, string> = {
+    "Plan is already closed.": t.organizerAutomationClosed,
+    "Plan is marked as failed.": t.organizerAutomationFailed,
+    "Plan is not in an executable status.": t.organizerAutomationNotExecutable,
+    "Plan has no files.": t.organizerAutomationNoFiles,
+    "Plan has target path conflicts.": t.organizerAutomationConflict,
+    "One or more source files are missing.": t.organizerAutomationSourceMissing,
+    "Plan has a polluted target path.": t.organizerAutomationPollutedTarget,
+    "Plan has unresolved episode identity.": t.organizerAutomationUnresolvedEpisode,
+    "Automatic archive requires pending status.": t.organizerAutomationPendingRequired,
+    "Confidence is below the automatic archive threshold.":
+      t.organizerAutomationLowConfidence,
+    "Plan was not marked trusted when it was created.": t.organizerAutomationNotTrusted,
+    "Plan has no grouped candidate.": t.organizerAutomationNoCandidate,
+    "One or more source files do not match the candidate title.":
+      t.organizerAutomationTitleMismatch,
+  };
+  return messages[reason] ?? reason;
 }
 
 function emptyOrganizerMessage(filter: OrganizerFilter, t: ReturnType<typeof getMessages>) {
@@ -778,33 +1222,87 @@ function formatMediaType(
   return t.tv;
 }
 
-function formatRepairSummary(
+function formatOrganizerRepairKind(
+  kind: OrganizerRepairPlan["items"][number]["kind"],
   t: ReturnType<typeof getMessages>,
-  results: Array<{ job: string; result: Record<string, unknown> }>,
 ) {
-  const byJob = new Map(results.map((item) => [item.job, item.result]));
-  const cleanup = byJob.get("organizer.cleanupPollutedPlans");
-  const stale = byJob.get("organizer.cleanupStalePlans");
-  const sync = byJob.get("downloads.syncAria2");
-  const inspect = byJob.get("organizer.inspectCompletedDownloads");
-  const review = byJob.get("organizer.aiReviewPlans");
-  const animeMerge = byJob.get("library.mergeDuplicateAnimeTitles");
-  const tvMerge = byJob.get("library.mergeDuplicateTvTitles");
-  const episodeRepair = byJob.get("library.repairEpisodeNumbering");
-  return [
-    t.repairOrganizerPipelineDone,
-    `deleted: ${numberValue(cleanup?.deleted)}`,
-    `stale rejected: ${numberValue(stale?.rejected)}`,
-    `synced: ${numberValue(sync?.synced)}`,
-    `plans: ${numberValue(inspect?.inspected)}`,
-    `ai reviewed: ${numberValue(review?.reviewed)}`,
-    `filtered: ${numberValue(review?.filteredItems)}`,
-    `merged anime: ${numberValue(animeMerge?.merged)}`,
-    `merged tv: ${numberValue(tvMerge?.merged)}`,
-    `episode repairs: ${numberValue(episodeRepair?.repairedEpisodes)}`,
-  ].join(" ");
+  if (kind === "delete_stale") {
+    return t.organizerRepairDeleteStale;
+  }
+  if (kind === "resolve_archived") {
+    return t.organizerRepairResolveArchived;
+  }
+  if (kind === "regenerate") {
+    return t.organizerRepairRegenerate;
+  }
+  if (kind === "retry_missing") {
+    return t.organizerRepairRetryMissing;
+  }
+  if (kind === "wait_download") {
+    return t.organizerRepairWaitDownload;
+  }
+  return t.organizerRepairManualReview;
 }
 
-function numberValue(value: unknown) {
-  return typeof value === "number" ? value : 0;
+function organizerRepairKindDescription(
+  kind: OrganizerRepairPlan["items"][number]["kind"],
+  t: ReturnType<typeof getMessages>,
+) {
+  if (kind === "delete_stale") {
+    return t.organizerRepairDeleteStaleDescription;
+  }
+  if (kind === "resolve_archived") {
+    return t.organizerRepairResolveArchivedDescription;
+  }
+  if (kind === "regenerate") {
+    return t.organizerRepairRegenerateDescription;
+  }
+  if (kind === "retry_missing") {
+    return t.organizerRepairRetryMissingDescription;
+  }
+  if (kind === "wait_download") {
+    return t.organizerRepairWaitDownloadDescription;
+  }
+  return t.organizerRepairManualReviewDescription;
+}
+
+function formatOrganizerRepairConfidence(
+  confidence: OrganizerRepairPlan["items"][number]["confidence"],
+  t: ReturnType<typeof getMessages>,
+) {
+  if (confidence === "high") {
+    return t.organizerRepairConfidenceHigh;
+  }
+  if (confidence === "medium") {
+    return t.organizerRepairConfidenceMedium;
+  }
+  return t.organizerRepairConfidenceLow;
+}
+
+async function requestJson<T>(
+  input: RequestInfo | URL,
+  init: RequestInit | undefined,
+  fallbackMessage: string,
+): Promise<T> {
+  let response: Response;
+  try {
+    response = await fetch(input, init);
+  } catch {
+    throw new Error(fallbackMessage);
+  }
+  if (!response.ok) {
+    const body = (await response.json().catch(() => null)) as
+      | { message?: unknown }
+      | null;
+    throw new Error(
+      typeof body?.message === "string" && body.message.trim()
+        ? body.message
+        : fallbackMessage,
+    );
+  }
+  return response.json() as Promise<T>;
+}
+
+function errorMessage(error: unknown, fallbackMessage: string) {
+  return error instanceof Error ? error.message : fallbackMessage;
 }

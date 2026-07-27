@@ -7,9 +7,10 @@ import { retryFailedDownload } from "@/lib/downloads";
 import { findExistingMediaTitle } from "@/lib/media-title-repair";
 import { parseMediaReleaseTitle } from "@/lib/media-parser";
 import { regenerateRejectedOrganizerPlan } from "@/lib/organizer";
+import { ORGANIZER_REPAIR_CONFIRMATION } from "@/lib/organizer-confirmations";
 import { getAppSettings } from "@/lib/settings";
 
-export const ORGANIZER_REPAIR_CONFIRMATION = "I understand this repairs organizer records";
+export { ORGANIZER_REPAIR_CONFIRMATION } from "@/lib/organizer-confirmations";
 
 export class OrganizerRepairPlanStaleError extends Error {}
 export class OrganizerRepairValidationError extends Error {}
