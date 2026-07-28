@@ -622,7 +622,7 @@ function candidatePriority(candidate: CandidateWithState) {
 
 function stateForCandidate(candidate: CandidateWithState, candidateCount: number) {
   const activeOrganizerPlans = candidate.organizerPlans.filter((plan) =>
-    ["PENDING", "NEEDS_REVIEW", "CONFLICT", "FAILED"].includes(plan.status),
+    ["PENDING", "NEEDS_REVIEW", "EXECUTING", "CONFLICT", "FAILED"].includes(plan.status),
   );
   if (activeOrganizerPlans.some((plan) => plan.items.length > 0)) {
     return { status: "DOWNLOADED" as const, reason: "Downloaded and waiting for organizer" };

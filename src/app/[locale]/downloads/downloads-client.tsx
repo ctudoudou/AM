@@ -744,6 +744,7 @@ function organizerPlanStatusLabel(status: string, t: Messages) {
   return {
     PENDING: t.organizerStatusPending,
     NEEDS_REVIEW: t.organizerStatusNeedsReview,
+    EXECUTING: t.organizerStatusExecuting,
     CONFLICT: t.organizerStatusConflict,
     FAILED: t.organizerStatusFailed,
     EXECUTED: t.organizerStatusExecuted,

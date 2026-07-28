@@ -2,10 +2,11 @@ import type { OrganizerPlanStatus, Prisma } from "@prisma/client";
 import { jsonError, jsonResponse } from "@/lib/api";
 import { prisma } from "@/lib/db";
 import { assessOrganizerPlanAutomation } from "@/lib/organizer";
+import { createOrganizerPlanVersion } from "@/lib/organizer-plan-version";
 
 export const dynamic = "force-dynamic";
 
-const activeStatuses = ["PENDING", "NEEDS_REVIEW", "CONFLICT", "FAILED"] as const;
+const activeStatuses = ["PENDING", "NEEDS_REVIEW", "EXECUTING", "CONFLICT", "FAILED"] as const;
 const historyStatuses = ["EXECUTED", "AUTO_ARCHIVED", "REJECTED"] as const;
 const statusValues = [...activeStatuses, ...historyStatuses] as const;
 const statusSet = new Set<string>(statusValues);
@@ -66,6 +67,7 @@ export async function GET(request: Request) {
           confidence: true,
           reason: true,
           autoExecutable: true,
+          updatedAt: true,
           metadata: true,
           items: {
             select: {
@@ -124,6 +126,7 @@ export async function GET(request: Request) {
       confidence: plan.confidence,
       reason: plan.reason,
       autoExecutable: plan.autoExecutable,
+      version: createOrganizerPlanVersion(plan),
       metadata: summarizeMetadata(plan.metadata),
       candidate: plan.candidate
         ? {
@@ -137,6 +140,7 @@ export async function GET(request: Request) {
         id: item.id,
         sourcePath: item.sourcePath,
         targetPath: item.targetPath,
+        fileType: item.fileType,
         conflict: item.conflict,
         conflictReason: item.conflictReason,
       })),

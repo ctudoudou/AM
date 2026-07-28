@@ -104,6 +104,7 @@ describe("/api/organizer/plans", () => {
         confidence: 0.95,
         reason: "ready",
         autoExecutable: true,
+        updatedAt: new Date("2026-07-28T12:00:00.000Z"),
         metadata: {
           title: "Some Anime",
           posterUrl: "https://image.example/poster.jpg",
@@ -150,7 +151,8 @@ describe("/api/organizer/plans", () => {
       parsedTitle: "Some Anime",
       group: { displayTitle: "Some Anime" },
     });
-    expect(body.plans[0].items[0]).not.toHaveProperty("fileType");
+    expect(body.plans[0].items[0]).toMatchObject({ fileType: "video" });
+    expect(body.plans[0].version).toMatch(/^[a-f0-9]{64}$/);
     expect(JSON.stringify(body.plans[0])).not.toContain("providerPayload");
     expect(JSON.stringify(body.plans[0])).not.toContain("assessment-only alias");
   });
@@ -167,7 +169,7 @@ describe("/api/organizer/plans", () => {
     expect(organizerPlan.findMany).toHaveBeenCalledWith(
       expect.objectContaining({
         where: expect.objectContaining({
-          status: { in: ["PENDING", "NEEDS_REVIEW", "CONFLICT", "FAILED"] },
+          status: { in: ["PENDING", "NEEDS_REVIEW", "EXECUTING", "CONFLICT", "FAILED"] },
           items: { some: {} },
         }),
       }),

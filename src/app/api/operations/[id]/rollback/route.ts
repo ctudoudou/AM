@@ -1,13 +1,12 @@
 import { z } from "zod";
 import { assertTrustedMutationOrigin, jsonError, jsonResponse } from "@/lib/api";
 import {
-  OPERATION_ROLLBACK_CONFIRMATION,
   OperationRollbackValidationError,
   rollbackOperation,
 } from "@/lib/operation-log";
 
 const rollbackSchema = z.object({
-  confirmation: z.literal(OPERATION_ROLLBACK_CONFIRMATION),
+  confirmation: z.string().trim().min(1).max(128),
 });
 
 export async function POST(

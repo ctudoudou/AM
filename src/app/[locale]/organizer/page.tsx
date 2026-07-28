@@ -1,8 +1,12 @@
 import { notFound } from "next/navigation";
 import { AppSidebar } from "@/components/app-sidebar";
+import { getKuraBuildRevision } from "@/lib/build-info";
 import { isLocale } from "@/lib/i18n";
 import { getMessages } from "@/messages";
 import { OrganizerClient } from "./organizer-client";
+
+export const dynamic = "force-dynamic";
+export const revalidate = 0;
 
 export default async function OrganizerPage({
   params,
@@ -25,7 +29,7 @@ export default async function OrganizerPage({
           <h1>{t.organizer}</h1>
           <p>{t.organizerDescription}</p>
         </header>
-        <OrganizerClient locale={locale} />
+        <OrganizerClient buildRevision={getKuraBuildRevision()} locale={locale} />
       </section>
     </main>
   );

@@ -2703,6 +2703,20 @@ a {
   color: var(--text-faint);
 }
 
+.organizer-operation-log {
+  margin-top: 12px;
+}
+
+.organizer-operation-log article {
+  grid-template-columns: minmax(150px, auto) 110px minmax(0, 1fr) auto;
+}
+
+.organizer-operation-log article > button {
+  min-height: 26px;
+  padding: 0 8px;
+  font-size: 10px;
+}
+
 .download-table {
   overflow: hidden;
   border: 1px solid rgba(255, 255, 255, 0.04);

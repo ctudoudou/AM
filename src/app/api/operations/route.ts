@@ -6,7 +6,16 @@ export const dynamic = "force-dynamic";
 
 const querySchema = z.object({
   domain: z.enum(["DOWNLOAD", "ORGANIZER"]).optional(),
-  status: z.enum(["STARTED", "SUCCEEDED", "FAILED", "ROLLED_BACK"]).optional(),
+  status: z
+    .enum([
+      "STARTED",
+      "SUCCEEDED",
+      "FAILED",
+      "ROLLBACK_STARTED",
+      "ROLLBACK_FAILED",
+      "ROLLED_BACK",
+    ])
+    .optional(),
   limit: z.coerce.number().int().min(1).max(100).default(25),
 });
 

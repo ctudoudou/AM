@@ -1,3 +1,4 @@
+import { constants } from "node:fs";
 import fs from "node:fs/promises";
 import path from "node:path";
 import {
@@ -66,17 +67,17 @@ export async function restoreOrganizerAria2Task(guard: OrganizerAria2Guard | nul
   return true;
 }
 
-export async function moveOrganizerFiles(moves: OrganizerMove[]) {
+export async function moveOrganizerFiles(moves: OrganizerMove[], allowedRoots: string[] = []) {
   const moved: OrganizerMove[] = [];
   try {
     for (const move of moves) {
       await fs.mkdir(path.dirname(move.targetPath), { recursive: true });
-      await fs.rename(move.sourcePath, move.targetPath);
+      await moveFileNoReplace(move.sourcePath, move.targetPath, allowedRoots);
       moved.push(move);
     }
     return moved;
   } catch (error) {
-    const rollback = await rollbackOrganizerFiles(moved);
+    const rollback = await rollbackOrganizerFiles(moved, allowedRoots);
     throw new OrganizerMoveError(
       error instanceof Error ? error.message : "Organizer move failed",
       moved,
@@ -87,6 +88,7 @@ export async function moveOrganizerFiles(moves: OrganizerMove[]) {
 
 export async function rollbackOrganizerFiles(
   moves: OrganizerMove[],
+  allowedRoots: string[] = [],
 ): Promise<OrganizerRollbackResult> {
   const result: OrganizerRollbackResult = { restored: [], skipped: [], errors: [] };
   for (const move of [...moves].reverse()) {
@@ -100,7 +102,7 @@ export async function rollbackOrganizerFiles(
         continue;
       }
       await fs.mkdir(path.dirname(move.sourcePath), { recursive: true });
-      await fs.rename(move.targetPath, move.sourcePath);
+      await moveFileNoReplace(move.targetPath, move.sourcePath, allowedRoots);
       result.restored.push(move);
     } catch (error) {
       result.errors.push({
@@ -118,5 +120,79 @@ function aria2TaskIsUnavailable(message: string) {
 
 async function regularPathExists(filePath: string) {
   const stat = await fs.lstat(filePath).catch(() => null);
-  return Boolean(stat && !stat.isSymbolicLink());
+  return Boolean(stat && stat.isFile() && !stat.isSymbolicLink());
+}
+
+async function moveFileNoReplace(
+  sourcePath: string,
+  targetPath: string,
+  allowedRoots: string[],
+) {
+  const sourceStat = await fs.lstat(sourcePath);
+  if (sourceStat.isSymbolicLink() || !sourceStat.isFile()) {
+    throw new Error(`Organizer source must be a regular file: ${sourcePath}`);
+  }
+  const targetStat = await fs.lstat(targetPath).catch((error: NodeJS.ErrnoException) => {
+    if (error.code === "ENOENT") {
+      return null;
+    }
+    throw error;
+  });
+  if (targetStat) {
+    throw new Error(`Organizer target already exists: ${targetPath}`);
+  }
+  await assertRealPathsInsideAllowedRoots(sourcePath, targetPath, allowedRoots);
+
+  let targetCreated = false;
+  try {
+    try {
+      await fs.link(sourcePath, targetPath);
+      targetCreated = true;
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "EXDEV") {
+        throw error;
+      }
+      await fs.copyFile(sourcePath, targetPath, constants.COPYFILE_EXCL);
+      targetCreated = true;
+      const [sourceAfterCopy, targetAfterCopy] = await Promise.all([
+        fs.stat(sourcePath),
+        fs.stat(targetPath),
+      ]);
+      if (sourceAfterCopy.size !== targetAfterCopy.size) {
+        throw new Error(`Organizer cross-device copy size mismatch: ${targetPath}`);
+      }
+    }
+    await fs.unlink(sourcePath);
+  } catch (error) {
+    if (targetCreated && (await regularPathExists(sourcePath))) {
+      await fs.unlink(targetPath).catch(() => null);
+    }
+    throw error;
+  }
+}
+
+async function assertRealPathsInsideAllowedRoots(
+  sourcePath: string,
+  targetPath: string,
+  allowedRoots: string[],
+) {
+  if (allowedRoots.length === 0) {
+    return;
+  }
+  const [sourceRealPath, targetParentRealPath, ...rootRealPaths] = await Promise.all([
+    fs.realpath(sourcePath),
+    fs.realpath(path.dirname(targetPath)),
+    ...allowedRoots.map((root) => fs.realpath(root).catch(() => path.resolve(root))),
+  ]);
+  if (!rootRealPaths.some((root) => isPathInsideRoot(sourceRealPath, root))) {
+    throw new Error(`Organizer source real path is outside configured roots: ${sourcePath}`);
+  }
+  if (!rootRealPaths.some((root) => isPathInsideRoot(targetParentRealPath, root))) {
+    throw new Error(`Organizer target real path is outside configured roots: ${targetPath}`);
+  }
+}
+
+function isPathInsideRoot(candidatePath: string, rootPath: string) {
+  const relative = path.relative(path.resolve(rootPath), path.resolve(candidatePath));
+  return relative === "" || (!relative.startsWith("..") && !path.isAbsolute(relative));
 }

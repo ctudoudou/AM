@@ -10,11 +10,14 @@ import {
   classifyOrganizerFile,
   cleanupPollutedOrganizerPlans,
   createOrganizerPlanForCandidateSource,
+  executeOrganizerPlan,
   hasBlockingOrganizerPlan,
   hasUnresolvedOrganizerReviewPlan,
   inspectCompletedDownloads,
   isAutoExecutableOrganizerPlan,
   organizerTargetPathLooksPolluted,
+  OrganizerExecutionBusyError,
+  OrganizerPlanStaleError,
   regenerateRejectedOrganizerPlan,
   resolveOrganizerItemIdentity,
   resolveOrganizerMediaType,
@@ -57,6 +60,7 @@ vi.mock("@/lib/db", () => ({
       findUnique: vi.fn(),
       findUniqueOrThrow: vi.fn(),
       update: vi.fn(),
+      updateMany: vi.fn(),
     },
   },
 }));
@@ -480,6 +484,25 @@ describe("buildOrganizerExtraTargetPath", () => {
         sourcePath: "/data/downloads/ZLS/Extra/Scans/Booklet 01.avif",
       }),
     ).toBe("/data/library/movies/Zombie Land Saga Yumeginga Paradise/Extras/Scans/Booklet 01.avif");
+  });
+
+  it("truncates long UTF-8 names without dropping the extension", () => {
+    const target = buildOrganizerExtraTargetPath({
+      mediaType: "ANIME",
+      roots: {
+        animeLibraryDir: "/data/library/anime",
+        moviesLibraryDir: "/data/library/movies",
+        tvLibraryDir: "/data/library/tv",
+      },
+      title: "Some Anime",
+      season: 1,
+      sourcePackageRoot: "/data/downloads/Some Anime",
+      sourcePath: `/data/downloads/Some Anime/Extra/${"很长的特典文件名".repeat(40)}.mkv`,
+    });
+    const filename = target.split("/").at(-1) ?? "";
+
+    expect(filename.endsWith(".mkv")).toBe(true);
+    expect(Buffer.byteLength(filename)).toBeLessThanOrEqual(240);
   });
 });
 
@@ -960,6 +983,88 @@ describe("assessOrganizerPlanAutomation", () => {
     });
 
     expect(assessment.executable).toBe(true);
+  });
+
+  it("blocks episode videos routed to Extras and extension-changing targets", () => {
+    const assessment = assessOrganizerPlanAutomation({
+      mediaType: "ANIME",
+      status: "PENDING",
+      confidence: 0.95,
+      autoExecutable: true,
+      candidate: organizerCandidate(),
+      items: [
+        {
+          sourcePath: "/data/downloads/Some Anime - 05.mkv",
+          targetPath: "/data/library/anime/Some Anime/Season 01/Extras/Some Anime - 05.mp4",
+          fileType: "extra_video",
+          conflict: false,
+        },
+      ],
+    });
+
+    expect(assessment.executable).toBe(false);
+    expect(assessment.reasons).toContain("Plan puts an episode video under Extras.");
+    expect(assessment.reasons).toContain(
+      "A target filename does not preserve the source extension.",
+    );
+  });
+});
+
+describe("executeOrganizerPlan concurrency guards", () => {
+  const plan = {
+    id: "plan-1",
+    mediaType: "ANIME" as const,
+    status: "PENDING" as const,
+    confidence: 0.95,
+    autoExecutable: false,
+    reason: "Ready for confirmation",
+    updatedAt: new Date("2026-07-28T12:00:00.000Z"),
+    downloadId: null,
+    download: null,
+    candidate: organizerCandidate(),
+    items: [
+      {
+        id: "item-1",
+        sourcePath: "/data/downloads/Some Anime - 01.mkv",
+        targetPath: "/data/library/anime/Some Anime/Season 01/Some Anime - S01E01.mkv",
+        fileType: "video",
+        conflict: false,
+        conflictReason: null,
+      },
+    ],
+  };
+
+  it("rejects a plan changed after the review dialog opened", async () => {
+    vi.mocked(prisma.organizerPlan.findUniqueOrThrow).mockResolvedValueOnce(plan as never);
+
+    await expect(
+      executeOrganizerPlan("plan-1", false, "a".repeat(64)),
+    ).rejects.toBeInstanceOf(OrganizerPlanStaleError);
+    expect(prisma.organizerPlan.updateMany).not.toHaveBeenCalled();
+  });
+
+  it("allows only one caller to acquire the execution lease", async () => {
+    vi.mocked(prisma.organizerPlan.findUniqueOrThrow).mockResolvedValueOnce(plan as never);
+    vi.mocked(fs.access)
+      .mockResolvedValueOnce(undefined)
+      .mockRejectedValueOnce(new Error("ENOENT"));
+    vi.mocked(prisma.organizerPlan.updateMany).mockResolvedValueOnce({ count: 0 } as never);
+    const { createOrganizerPlanVersion } = await import("./organizer-plan-version");
+
+    await expect(
+      executeOrganizerPlan("plan-1", false, createOrganizerPlanVersion(plan)),
+    ).rejects.toBeInstanceOf(OrganizerExecutionBusyError);
+    expect(prisma.organizerPlan.updateMany).toHaveBeenCalledWith({
+      where: {
+        id: "plan-1",
+        status: "PENDING",
+        updatedAt: plan.updatedAt,
+      },
+      data: {
+        status: "EXECUTING",
+        reason: "Organizer execution in progress.",
+      },
+    });
   });
 });
 

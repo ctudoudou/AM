@@ -145,7 +145,9 @@ export async function scanDataHealth(): Promise<DataHealthScan> {
         orderBy: { updatedAt: "desc" },
       }),
       prisma.organizerPlan.findMany({
-        where: { status: { in: ["PENDING", "NEEDS_REVIEW", "CONFLICT", "FAILED"] } },
+        where: {
+          status: { in: ["PENDING", "NEEDS_REVIEW", "EXECUTING", "CONFLICT", "FAILED"] },
+        },
         select: {
           id: true,
           status: true,

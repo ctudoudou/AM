@@ -8,6 +8,7 @@ import {
   FolderSearch,
   Loader2,
   RefreshCw,
+  RotateCcw,
   ShieldCheck,
   WandSparkles,
   X,
@@ -16,12 +17,14 @@ import { getMessages } from "@/messages";
 import type { Locale } from "@/lib/i18n";
 import {
   ORGANIZER_PLAN_EXECUTION_CONFIRMATION,
+  ORGANIZER_OPERATION_ROLLBACK_CONFIRMATION,
   ORGANIZER_REPAIR_CONFIRMATION,
 } from "@/lib/organizer-confirmations";
 import type { OrganizerRepairPlan } from "@/lib/organizer-repair";
 
 type OrganizerPlan = {
   id: string;
+  version: string;
   mediaType: "ANIME" | "MOVIE" | "TV";
   status: string;
   confidence: number;
@@ -40,6 +43,7 @@ type OrganizerPlan = {
     id: string;
     sourcePath: string;
     targetPath: string;
+    fileType: string;
     conflict: boolean;
     conflictReason?: string | null;
   }>;
@@ -56,6 +60,18 @@ type OrganizerSettings = {
   };
 };
 
+type OrganizerOperationRecord = {
+  id: string;
+  action: string;
+  status: string;
+  entityId?: string | null;
+  errorMessage?: string | null;
+  createdAt: string;
+  rollbackData?: {
+    moves?: Array<{ sourcePath: string; targetPath: string }>;
+  } | null;
+};
+
 const organizerViewFilters = [
   "ACTIVE",
   "AUTO_READY",
@@ -66,6 +82,7 @@ const organizerViewFilters = [
 const organizerStatusFilters = [
   "PENDING",
   "NEEDS_REVIEW",
+  "EXECUTING",
   "CONFLICT",
   "FAILED",
   "EXECUTED",
@@ -93,9 +110,16 @@ type OrganizerPage = {
 
 type PlanAction = "execute" | "reject" | "regenerate";
 
-export function OrganizerClient({ locale }: { locale: Locale }) {
+export function OrganizerClient({
+  buildRevision,
+  locale,
+}: {
+  buildRevision: string;
+  locale: Locale;
+}) {
   const t = getMessages(locale);
   const [plans, setPlans] = useState<OrganizerPlan[]>([]);
+  const [operations, setOperations] = useState<OrganizerOperationRecord[]>([]);
   const [stats, setStats] = useState<OrganizerStats | null>(null);
   const [filter, setFilter] = useState<OrganizerFilter>("ACTIVE");
   const [planPage, setPlanPage] = useState(1);
@@ -118,6 +142,9 @@ export function OrganizerClient({ locale }: { locale: Locale }) {
   const [repairSelection, setRepairSelection] = useState<string[]>([]);
   const [pendingExecution, setPendingExecution] = useState<OrganizerPlan | null>(null);
   const [executionAcknowledged, setExecutionAcknowledged] = useState(false);
+  const [pendingRollback, setPendingRollback] = useState<OrganizerOperationRecord | null>(null);
+  const [rollbackAcknowledged, setRollbackAcknowledged] = useState(false);
+  const [rollbackBusy, setRollbackBusy] = useState(false);
   const [planAction, setPlanAction] = useState<{ id: string; action: PlanAction } | null>(null);
   const [status, setStatus] = useState("");
   const [loading, setLoading] = useState(true);
@@ -129,15 +156,22 @@ export function OrganizerClient({ locale }: { locale: Locale }) {
     const requestId = ++loadRequestId.current;
     setRefreshing(true);
     try {
-      const body = await requestJson<{
-        plans: OrganizerPlan[];
-        stats?: OrganizerStats;
-        page?: OrganizerPage;
-      }>(
-        `/api/organizer/plans?${organizerPlanParams(filter, planPage)}`,
-        undefined,
-        t.organizerLoadError,
-      );
+      const [body, operationBody] = await Promise.all([
+        requestJson<{
+          plans: OrganizerPlan[];
+          stats?: OrganizerStats;
+          page?: OrganizerPage;
+        }>(
+          `/api/organizer/plans?${organizerPlanParams(filter, planPage)}`,
+          undefined,
+          t.organizerLoadError,
+        ),
+        requestJson<{ operations: OrganizerOperationRecord[] }>(
+          "/api/operations?domain=ORGANIZER&limit=15",
+          undefined,
+          t.organizerLoadError,
+        ).catch(() => null),
+      ]);
       if (requestId !== loadRequestId.current) {
         return;
       }
@@ -146,6 +180,9 @@ export function OrganizerClient({ locale }: { locale: Locale }) {
         return;
       }
       setPlans(body.plans);
+      if (operationBody) {
+        setOperations(operationBody.operations);
+      }
       setStats(body.stats ?? null);
       setPageInfo(
         body.page ?? {
@@ -201,21 +238,30 @@ export function OrganizerClient({ locale }: { locale: Locale }) {
   }, [loadImportRoot]);
 
   useEffect(() => {
-    if (!pendingExecution && !repairPlan) {
+    if (!pendingExecution && !pendingRollback && !repairPlan) {
       return;
     }
     function closeDialog(event: KeyboardEvent) {
-      if (event.key !== "Escape" || planAction || repairExecuting) {
+      if (event.key !== "Escape" || planAction || repairExecuting || rollbackBusy) {
         return;
       }
       setPendingExecution(null);
       setExecutionAcknowledged(false);
+      setPendingRollback(null);
+      setRollbackAcknowledged(false);
       setRepairPlan(null);
       setRepairSelection([]);
     }
     window.addEventListener("keydown", closeDialog);
     return () => window.removeEventListener("keydown", closeDialog);
-  }, [pendingExecution, planAction, repairExecuting, repairPlan]);
+  }, [
+    pendingExecution,
+    pendingRollback,
+    planAction,
+    repairExecuting,
+    repairPlan,
+    rollbackBusy,
+  ]);
 
   async function runInspect() {
     setInspecting(true);
@@ -410,6 +456,8 @@ export function OrganizerClient({ locale }: { locale: Locale }) {
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             confirmation: ORGANIZER_PLAN_EXECUTION_CONFIRMATION,
+            clientRevision: buildRevision,
+            planVersion: plan.version,
           }),
         },
         t.organizerExecuteError,
@@ -463,6 +511,37 @@ export function OrganizerClient({ locale }: { locale: Locale }) {
     }
   }
 
+  async function rollbackOrganizerOperation(operation: OrganizerOperationRecord) {
+    if (!rollbackAcknowledged) {
+      setError(t.organizerRollbackAcknowledgeRequired);
+      return;
+    }
+    setRollbackBusy(true);
+    setStatus("");
+    setError("");
+    try {
+      await requestJson(
+        `/api/operations/${operation.id}/rollback`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            confirmation: ORGANIZER_OPERATION_ROLLBACK_CONFIRMATION,
+          }),
+        },
+        t.organizerRollbackError,
+      );
+      setPendingRollback(null);
+      setRollbackAcknowledged(false);
+      setStatus(t.organizerRollbackDone);
+      await load();
+    } catch (rollbackError) {
+      setError(errorMessage(rollbackError, t.organizerRollbackError));
+    } finally {
+      setRollbackBusy(false);
+    }
+  }
+
   if (loading) {
     return (
       <div className="settings-loading">
@@ -478,7 +557,8 @@ export function OrganizerClient({ locale }: { locale: Locale }) {
     reviewing ||
     autoExecuting ||
     repairLoading ||
-    repairExecuting;
+    repairExecuting ||
+    rollbackBusy;
   const mutationBusy = workflowBusy || planAction !== null;
 
   return (
@@ -716,6 +796,135 @@ export function OrganizerClient({ locale }: { locale: Locale }) {
               {t.queueNext}
             </button>
           </div>
+        </div>
+      ) : null}
+      {operations.length > 0 ? (
+        <details className="download-operation-log organizer-operation-log">
+          <summary>{t.organizerOperationLog}</summary>
+          <div>
+            {operations.map((operation) => {
+              const rollbackable =
+                operation.action === "EXECUTE_MOVE" &&
+                operation.status === "SUCCEEDED" &&
+                (operation.rollbackData?.moves?.length ?? 0) > 0;
+              return (
+                <article key={operation.id}>
+                  <span>{formatOrganizerOperationAction(operation.action, t)}</span>
+                  <strong>{formatOperationStatus(operation.status, t)}</strong>
+                  <small>
+                    {new Date(operation.createdAt).toLocaleString(locale)}
+                    {operation.errorMessage ? ` · ${operation.errorMessage}` : ""}
+                  </small>
+                  {rollbackable ? (
+                    <button
+                      disabled={mutationBusy}
+                      onClick={() => {
+                        setError("");
+                        setRollbackAcknowledged(false);
+                        setPendingRollback(operation);
+                      }}
+                      type="button"
+                    >
+                      <RotateCcw size={13} />
+                      {t.organizerRollback}
+                    </button>
+                  ) : null}
+                </article>
+              );
+            })}
+          </div>
+        </details>
+      ) : null}
+      {pendingRollback ? (
+        <div
+          className="strategy-dialog-backdrop"
+          onMouseDown={() => {
+            if (!rollbackBusy) {
+              setPendingRollback(null);
+              setRollbackAcknowledged(false);
+            }
+          }}
+          role="presentation"
+        >
+          <section
+            aria-labelledby="organizer-rollback-dialog-title"
+            aria-modal="true"
+            className="strategy-dialog organizer-confirm-dialog"
+            onMouseDown={(event) => event.stopPropagation()}
+            role="dialog"
+          >
+            <div className="strategy-dialog-heading">
+              <div>
+                <h2 id="organizer-rollback-dialog-title">{t.organizerRollbackTitle}</h2>
+                <p>{t.organizerRollbackDescription}</p>
+              </div>
+              <button
+                aria-label={t.organizerExecutionCancel}
+                className="strategy-dialog-close"
+                disabled={rollbackBusy}
+                onClick={() => {
+                  setPendingRollback(null);
+                  setRollbackAcknowledged(false);
+                }}
+                type="button"
+              >
+                <X size={16} />
+              </button>
+            </div>
+            <div className="organizer-confirm-warning">
+              <AlertTriangle size={18} />
+              <div>
+                <strong>{t.organizerRollbackWarningTitle}</strong>
+                <span>{t.organizerRollbackWarning}</span>
+              </div>
+            </div>
+            <div className="organizer-confirm-paths">
+              {(pendingRollback.rollbackData?.moves ?? []).map((move) => (
+                <div key={`${move.sourcePath}:${move.targetPath}`}>
+                  <span>{t.organizerExecutionSource}</span>
+                  <code>{move.sourcePath}</code>
+                  <span>{t.organizerExecutionTarget}</span>
+                  <strong>{move.targetPath}</strong>
+                </div>
+              ))}
+            </div>
+            <label className="organizer-confirm-check">
+              <input
+                autoFocus
+                checked={rollbackAcknowledged}
+                disabled={rollbackBusy}
+                onChange={(event) => setRollbackAcknowledged(event.target.checked)}
+                type="checkbox"
+              />
+              <span>{t.organizerRollbackAcknowledge}</span>
+            </label>
+            {error ? (
+              <div className="settings-alert organizer-dialog-alert" role="alert">
+                {error}
+              </div>
+            ) : null}
+            <div className="strategy-dialog-actions">
+              <button
+                disabled={rollbackBusy}
+                onClick={() => {
+                  setPendingRollback(null);
+                  setRollbackAcknowledged(false);
+                }}
+                type="button"
+              >
+                {t.organizerExecutionCancel}
+              </button>
+              <button
+                className="danger-button"
+                disabled={!rollbackAcknowledged || rollbackBusy}
+                onClick={() => void rollbackOrganizerOperation(pendingRollback)}
+                type="button"
+              >
+                {rollbackBusy ? <Loader2 size={14} /> : <RotateCcw size={14} />}
+                {t.organizerRollbackConfirm}
+              </button>
+            </div>
+          </section>
         </div>
       ) : null}
       {pendingExecution ? (
@@ -978,7 +1187,7 @@ function canExecutePlan(plan: OrganizerPlan) {
 }
 
 function canRejectPlan(plan: OrganizerPlan) {
-  return !["AUTO_ARCHIVED", "EXECUTED", "REJECTED"].includes(plan.status);
+  return !["AUTO_ARCHIVED", "EXECUTED", "EXECUTING", "REJECTED"].includes(plan.status);
 }
 
 function canRegeneratePlan(plan: OrganizerPlan) {
@@ -1031,6 +1240,9 @@ function formatOrganizerFilter(filter: OrganizerFilter, t: ReturnType<typeof get
   if (filter === "NEEDS_REVIEW") {
     return t.organizerStatusNeedsReview;
   }
+  if (filter === "EXECUTING") {
+    return t.organizerStatusExecuting;
+  }
   if (filter === "CONFLICT") {
     return t.organizerStatusConflict;
   }
@@ -1053,6 +1265,9 @@ function formatOrganizerStatus(status: string, t: ReturnType<typeof getMessages>
   if (status === "NEEDS_REVIEW") {
     return t.organizerStatusNeedsReview;
   }
+  if (status === "EXECUTING") {
+    return t.organizerStatusExecuting;
+  }
   if (status === "CONFLICT") {
     return t.organizerStatusConflict;
   }
@@ -1072,7 +1287,12 @@ function formatOrganizerStatus(status: string, t: ReturnType<typeof getMessages>
 }
 
 function statusBadgeClass(status: string) {
-  if (status === "PENDING" || status === "AUTO_ARCHIVED" || status === "EXECUTED") {
+  if (
+    status === "PENDING" ||
+    status === "AUTO_ARCHIVED" ||
+    status === "EXECUTED" ||
+    status === "EXECUTING"
+  ) {
     return "ready";
   }
   if (status === "CONFLICT" || status === "FAILED") {
@@ -1111,6 +1331,9 @@ function organizerPlanHint(plan: OrganizerPlan, t: ReturnType<typeof getMessages
   }
   if (plan.status === "NEEDS_REVIEW") {
     return t.organizerNeedsReviewHint;
+  }
+  if (plan.status === "EXECUTING") {
+    return t.organizerExecutingHint;
   }
   if (plan.status === "FAILED") {
     return t.organizerFailedHint;
@@ -1156,12 +1379,16 @@ function formatOrganizerAutomationReason(
   const messages: Record<string, string> = {
     "Plan is already closed.": t.organizerAutomationClosed,
     "Plan is marked as failed.": t.organizerAutomationFailed,
+    "Plan execution is already in progress.": t.organizerAutomationExecuting,
     "Plan is not in an executable status.": t.organizerAutomationNotExecutable,
     "Plan has no files.": t.organizerAutomationNoFiles,
     "Plan has target path conflicts.": t.organizerAutomationConflict,
     "One or more source files are missing.": t.organizerAutomationSourceMissing,
     "Plan has a polluted target path.": t.organizerAutomationPollutedTarget,
     "Plan has unresolved episode identity.": t.organizerAutomationUnresolvedEpisode,
+    "Plan puts an episode video under Extras.": t.organizerAutomationEpisodeInExtras,
+    "A target filename does not preserve the source extension.":
+      t.organizerAutomationExtensionMismatch,
     "Automatic archive requires pending status.": t.organizerAutomationPendingRequired,
     "Confidence is below the automatic archive threshold.":
       t.organizerAutomationLowConfidence,
@@ -1171,6 +1398,27 @@ function formatOrganizerAutomationReason(
       t.organizerAutomationTitleMismatch,
   };
   return messages[reason] ?? reason;
+}
+
+function formatOrganizerOperationAction(
+  action: string,
+  t: ReturnType<typeof getMessages>,
+) {
+  return {
+    EXECUTE_MOVE: t.organizerOperationExecute,
+    ROLLBACK_EXECUTE_MOVE: t.organizerOperationRollback,
+  }[action] ?? action;
+}
+
+function formatOperationStatus(status: string, t: ReturnType<typeof getMessages>) {
+  return {
+    STARTED: t.downloadOperationStarted,
+    SUCCEEDED: t.downloadOperationSucceeded,
+    FAILED: t.downloadOperationFailed,
+    ROLLBACK_STARTED: t.organizerOperationRollbackStarted,
+    ROLLBACK_FAILED: t.organizerOperationRollbackFailed,
+    ROLLED_BACK: t.downloadOperationRolledBack,
+  }[status] ?? status;
 }
 
 function emptyOrganizerMessage(filter: OrganizerFilter, t: ReturnType<typeof getMessages>) {
