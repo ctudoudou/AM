@@ -28,6 +28,7 @@ import {
   type OrganizerMove,
   type OrganizerRollbackResult,
 } from "@/lib/organizer-lifecycle";
+import { createOrganizerPlanVersion } from "@/lib/organizer-plan-version";
 
 const videoExtensions = new Set([
   ".mkv",
@@ -76,6 +77,9 @@ type OrganizerAutomationAssessment = {
   autoExecutable: boolean;
   reasons: string[];
 };
+
+export class OrganizerPlanStaleError extends Error {}
+export class OrganizerExecutionBusyError extends Error {}
 
 type OrganizerCandidateIdentity = {
   mediaType: MediaType;
@@ -597,7 +601,11 @@ function buildCandidateMetadataFallback(input: {
   };
 }
 
-export async function executeOrganizerPlan(planId: string, automatic = false) {
+export async function executeOrganizerPlan(
+  planId: string,
+  automatic = false,
+  expectedVersion?: string,
+) {
   const settings = await getAppSettings();
   const allowedRoots = allowedOrganizerRoots(settings.directories);
   const plan = await prisma.organizerPlan.findUniqueOrThrow({
@@ -609,8 +617,19 @@ export async function executeOrganizerPlan(planId: string, automatic = false) {
     },
   });
 
+  if (!automatic) {
+    const currentVersion = createOrganizerPlanVersion(plan);
+    if (!expectedVersion || currentVersion !== expectedVersion) {
+      throw new OrganizerPlanStaleError(
+        "Organizer plan changed after it was reviewed. Reload and verify the paths again.",
+      );
+    }
+  }
   if (plan.status === "EXECUTED" || plan.status === "AUTO_ARCHIVED") {
     throw new Error("Organizer plan has already been executed.");
+  }
+  if (plan.status === "EXECUTING") {
+    throw new OrganizerExecutionBusyError("Organizer plan execution is already in progress.");
   }
   if (plan.status === "REJECTED") {
     throw new Error("Organizer plan has been rejected.");
@@ -629,6 +648,23 @@ export async function executeOrganizerPlan(planId: string, automatic = false) {
   for (const item of plan.items) {
     const sourcePath = assertInsideConfiguredRoots(item.sourcePath, allowedRoots);
     const targetPath = assertInsideConfiguredRoots(item.targetPath, allowedRoots);
+    const integrityIssue = organizerItemIntegrityIssue({
+      mediaType: plan.mediaType,
+      fileType: item.fileType,
+      sourcePath,
+      targetPath,
+    });
+    if (integrityIssue) {
+      await prisma.organizerPlan.update({
+        where: { id: plan.id },
+        data: {
+          status: "NEEDS_REVIEW",
+          autoExecutable: false,
+          reason: integrityIssue,
+        },
+      });
+      throw new Error(integrityIssue);
+    }
     if (plan.mediaType !== "MOVIE" && item.fileType === "video" && !parseTargetPathEpisodeIdentity(targetPath)) {
       await prisma.organizerPlan.update({
         where: { id: plan.id },
@@ -655,34 +691,54 @@ export async function executeOrganizerPlan(planId: string, automatic = false) {
     moves.push({ sourcePath, targetPath });
   }
 
-  const operation = await prisma.operationLog.create({
+  const lease = await prisma.organizerPlan.updateMany({
+    where: {
+      id: plan.id,
+      status: plan.status,
+      updatedAt: plan.updatedAt,
+    },
     data: {
-      domain: "ORGANIZER",
-      action: "EXECUTE_MOVE",
-      status: "STARTED",
-      entityType: "OrganizerPlan",
-      entityId: plan.id,
-      externalId: plan.download?.aria2Gid ?? null,
-      planId: plan.id,
-      details: {
-        automatic,
-        downloadId: plan.downloadId,
-        moves,
-      } as Prisma.InputJsonValue,
-      rollbackData: {
-        moves: moves.map((move) => ({
-          sourcePath: move.targetPath,
-          targetPath: move.sourcePath,
-        })),
-      } as Prisma.InputJsonValue,
+      status: "EXECUTING",
+      reason: automatic
+        ? "Automatic organizer execution in progress."
+        : "Organizer execution in progress.",
     },
   });
+  if (lease.count !== 1) {
+    throw new OrganizerExecutionBusyError(
+      "Organizer plan changed or another execution already started. Reload before retrying.",
+    );
+  }
+
+  let operation: Awaited<ReturnType<typeof prisma.operationLog.create>> | null = null;
   let aria2Guard: OrganizerAria2Guard | null = null;
   let moved: OrganizerMove[] = [];
 
   try {
+    operation = await prisma.operationLog.create({
+      data: {
+        domain: "ORGANIZER",
+        action: "EXECUTE_MOVE",
+        status: "STARTED",
+        entityType: "OrganizerPlan",
+        entityId: plan.id,
+        externalId: plan.download?.aria2Gid ?? null,
+        planId: plan.id,
+        details: {
+          automatic,
+          downloadId: plan.downloadId,
+          moves,
+        } as Prisma.InputJsonValue,
+        rollbackData: {
+          moves: moves.map((move) => ({
+            sourcePath: move.targetPath,
+            targetPath: move.sourcePath,
+          })),
+        } as Prisma.InputJsonValue,
+      },
+    });
     aria2Guard = await prepareOrganizerAria2Task(plan.download?.aria2Gid);
-    moved = await moveOrganizerFiles(moves);
+    moved = await moveOrganizerFiles(moves, allowedRoots);
 
     const mediaTitle = await upsertMediaRecords(plan);
 
@@ -703,24 +759,26 @@ export async function executeOrganizerPlan(planId: string, automatic = false) {
       include: { items: true, candidate: true, download: true, mediaTitle: true },
     });
 
-    await prisma.operationLog
-      .update({
-        where: { id: operation.id },
-        data: {
-          status: "SUCCEEDED",
-          completedAt: new Date(),
-          rollbackData: {
-            moves: moves.map((move) => ({
-              sourcePath: move.targetPath,
-              targetPath: move.sourcePath,
-            })),
-            aria2: aria2Guard?.pausedByOrganizer
-              ? { action: "unpause", gid: aria2Guard.gid }
-              : null,
-          } as Prisma.InputJsonValue,
-        },
-      })
-      .catch(() => null);
+    if (operation) {
+      await prisma.operationLog
+        .update({
+          where: { id: operation.id },
+          data: {
+            status: "SUCCEEDED",
+            completedAt: new Date(),
+            rollbackData: {
+              moves: moves.map((move) => ({
+                sourcePath: move.targetPath,
+                targetPath: move.sourcePath,
+              })),
+              aria2: aria2Guard?.pausedByOrganizer
+                ? { action: "unpause", gid: aria2Guard.gid }
+                : null,
+            } as Prisma.InputJsonValue,
+          },
+        })
+        .catch(() => null);
+    }
 
     return updated;
   } catch (error) {
@@ -728,7 +786,7 @@ export async function executeOrganizerPlan(planId: string, automatic = false) {
       error instanceof OrganizerMoveError
         ? error.rollback
         : moved.length > 0
-          ? await rollbackOrganizerFiles(moved)
+          ? await rollbackOrganizerFiles(moved, allowedRoots)
           : emptyOrganizerRollback();
     let aria2Restored = false;
     let aria2RestoreError: string | null = null;
@@ -739,21 +797,33 @@ export async function executeOrganizerPlan(planId: string, automatic = false) {
         restoreError instanceof Error ? restoreError.message : "Unable to restore aria2 task";
     }
     const message = error instanceof Error ? error.message : "Organizer execution failed";
-    await prisma.operationLog
-      .update({
-        where: { id: operation.id },
+    await prisma.organizerPlan
+      .updateMany({
+        where: { id: plan.id, status: "EXECUTING" },
         data: {
           status: "FAILED",
-          errorMessage: message,
-          completedAt: new Date(),
-          rollbackData: {
-            rollback,
-            aria2Restored,
-            aria2RestoreError,
-          } as Prisma.InputJsonValue,
+          autoExecutable: false,
+          reason: message,
         },
       })
       .catch(() => null);
+    if (operation) {
+      await prisma.operationLog
+        .update({
+          where: { id: operation.id },
+          data: {
+            status: "FAILED",
+            errorMessage: message,
+            completedAt: new Date(),
+            rollbackData: {
+              rollback,
+              aria2Restored,
+              aria2RestoreError,
+            } as Prisma.InputJsonValue,
+          },
+        })
+        .catch(() => null);
+    }
     throw error;
   }
 }
@@ -804,6 +874,8 @@ export function assessOrganizerPlanAutomation(plan: {
     reasons.push("Plan is already closed.");
   } else if (failed) {
     reasons.push("Plan is marked as failed.");
+  } else if (plan.status === "EXECUTING") {
+    reasons.push("Plan execution is already in progress.");
   }
   if (!["PENDING", "NEEDS_REVIEW"].includes(plan.status)) {
     reasons.push("Plan is not in an executable status.");
@@ -821,6 +893,29 @@ export function assessOrganizerPlanAutomation(plan: {
     reasons.push("Plan has a polluted target path.");
   }
   const mediaType = plan.mediaType ?? plan.candidate?.mediaType;
+  if (
+    plan.items.some(
+      (item) =>
+        item.sourcePath &&
+        item.targetPath &&
+        path.extname(item.sourcePath).toLowerCase() !== path.extname(item.targetPath).toLowerCase(),
+    )
+  ) {
+    reasons.push("A target filename does not preserve the source extension.");
+  }
+  if (
+    mediaType !== "MOVIE" &&
+    plan.items.some(
+      (item) =>
+        item.sourcePath &&
+        item.targetPath &&
+        item.fileType?.startsWith("extra_") &&
+        targetPathUsesExtrasDirectory(item.targetPath) &&
+        sourcePathHasEpisodeIdentity(item.sourcePath, mediaType),
+    )
+  ) {
+    reasons.push("Plan puts an episode video under Extras.");
+  }
   if (
     mediaType !== "MOVIE" &&
     plan.items.some((item) => {
@@ -910,8 +1005,11 @@ export async function autoExecuteReadyOrganizerPlans(limit = 20) {
 }
 
 export async function rejectOrganizerPlan(planId: string) {
-  return prisma.organizerPlan.update({
-    where: { id: planId },
+  const rejected = await prisma.organizerPlan.updateMany({
+    where: {
+      id: planId,
+      status: { in: ["PENDING", "NEEDS_REVIEW", "CONFLICT", "FAILED"] },
+    },
     data: {
       status: "REJECTED",
       reason: "Rejected by user",
@@ -919,6 +1017,12 @@ export async function rejectOrganizerPlan(planId: string) {
       resolution: null,
     },
   });
+  if (rejected.count !== 1) {
+    throw new OrganizerExecutionBusyError(
+      "Organizer plan is closed or currently executing and cannot be rejected.",
+    );
+  }
+  return prisma.organizerPlan.findUniqueOrThrow({ where: { id: planId } });
 }
 
 export async function regenerateRejectedOrganizerPlan(planId: string) {
@@ -1562,7 +1666,7 @@ export function buildOrganizerTargetPath(input: {
       input.mediaType === "TV" ? input.roots.tvLibraryDir : input.roots.animeLibraryDir,
       "_Needs Review",
       seriesDir,
-      sanitizeSegment(path.basename(input.sourcePath)),
+      sanitizeFilename(path.basename(input.sourcePath)),
     );
   }
   const episode = input.episode
@@ -1575,8 +1679,12 @@ export function buildOrganizerTargetPath(input: {
   const ext = path.extname(input.sourcePath);
   if (input.mediaType === "MOVIE") {
     const movieName = input.year ? `${title} (${input.year})` : title;
-    const filename = `${movieName} ${tags}${ext}`;
-    return path.join(input.roots.moviesLibraryDir, movieName, filename);
+    const filename = sanitizeFilename(`${movieName} ${tags}${ext}`);
+    return path.join(
+      /* turbopackIgnore: true */ input.roots.moviesLibraryDir,
+      movieName,
+      filename,
+    );
   }
   const root =
     input.mediaType === "TV" ? input.roots.tvLibraryDir : input.roots.animeLibraryDir;
@@ -1594,7 +1702,7 @@ export function buildOrganizerTargetPath(input: {
     .filter(Boolean)
     .join(" - ");
   const taggedFilename = [filename, tags].filter(Boolean).join(" ");
-  return path.join(root, seriesDir, seasonDir, `${taggedFilename}${ext}`);
+  return path.join(root, seriesDir, seasonDir, sanitizeFilename(`${taggedFilename}${ext}`));
 }
 
 export function buildOrganizerExtraTargetPath(input: {
@@ -1645,15 +1753,18 @@ function relativeOrganizerExtraPath(sourcePath: string, sourcePackageRoot: strin
   if (!relativePath || relativePath.startsWith("..") || path.isAbsolute(relativePath)) {
     relativePath = path.basename(resolvedSource);
   }
-  const segments = relativePath
-    .split(path.sep)
-    .filter(Boolean)
-    .map(sanitizeSegment)
+  const rawSegments = relativePath.split(path.sep).filter(Boolean);
+  const segments = rawSegments
+    .map((segment, index) =>
+      index === rawSegments.length - 1 ? sanitizeFilename(segment) : sanitizeSegment(segment),
+    )
     .filter(Boolean);
   if (segments.length > 1 && /^extras?$/i.test(segments[0])) {
     segments.shift();
   }
-  return path.join(...(segments.length > 0 ? segments : [sanitizeSegment(path.basename(resolvedSource))]));
+  return path.join(
+    ...(segments.length > 0 ? segments : [sanitizeFilename(path.basename(resolvedSource))]),
+  );
 }
 
 function commonDirectoryPath(paths: string[]) {
@@ -1939,6 +2050,41 @@ function isOrganizerExtraItem(item: { targetPath: string; fileType?: string | nu
   return item.targetPath.split(path.sep).some((segment) => segment.toLowerCase() === "extras");
 }
 
+function organizerItemIntegrityIssue(input: {
+  mediaType: MediaType;
+  fileType: string;
+  sourcePath: string;
+  targetPath: string;
+}) {
+  if (path.extname(input.sourcePath).toLowerCase() !== path.extname(input.targetPath).toLowerCase()) {
+    return "Organizer target filename does not preserve the source extension.";
+  }
+  if (
+    input.mediaType !== "MOVIE" &&
+    input.fileType.startsWith("extra_") &&
+    targetPathUsesExtrasDirectory(input.targetPath) &&
+    sourcePathHasEpisodeIdentity(input.sourcePath, input.mediaType)
+  ) {
+    return "Organizer plan puts an episode video under Extras.";
+  }
+  return null;
+}
+
+function targetPathUsesExtrasDirectory(targetPath: string) {
+  return targetPath.split(path.sep).some((segment) => /^extras?$/i.test(segment));
+}
+
+function sourcePathHasEpisodeIdentity(sourcePath: string, mediaType: MediaType | undefined) {
+  if (!mediaType || mediaType === "MOVIE") {
+    return false;
+  }
+  const parsed = parseMediaReleaseTitle(
+    path.basename(sourcePath, path.extname(sourcePath)),
+    mediaType,
+  );
+  return parsed.episodeNumber !== undefined && parsed.episodeNumber > 0;
+}
+
 function cleanMediaTitle(value: string) {
   return value
     .replace(/\s*\[\s*\]\s*/g, " ")
@@ -1958,8 +2104,31 @@ function isLanguageOnlyTitleSegment(value: string) {
   return tokens.length > 0 && tokens.length <= 4 && tokens.every((token) => languageOnlyTitleTokenPattern.test(token));
 }
 
-function sanitizeSegment(value: string) {
-  return value.replace(/[/:*?"<>|\\]/g, " ").replace(/\s+/g, " ").trim().slice(0, 140);
+function sanitizeSegment(value: string, maxBytes = 140) {
+  const cleaned = value.replace(/[/:*?"<>|\\]/g, " ").replace(/\s+/g, " ").trim();
+  return truncateUtf8(cleaned, maxBytes);
+}
+
+function sanitizeFilename(value: string, maxBytes = 240) {
+  const extension = path.extname(value).replace(/[/:*?"<>|\\]/g, "");
+  const basename = path.basename(value, path.extname(value));
+  const extensionBytes = Buffer.byteLength(extension);
+  const safeBasename = sanitizeSegment(basename, Math.max(1, maxBytes - extensionBytes));
+  return `${safeBasename || "file"}${extension}`;
+}
+
+function truncateUtf8(value: string, maxBytes: number) {
+  let result = "";
+  let bytes = 0;
+  for (const character of value) {
+    const characterBytes = Buffer.byteLength(character);
+    if (bytes + characterBytes > maxBytes) {
+      break;
+    }
+    result += character;
+    bytes += characterBytes;
+  }
+  return result;
 }
 
 async function exists(targetPath: string) {

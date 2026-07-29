@@ -40,6 +40,8 @@ RUN --mount=type=cache,target=/root/.cache/prisma \
 
 FROM --platform=$BUILDPLATFORM node:24-alpine AS builder
 WORKDIR /app
+ARG KURA_BUILD_SHA=development
+ENV KURA_BUILD_SHA=$KURA_BUILD_SHA
 COPY --from=build-prisma /app/node_modules ./node_modules
 COPY --from=source /app ./
 RUN --mount=type=cache,target=/app/.next/cache npm run build
@@ -52,7 +54,9 @@ RUN npm run build:worker
 
 FROM node:24-alpine AS runner
 WORKDIR /app
+ARG KURA_BUILD_SHA=development
 ENV NODE_ENV=production
+ENV KURA_BUILD_SHA=$KURA_BUILD_SHA
 ENV HOSTNAME=0.0.0.0
 ENV PORT=3000
 ENV KURA_AUTO_MIGRATE=false

@@ -8,7 +8,14 @@ import { createOrganizerPlanForCandidateSource } from "@/lib/organizer";
 import { getAppSettings } from "@/lib/settings";
 
 const videoExtensions = new Set([".mkv", ".mp4", ".avi", ".mov", ".webm", ".m4v", ".ts"]);
-const activePlanStatuses = ["PENDING", "NEEDS_REVIEW", "CONFLICT", "EXECUTED", "AUTO_ARCHIVED"] as const;
+const activePlanStatuses = [
+  "PENDING",
+  "NEEDS_REVIEW",
+  "EXECUTING",
+  "CONFLICT",
+  "EXECUTED",
+  "AUTO_ARCHIVED",
+] as const;
 
 export type ImportScanInput = {
   root: string;

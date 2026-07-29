@@ -87,27 +87,37 @@ For Unraid-style deployments, see [unraid-deployment.md](unraid-deployment.md).
 
 The repository includes `.github/workflows/docker-image.yml` for automated
 multi-arch image publishing to Docker Hub. On every branch push, GitHub Actions
-builds and pushes four images with three tags: `latest`, the branch name, and a
-Shanghai-time date tag in `YYYYMMDDHHMMSS` format:
+builds and pushes four images with immutable `sha-<commit>` tags and the branch
+tag. The default branch also receives `latest` and a Shanghai-time date tag:
 
 ```text
 <dockerhub-namespace>/kura:latest
 <dockerhub-namespace>/kura:<branch>
+<dockerhub-namespace>/kura:sha-<commit>
 <dockerhub-namespace>/kura:<YYYYMMDDHHMMSS>
 <dockerhub-namespace>/kura-worker:latest
 <dockerhub-namespace>/kura-worker:<branch>
+<dockerhub-namespace>/kura-worker:sha-<commit>
 <dockerhub-namespace>/kura-worker:<YYYYMMDDHHMMSS>
 <dockerhub-namespace>/kura-migrator:latest
 <dockerhub-namespace>/kura-migrator:<branch>
+<dockerhub-namespace>/kura-migrator:sha-<commit>
 <dockerhub-namespace>/kura-migrator:<YYYYMMDDHHMMSS>
 <dockerhub-namespace>/kura-mdns:latest
 <dockerhub-namespace>/kura-mdns:<branch>
+<dockerhub-namespace>/kura-mdns:sha-<commit>
 <dockerhub-namespace>/kura-mdns:<YYYYMMDDHHMMSS>
 ```
 
 If several commits are pushed to the same branch quickly, the workflow cancels
 the older in-progress run for that branch so stale builds do not overwrite the
 newer branch or `latest` tags.
+
+The web image embeds the commit SHA in `KURA_BUILD_SHA`. Organizer mutation
+requests include that revision and are rejected when a browser page and API
+container come from different builds. Deploy all web replicas from the same
+immutable SHA tag, run the matching migrator first, and reload Organizer after
+an upgrade.
 
 The workflow builds `linux/amd64` and `linux/arm64` images from the existing
 Dockerfile targets:

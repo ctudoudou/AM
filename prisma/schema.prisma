@@ -39,6 +39,7 @@ enum CandidateStatus {
 enum OrganizerPlanStatus {
   PENDING
   NEEDS_REVIEW
+  EXECUTING
   AUTO_ARCHIVED
   EXECUTED
   REJECTED
