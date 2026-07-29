@@ -97,6 +97,20 @@ export function jsonError(error: unknown) {
     );
   }
 
+  if (isDatabaseMigrationError(error)) {
+    if (process.env.NODE_ENV === "production") {
+      console.error("Database migration required", error);
+    }
+    return NextResponse.json(
+      {
+        error: "DATABASE_MIGRATION_REQUIRED",
+        message:
+          "Kura's database schema is older than this application build. Run the matching migrator before retrying.",
+      },
+      { status: 503 },
+    );
+  }
+
   if (isNotFoundError(error)) {
     return NextResponse.json(
       {
@@ -126,6 +140,13 @@ export function jsonError(error: unknown) {
       message: errorMessage(error, "An unexpected server error occurred."),
     },
     { status: 500 },
+  );
+}
+
+function isDatabaseMigrationError(error: unknown) {
+  return (
+    error instanceof Prisma.PrismaClientKnownRequestError &&
+    (error.code === "P2021" || error.code === "P2022")
   );
 }
 

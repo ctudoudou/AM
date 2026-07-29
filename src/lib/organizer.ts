@@ -740,32 +740,31 @@ export async function executeOrganizerPlan(
     aria2Guard = await prepareOrganizerAria2Task(plan.download?.aria2Gid);
     moved = await moveOrganizerFiles(moves, allowedRoots);
 
-    const mediaTitle = await upsertMediaRecords(plan);
-
-    if (plan.download) {
-      await prisma.download.update({
-        where: { id: plan.download.id },
-        data: { archiveStatus: automatic ? "auto_archived" : "archived" },
-      });
-    }
-
-    const updated = await prisma.organizerPlan.update({
-      where: { id: plan.id },
-      data: {
-        status: automatic ? "AUTO_ARCHIVED" : "EXECUTED",
-        mediaTitleId: mediaTitle.id,
-        executedAt: new Date(),
-      },
-      include: { items: true, candidate: true, download: true, mediaTitle: true },
-    });
-
-    if (operation) {
-      await prisma.operationLog
-        .update({
-          where: { id: operation.id },
+    const operationId = operation.id;
+    const completedAt = new Date();
+    const updated = await prisma.$transaction(
+      async (database) => {
+        const mediaTitle = await upsertMediaRecords(plan, database);
+        if (plan.download) {
+          await database.download.update({
+            where: { id: plan.download.id },
+            data: { archiveStatus: automatic ? "auto_archived" : "archived" },
+          });
+        }
+        const executedPlan = await database.organizerPlan.update({
+          where: { id: plan.id },
+          data: {
+            status: automatic ? "AUTO_ARCHIVED" : "EXECUTED",
+            mediaTitleId: mediaTitle.id,
+            executedAt: completedAt,
+          },
+          include: { items: true, candidate: true, download: true, mediaTitle: true },
+        });
+        await database.operationLog.update({
+          where: { id: operationId },
           data: {
             status: "SUCCEEDED",
-            completedAt: new Date(),
+            completedAt,
             rollbackData: {
               moves: moves.map((move) => ({
                 sourcePath: move.targetPath,
@@ -776,9 +775,12 @@ export async function executeOrganizerPlan(
                 : null,
             } as Prisma.InputJsonValue,
           },
-        })
-        .catch(() => null);
-    }
+        });
+        return executedPlan;
+      },
+      { maxWait: 5_000, timeout: 30_000 },
+    );
+    await cacheOrganizerMediaArtwork(updated.mediaTitleId, plan.metadata).catch(() => null);
 
     return updated;
   } catch (error) {
@@ -1863,7 +1865,7 @@ async function upsertMediaRecords(plan: {
     subtitleGroup: string | null;
     group: { displayTitle: string; normalizedTitle: string; aliases: unknown } | null;
   } | null;
-}) {
+}, database: Prisma.TransactionClient) {
   const metadata = plan.metadata as {
     title?: string;
     originalTitle?: string;
@@ -1894,7 +1896,7 @@ async function upsertMediaRecords(plan: {
   ];
   const media =
     (plan.mediaTitleId
-      ? await prisma.mediaTitle.findUnique({ where: { id: plan.mediaTitleId } })
+      ? await database.mediaTitle.findUnique({ where: { id: plan.mediaTitleId } })
       : null) ??
     (await findExistingMediaTitle({
       type: mediaType,
@@ -1902,15 +1904,15 @@ async function upsertMediaRecords(plan: {
       year: metadata?.year,
       originalTitle: metadata?.originalTitle,
       aliases: aliasValues,
-    })) ??
-    (await prisma.mediaTitle.findFirst({
+    }, database)) ??
+    (await database.mediaTitle.findFirst({
       where: {
         type: mediaType,
         primaryTitle: title,
         year: metadata?.year ?? null,
       },
     })) ??
-    (await prisma.mediaTitle.create({
+    (await database.mediaTitle.create({
       data: {
         type: mediaType,
         primaryTitle: title,
@@ -1921,32 +1923,21 @@ async function upsertMediaRecords(plan: {
         backdropUrl: metadata?.backdropUrl,
       },
     }));
-  await addMediaTitleAliases(media.id, aliasValues);
-  const posterUrl =
-    (await cacheRemoteMediaAsset(metadata?.posterUrl, {
-      mediaId: media.id,
-      kind: "poster",
-    })) ?? (isLocalMediaAssetUrl(metadata?.posterUrl) ? metadata?.posterUrl : undefined);
-  const backdropUrl =
-    (await cacheRemoteMediaAsset(metadata?.backdropUrl, {
-      mediaId: media.id,
-      kind: "backdrop",
-    })) ?? (isLocalMediaAssetUrl(metadata?.backdropUrl) ? metadata?.backdropUrl : undefined);
-
-  await prisma.mediaTitle.update({
+  await addMediaTitleAliases(media.id, aliasValues, database);
+  await database.mediaTitle.update({
     where: { id: media.id },
     data: {
       primaryTitle: title,
       originalTitle: metadata?.originalTitle,
       year: metadata?.year,
       synopsis: metadata?.synopsis,
-      posterUrl,
-      backdropUrl,
+      posterUrl: metadata?.posterUrl,
+      backdropUrl: metadata?.backdropUrl,
     },
   });
   for (const item of plan.items) {
     if (isOrganizerExtraItem(item)) {
-      const existing = await prisma.mediaFile.findFirst({
+      const existing = await database.mediaFile.findFirst({
         where: { absolutePath: item.targetPath },
         select: { id: true },
       });
@@ -1965,13 +1956,13 @@ async function upsertMediaRecords(plan: {
         subtitleGroup: candidate?.subtitleGroup,
       };
       if (existing) {
-        await prisma.mediaFile.update({
+        await database.mediaFile.update({
           where: { id: existing.id },
           data,
         });
         continue;
       }
-      await prisma.mediaFile.create({ data });
+      await database.mediaFile.create({ data });
       continue;
     }
 
@@ -1993,12 +1984,12 @@ async function upsertMediaRecords(plan: {
               episodeNumber: mediaType === "MOVIE" ? 1 : 0,
               episodeTitle: path.basename(item.originalName, path.extname(item.originalName)),
             };
-    const season = await prisma.season.upsert({
+    const season = await database.season.upsert({
       where: { mediaId_number: { mediaId: media.id, number: identity.season } },
       create: { mediaId: media.id, number: identity.season },
       update: {},
     });
-    const episode = await prisma.episode.upsert({
+    const episode = await database.episode.upsert({
       where: {
         seasonId_number: {
           seasonId: season.id,
@@ -2012,7 +2003,7 @@ async function upsertMediaRecords(plan: {
       },
       update: { title: identity.episodeTitle },
     });
-    const existing = await prisma.mediaFile.findFirst({
+    const existing = await database.mediaFile.findFirst({
       where: { absolutePath: item.targetPath },
       select: { id: true },
     });
@@ -2028,19 +2019,47 @@ async function upsertMediaRecords(plan: {
       subtitleGroup: candidate?.subtitleGroup,
     };
     if (existing) {
-      await prisma.mediaFile.update({
+      await database.mediaFile.update({
         where: { id: existing.id },
         data,
       });
       continue;
     }
-    await prisma.mediaFile.create({
+    await database.mediaFile.create({
       data: {
         ...data,
       },
     });
   }
   return media;
+}
+
+async function cacheOrganizerMediaArtwork(mediaId: string | null, metadataValue: unknown) {
+  if (!mediaId) {
+    return;
+  }
+  const metadata = metadataValue as {
+    posterUrl?: string;
+    backdropUrl?: string;
+  } | null;
+  const [posterUrl, backdropUrl] = await Promise.all([
+    cacheRemoteMediaAsset(metadata?.posterUrl, { mediaId, kind: "poster" }),
+    cacheRemoteMediaAsset(metadata?.backdropUrl, { mediaId, kind: "backdrop" }),
+  ]);
+  const data = {
+    ...(posterUrl || isLocalMediaAssetUrl(metadata?.posterUrl)
+      ? { posterUrl: posterUrl ?? metadata?.posterUrl }
+      : {}),
+    ...(backdropUrl || isLocalMediaAssetUrl(metadata?.backdropUrl)
+      ? { backdropUrl: backdropUrl ?? metadata?.backdropUrl }
+      : {}),
+  };
+  if (Object.keys(data).length > 0) {
+    await prisma.mediaTitle.update({
+      where: { id: mediaId },
+      data,
+    });
+  }
 }
 
 function isOrganizerExtraItem(item: { targetPath: string; fileType?: string | null }) {

@@ -45,6 +45,8 @@ export const zhHans = {
   enabled: "启用",
   disabled: "停用",
   settingsLoadError: "无法加载设置。请确认数据库已迁移并正在运行。",
+  databaseMigrationRequired:
+    "数据库结构落后于当前 Kura 版本。请运行同一版本的迁移镜像，然后重启 Web 和 Worker。",
   settingsSaveError: "保存设置失败。",
   unsavedChanges: "{count} 个设置分区尚未保存",
   saveAll: "全部保存",

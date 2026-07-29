@@ -78,6 +78,10 @@ target/image before the first start and before upgrades that include schema
 changes. Set `DATABASE_URL`, `ARIA2_RPC_URL`, and the `/data` directory
 variables to values reachable from all Kura containers.
 
+When an API returns `503 DATABASE_MIGRATION_REQUIRED`, the web image is newer
+than the connected database schema. Stop Organizer mutations, run the migrator
+from the same immutable image SHA, and restart the web and worker containers.
+
 Do not use `localhost` for PostgreSQL or aria2 unless the service runs in the
 same container. Inside Docker, `localhost` is the current container.
 

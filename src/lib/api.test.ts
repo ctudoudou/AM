@@ -111,6 +111,29 @@ describe("jsonError", () => {
     });
   });
 
+  it("returns an actionable 503 when the database schema is behind", async () => {
+    vi.stubEnv("NODE_ENV", "production");
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const error = new Prisma.PrismaClientKnownRequestError(
+      "The column OrganizerPlan.resolvedAt does not exist",
+      {
+        code: "P2022",
+        clientVersion: "test",
+        meta: { column: "OrganizerPlan.resolvedAt" },
+      },
+    );
+
+    const response = jsonError(error);
+
+    expect(response.status).toBe(503);
+    await expect(response.json()).resolves.toEqual({
+      error: "DATABASE_MIGRATION_REQUIRED",
+      message:
+        "Kura's database schema is older than this application build. Run the matching migrator before retrying.",
+    });
+    expect(consoleError).toHaveBeenCalledWith("Database migration required", error);
+  });
+
   it("returns 404 for missing filesystem resources", async () => {
     vi.stubEnv("NODE_ENV", "production");
     const error = Object.assign(new Error("ENOENT: /private/media/file.mkv"), {
