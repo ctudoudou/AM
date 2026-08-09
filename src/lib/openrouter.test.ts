@@ -1,6 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { getAppSettings } from "@/lib/settings";
-import { translateSubtitleCuesWithOpenRouter } from "./openrouter";
+import {
+  groupCandidatesWithOpenRouter,
+  translateSubtitleCuesWithOpenRouter,
+} from "./openrouter";
 
 vi.mock("@/lib/settings", () => ({
   getAppSettings: vi.fn(),
@@ -68,5 +71,33 @@ describe("translateSubtitleCuesWithOpenRouter", () => {
       }),
     ).rejects.toThrow("API key is not configured");
     expect(fetchMock).not.toHaveBeenCalled();
+  });
+});
+
+describe("groupCandidatesWithOpenRouter", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.mocked(getAppSettings).mockResolvedValue({
+      ai: { openRouterApiKey: "", model: "" },
+    } as Awaited<ReturnType<typeof getAppSettings>>);
+  });
+
+  it("marks high-confidence heuristic fallback groups for review", async () => {
+    const groups = await groupCandidatesWithOpenRouter([
+      {
+        id: "candidate-1",
+        rawTitle: "[Group] Example - 01 [1080p]",
+        parsedTitle: "Example",
+        normalizedTitle: "example",
+        episodeNumber: 1,
+        season: 1,
+        resolution: "1080p",
+      },
+    ]);
+
+    expect(groups[0]).toMatchObject({
+      confidence: 0.85,
+      reviewRequired: true,
+    });
   });
 });

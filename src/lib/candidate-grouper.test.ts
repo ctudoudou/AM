@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { validateGroupProposals } from "./candidate-grouper";
+import { proposalNeedsReview, validateGroupProposals } from "./candidate-grouper";
 
 const candidates = [{ id: "candidate-1" }, { id: "candidate-2" }, { id: "candidate-3" }];
 
@@ -53,5 +53,13 @@ describe("validateGroupProposals", () => {
         candidates,
       ),
     ).toBe(false);
+  });
+});
+
+describe("proposalNeedsReview", () => {
+  it("does not let high heuristic confidence bypass an explicit review requirement", () => {
+    expect(proposalNeedsReview({ confidence: 0.85, reviewRequired: true })).toBe(true);
+    expect(proposalNeedsReview({ confidence: 0.9, reviewRequired: false })).toBe(false);
+    expect(proposalNeedsReview({ confidence: 0.8, reviewRequired: false })).toBe(true);
   });
 });

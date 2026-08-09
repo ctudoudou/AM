@@ -28,6 +28,7 @@ import type {
   SubscriptionQueueReason,
   SubscriptionQueueState,
 } from "@/lib/subscription-queue-state";
+import { subscriptionCandidateNeedsReview } from "@/lib/subscription-review-gate";
 import {
   type CandidateQueueSort,
   summarizeCandidateGroupFreshness,
@@ -173,6 +174,7 @@ type SubscriptionStrategyDraft = {
 type PendingSubscription = {
   group: CandidateGroup;
   candidate?: Candidate;
+  reviewConfirmed: boolean;
   strategy: SubscriptionStrategyDraft;
 };
 type CandidateVariant = {
@@ -615,6 +617,7 @@ export function SubscriptionsClient({ locale }: { locale: Locale }) {
     setPendingSubscription({
       group,
       candidate,
+      reviewConfirmed: false,
       strategy: buildSubscriptionStrategy(group, candidate),
     });
   }
@@ -629,7 +632,10 @@ export function SubscriptionsClient({ locale }: { locale: Locale }) {
                 ...current.strategy,
                 ...patch,
               }),
-              autoDownload: current.candidate ? (patch.autoDownload ?? current.strategy.autoDownload) : false,
+              autoDownload:
+                current.candidate && !pendingSubscriptionNeedsReview(current)
+                  ? (patch.autoDownload ?? current.strategy.autoDownload)
+                  : false,
             },
           }
         : current,
@@ -666,6 +672,7 @@ export function SubscriptionsClient({ locale }: { locale: Locale }) {
           preferredSourceKind: candidate?.sourceKind ?? undefined,
           preferredVariantKey: candidate?.variantKey ?? undefined,
           autoDownload: strategy.autoDownload,
+          reviewConfirmed: pendingSubscription.reviewConfirmed,
           fallbackPolicy: "manual_review",
         }),
       });
@@ -1302,7 +1309,22 @@ export function SubscriptionsClient({ locale }: { locale: Locale }) {
                                         ? t.switchVersion
                                         : t.subscribeVersion}
                                   </button>
-                                  <button onClick={() => void downloadCandidate(candidate)} type="button">
+                                  <button
+                                    disabled={subscriptionCandidateNeedsReview({
+                                      candidateStatus: candidate.status,
+                                      groupReviewRequired: group.reviewRequired,
+                                    })}
+                                    onClick={() => void downloadCandidate(candidate)}
+                                    title={
+                                      subscriptionCandidateNeedsReview({
+                                        candidateStatus: candidate.status,
+                                        groupReviewRequired: group.reviewRequired,
+                                      })
+                                        ? t.downloadReviewBlocked
+                                        : t.download
+                                    }
+                                    type="button"
+                                  >
                                     <Download size={14} />
                                     {t.download}
                                   </button>
@@ -1495,10 +1517,20 @@ export function SubscriptionsClient({ locale }: { locale: Locale }) {
               </label>
             </div>
 
-            <label className={pendingSubscription.candidate ? "strategy-toggle" : "strategy-toggle disabled"}>
+            <label
+              className={
+                pendingSubscription.candidate && !pendingSubscriptionNeedsReview(pendingSubscription)
+                  ? "strategy-toggle"
+                  : "strategy-toggle disabled"
+              }
+            >
               <input
                 checked={pendingSubscription.strategy.autoDownload}
-                disabled={subscriptionSubmitting || !pendingSubscription.candidate}
+                disabled={
+                  subscriptionSubmitting ||
+                  !pendingSubscription.candidate ||
+                  pendingSubscriptionNeedsReview(pendingSubscription)
+                }
                 onChange={(event) =>
                   updatePendingStrategy({
                     autoDownload: event.target.checked,
@@ -1508,6 +1540,30 @@ export function SubscriptionsClient({ locale }: { locale: Locale }) {
               />
               <span>{t.strategyAutoDownload}</span>
             </label>
+
+            {pendingSubscriptionNeedsReview(pendingSubscription) ? (
+              <div className="settings-alert strategy-review-gate">
+                <div>
+                  <strong>{t.strategyReviewWarning}</strong>
+                  <span>{t.strategyReviewAutoDownloadBlocked}</span>
+                </div>
+                <label className="strategy-toggle">
+                  <input
+                    checked={pendingSubscription.reviewConfirmed}
+                    disabled={subscriptionSubmitting}
+                    onChange={(event) =>
+                      setPendingSubscription((current) =>
+                        current
+                          ? { ...current, reviewConfirmed: event.target.checked }
+                          : current,
+                      )
+                    }
+                    type="checkbox"
+                  />
+                  <span>{t.strategyReviewConfirm}</span>
+                </label>
+              </div>
+            ) : null}
 
             <div className="strategy-preview">
               <div className="strategy-preview-heading">
@@ -1525,6 +1581,14 @@ export function SubscriptionsClient({ locale }: { locale: Locale }) {
                   {subscriptionPreview.evaluations.slice(0, 6).map((evaluation) => (
                     <StrategyEvaluationRow
                       evaluation={evaluation}
+                      forceReview={
+                        pendingSubscription.group.reviewRequired ||
+                        pendingSubscription.group.candidates.some(
+                          (candidate) =>
+                            candidate.id === evaluation.candidate.id &&
+                            candidate.status === "REVIEW",
+                        )
+                      }
                       isSelected={subscriptionPreview.selection.candidate?.id === evaluation.candidate.id}
                       key={evaluation.candidate.id}
                       locale={locale}
@@ -1547,7 +1611,11 @@ export function SubscriptionsClient({ locale }: { locale: Locale }) {
               </button>
               <button
                 className="strategy-confirm-button"
-                disabled={subscriptionSubmitting}
+                disabled={
+                  subscriptionSubmitting ||
+                  (pendingSubscriptionNeedsReview(pendingSubscription) &&
+                    !pendingSubscription.reviewConfirmed)
+                }
                 onClick={() => void submitPendingSubscription()}
                 type="button"
               >
@@ -1573,23 +1641,26 @@ function StrategySummaryItem({ label, value }: { label: string; value: string })
 
 function StrategyEvaluationRow({
   evaluation,
+  forceReview,
   isSelected,
   locale,
   t,
 }: {
   evaluation: SubscriptionCandidateEvaluation;
+  forceReview: boolean;
   isSelected: boolean;
   locale: Locale;
   t: ReturnType<typeof getMessages>;
 }) {
+  const needsReview = forceReview || evaluation.needsReview;
   const state = !evaluation.eligible
     ? "rejected"
-    : evaluation.needsReview
+    : needsReview
       ? "review"
       : "eligible";
   const stateLabel = !evaluation.eligible
     ? t.strategyPreviewRejected
-    : evaluation.needsReview
+    : needsReview
       ? t.strategyPreviewReview
       : t.strategyPreviewEligible;
 
@@ -2069,8 +2140,20 @@ function buildSubscriptionStrategy(group: CandidateGroup, candidate?: Candidate)
     episodeStart: candidate?.episodeNumber ?? null,
     episodeEnd: null,
     batchPolicy: "review",
-    autoDownload: Boolean(candidate),
+    autoDownload:
+      Boolean(candidate) &&
+      !subscriptionCandidateNeedsReview({
+        candidateStatus: candidate?.status,
+        groupReviewRequired: group.reviewRequired,
+      }),
   };
+}
+
+function pendingSubscriptionNeedsReview(pending: PendingSubscription) {
+  return subscriptionCandidateNeedsReview({
+    candidateStatus: pending.candidate?.status,
+    groupReviewRequired: pending.group.reviewRequired,
+  });
 }
 
 function formatSubscriptionScope(

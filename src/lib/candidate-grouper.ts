@@ -18,6 +18,7 @@ type CandidateGroupProposal = {
   season?: number | null;
   candidateIds: string[];
   confidence: number;
+  reviewRequired?: boolean;
   aliases: string[];
   summary: string;
 };
@@ -131,6 +132,7 @@ export async function groupUngroupedCandidates(
           mediaType,
           aiInputs,
           "Rule grouping used because AI grouping did not cover the candidate set safely.",
+          true,
         );
     groups.push(...mediaGroups.map((group) => ({ ...group, mediaType })));
   }
@@ -143,7 +145,7 @@ export async function groupUngroupedCandidates(
       where: { id: { in: group.candidateIds } },
       data: {
         groupId: record.id,
-        status: group.confidence >= 0.82 ? "READY" : "REVIEW",
+        status: proposalNeedsReview(group) ? "REVIEW" : "READY",
         confidence: group.confidence,
       },
     });
@@ -199,7 +201,7 @@ async function resolveIntakeTargetGroup(group: CandidateGroupProposal & { mediaT
       data: {
         displayTitle: chooseStableDisplayTitle(canonicalGroup.displayTitle, group.displayTitle),
         confidence: Math.max(canonicalGroup.confidence, group.confidence),
-        reviewRequired: canonicalGroup.reviewRequired && group.confidence < 0.82,
+        reviewRequired: proposalNeedsReview(group),
         aiSummary: group.summary,
         aliases: mergeGroupAliases(canonicalGroup.aliases, group.aliases, group.displayTitle) as Prisma.InputJsonValue,
       },
@@ -213,7 +215,7 @@ async function resolveIntakeTargetGroup(group: CandidateGroupProposal & { mediaT
       displayTitle: group.displayTitle,
       season,
       confidence: group.confidence,
-      reviewRequired: group.confidence < 0.82,
+      reviewRequired: proposalNeedsReview(group),
       aiSummary: group.summary,
       aliases: group.aliases as Prisma.InputJsonValue,
     },
@@ -305,9 +307,9 @@ export async function repairCandidateGroups(batchSize = 200) {
           confidence: group.confidence,
           status: preserveStatus
             ? candidate.status
-            : group.confidence >= 0.82
-              ? "READY"
-              : "REVIEW",
+            : proposalNeedsReview(group)
+              ? "REVIEW"
+              : "READY",
         },
       });
       grouped += 1;
@@ -489,7 +491,7 @@ async function resolveRepairTargetGroup(
         displayTitle: group.displayTitle,
         season,
         confidence: group.confidence,
-        reviewRequired: group.confidence < 0.82,
+        reviewRequired: proposalNeedsReview(group),
         aiSummary: group.summary,
         aliases: group.aliases as Prisma.InputJsonValue,
       },
@@ -537,7 +539,7 @@ async function resolveRepairTargetGroup(
       displayTitle: group.displayTitle,
       season,
       confidence: group.confidence,
-      reviewRequired: group.confidence < 0.82,
+      reviewRequired: proposalNeedsReview(group),
       aiSummary: group.summary,
       aliases: mergeGroupAliases(targetGroup.aliases, group.aliases, group.displayTitle) as Prisma.InputJsonValue,
     },
@@ -710,6 +712,7 @@ function heuristicMediaGroups(
   mediaType: MediaType,
   candidates: GroupableCandidate[],
   summary?: string,
+  reviewRequired = false,
 ) {
   const grouped = mediaType === "ANIME"
     ? groupAnimeCandidatesByAlias(mediaType, candidates)
@@ -721,6 +724,7 @@ function heuristicMediaGroups(
     season: items[0].season ?? 1,
     candidateIds: items.map((item) => item.id),
     confidence: Math.min(...items.map((item) => 0.72 + (item.resolution ? 0.08 : 0))),
+    reviewRequired,
     aliases: [...new Set(items.map((item) => item.parsedTitle))],
     summary:
       summary ??
@@ -730,6 +734,10 @@ function heuristicMediaGroups(
           ? "Rule grouping used for TV intake."
           : "Rule grouping used for anime intake."),
   }));
+}
+
+export function proposalNeedsReview(group: Pick<CandidateGroupProposal, "confidence" | "reviewRequired">) {
+  return group.reviewRequired === true || group.confidence < 0.82;
 }
 
 function groupCandidatesByNormalizedTitle(mediaType: MediaType, candidates: GroupableCandidate[]) {

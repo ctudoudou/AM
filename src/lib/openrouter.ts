@@ -121,7 +121,10 @@ export async function groupCandidatesWithOpenRouter(candidates: AiCandidateInput
     const payload = await response.json();
     const content = payload?.choices?.[0]?.message?.content;
     const json = typeof content === "string" ? JSON.parse(content) : content;
-    return aiGroupSchema.parse(json).groups;
+    return aiGroupSchema.parse(json).groups.map((group) => ({
+      ...group,
+      reviewRequired: false,
+    }));
   } catch {
     return heuristicGroups(
       candidates,
@@ -280,6 +283,7 @@ function heuristicGroups(
     season: items[0].season ?? 1,
     candidateIds: items.map((item) => item.id),
     confidence: Math.min(...items.map((item) => 0.75 + (item.resolution ? 0.1 : 0))),
+    reviewRequired: true,
     aliases: [...new Set(items.map((item) => item.parsedTitle))],
     summary,
   }));
