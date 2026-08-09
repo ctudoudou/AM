@@ -1,5 +1,5 @@
 import path from "node:path";
-import type { MediaType } from "@prisma/client";
+import type { MediaType, Prisma } from "@prisma/client";
 import { normalizeTitleAliases } from "@/lib/anime-parser";
 import { prisma } from "@/lib/db";
 import { cleanTvSeriesTitle, parseMediaReleaseTitle } from "@/lib/media-parser";
@@ -13,8 +13,11 @@ type IdentityInput = {
   aliases?: Array<string | null | undefined>;
 };
 
-export async function findExistingMediaTitle(input: IdentityInput) {
-  const exact = await prisma.mediaTitle.findFirst({
+export async function findExistingMediaTitle(
+  input: IdentityInput,
+  database: Prisma.TransactionClient = prisma,
+) {
+  const exact = await database.mediaTitle.findFirst({
     where: {
       type: input.type,
       primaryTitle: input.title,
@@ -34,7 +37,7 @@ export async function findExistingMediaTitle(input: IdentityInput) {
     return null;
   }
 
-  const candidates = await prisma.mediaTitle.findMany({
+  const candidates = await database.mediaTitle.findMany({
     where: {
       type: input.type,
       ...(input.year
@@ -65,7 +68,7 @@ export async function findExistingMediaTitle(input: IdentityInput) {
     return null;
   }
 
-  const crossYearCandidates = await prisma.mediaTitle.findMany({
+  const crossYearCandidates = await database.mediaTitle.findMany({
     where: { type: input.type },
     include: {
       aliases: true,
@@ -83,8 +86,12 @@ export async function findExistingMediaTitle(input: IdentityInput) {
   return rankMediaIdentityMatches(keys, crossYearCandidates, { minimumScore: 3 })[0]?.media ?? null;
 }
 
-export async function addMediaTitleAliases(mediaId: string, values: Array<string | null | undefined>) {
-  return upsertTitleAliases(mediaId, aliasesFromTitleTexts(values));
+export async function addMediaTitleAliases(
+  mediaId: string,
+  values: Array<string | null | undefined>,
+  database: Prisma.TransactionClient = prisma,
+) {
+  return upsertTitleAliases(mediaId, aliasesFromTitleTexts(values), database);
 }
 
 export async function mergeDuplicateAnimeTitles() {

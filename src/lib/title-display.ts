@@ -1,4 +1,5 @@
 import * as OpenCC from "opencc-js";
+import type { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/db";
 import type { AppSettings } from "@/lib/settings";
 
@@ -106,7 +107,11 @@ export function collectTitleCandidates(media: DisplayMediaTitle) {
   });
 }
 
-export async function upsertTitleAliases(mediaId: string, aliases: TitleAliasInput[]) {
+export async function upsertTitleAliases(
+  mediaId: string,
+  aliases: TitleAliasInput[],
+  database: Prisma.TransactionClient = prisma,
+) {
   const cleanAliases = aliases
     .flatMap(expandChineseAlias)
     .map((alias) => ({
@@ -118,7 +123,7 @@ export async function upsertTitleAliases(mediaId: string, aliases: TitleAliasInp
     return { created: 0 };
   }
 
-  const existing = await prisma.titleAlias.findMany({
+  const existing = await database.titleAlias.findMany({
     where: { mediaId },
     select: { title: true, locale: true },
   });
@@ -129,7 +134,7 @@ export async function upsertTitleAliases(mediaId: string, aliases: TitleAliasInp
     if (existingKeys.has(key)) {
       continue;
     }
-    await prisma.titleAlias.create({
+    await database.titleAlias.create({
       data: {
         mediaId,
         title: alias.title,

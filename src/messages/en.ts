@@ -45,6 +45,8 @@ export const en = {
   enabled: "Enabled",
   disabled: "Disabled",
   settingsLoadError: "Unable to load settings. Confirm the database is migrated and running.",
+  databaseMigrationRequired:
+    "The database schema is older than this Kura build. Run the matching migrator, then restart web and worker.",
   settingsSaveError: "Failed to save settings.",
   unsavedChanges: "{count} sections have unsaved changes",
   saveAll: "Save all",

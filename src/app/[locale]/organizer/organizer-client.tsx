@@ -165,6 +165,7 @@ export function OrganizerClient({
           `/api/organizer/plans?${organizerPlanParams(filter, planPage)}`,
           undefined,
           t.organizerLoadError,
+          { DATABASE_MIGRATION_REQUIRED: t.databaseMigrationRequired },
         ),
         requestJson<{ operations: OrganizerOperationRecord[] }>(
           "/api/operations?domain=ORGANIZER&limit=15",
@@ -205,7 +206,7 @@ export function OrganizerClient({
         setRefreshing(false);
       }
     }
-  }, [filter, planPage, t.organizerLoadError]);
+  }, [filter, planPage, t.databaseMigrationRequired, t.organizerLoadError]);
 
   const loadImportRoot = useCallback(async () => {
     try {
@@ -1531,6 +1532,7 @@ async function requestJson<T>(
   input: RequestInfo | URL,
   init: RequestInit | undefined,
   fallbackMessage: string,
+  errorMessages?: Record<string, string>,
 ): Promise<T> {
   let response: Response;
   try {
@@ -1540,12 +1542,15 @@ async function requestJson<T>(
   }
   if (!response.ok) {
     const body = (await response.json().catch(() => null)) as
-      | { message?: unknown }
+      | { error?: unknown; message?: unknown }
       | null;
+    const mappedMessage =
+      typeof body?.error === "string" ? errorMessages?.[body.error] : undefined;
     throw new Error(
-      typeof body?.message === "string" && body.message.trim()
-        ? body.message
-        : fallbackMessage,
+      mappedMessage ??
+        (typeof body?.message === "string" && body.message.trim()
+          ? body.message
+          : fallbackMessage),
     );
   }
   return response.json() as Promise<T>;
