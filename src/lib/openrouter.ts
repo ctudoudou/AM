@@ -159,7 +159,7 @@ export async function reviewOrganizerPlanWithOpenRouter(
           {
             role: "system",
             content:
-              "You review NAS anime organizer plans. Decide which source files belong to the candidate title and episode. Return strict JSON only: {\"riskLevel\":\"OK|REVIEW|REJECT\",\"confidence\":0.9,\"summary\":\"\",\"acceptedSourcePaths\":[\"\"],\"rejectedSourcePaths\":[\"\"]}. Reject unrelated titles, wrong episodes, and files that should not be moved into the target title. Do not invent paths.",
+              "You review NAS organizer plans for anime, movies, and TV series. Decide whether every source file belongs to the candidate title, media type, season, and episode. Return strict JSON only: {\"riskLevel\":\"OK|REVIEW|REJECT\",\"confidence\":0.9,\"summary\":\"\",\"acceptedSourcePaths\":[\"\"],\"rejectedSourcePaths\":[\"\"]}. Classify every provided path exactly once. Reject unrelated titles, wrong media types, wrong seasons or episodes, samples, previews, and files that should not move into the target title. Do not invent or rewrite paths.",
           },
           {
             role: "user",

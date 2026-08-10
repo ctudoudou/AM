@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { getAppSettings } from "@/lib/settings";
 import {
   groupCandidatesWithOpenRouter,
+  reviewOrganizerPlanWithOpenRouter,
   translateSubtitleCuesWithOpenRouter,
 } from "./openrouter";
 
@@ -99,5 +100,61 @@ describe("groupCandidatesWithOpenRouter", () => {
       confidence: 0.85,
       reviewRequired: true,
     });
+  });
+});
+
+describe("reviewOrganizerPlanWithOpenRouter", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("validates a movie classification and requires every path to be classified", async () => {
+    vi.mocked(getAppSettings).mockResolvedValue({
+      ai: { openRouterApiKey: "test-key", model: "test/model" },
+    } as Awaited<ReturnType<typeof getAppSettings>>);
+    const sourcePath = "/data/downloads/Example Movie (2026).mkv";
+    const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(
+      Response.json({
+        choices: [
+          {
+            message: {
+              content: JSON.stringify({
+                riskLevel: "OK",
+                confidence: 0.96,
+                summary: "The file is the requested movie.",
+                acceptedSourcePaths: [sourcePath],
+                rejectedSourcePaths: [],
+              }),
+            },
+          },
+        ],
+      }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(
+      reviewOrganizerPlanWithOpenRouter({
+        planId: "plan-1",
+        mediaType: "MOVIE",
+        candidateTitle: "Example Movie",
+        candidateAliases: ["Example Movie"],
+        season: 1,
+        episodeNumber: 1,
+        targetTitle: "Example Movie",
+        items: [
+          {
+            sourcePath,
+            targetPath: "/data/library/movies/Example Movie (2026)/Example Movie (2026).mkv",
+          },
+        ],
+      }),
+    ).resolves.toMatchObject({
+      riskLevel: "OK",
+      confidence: 0.96,
+      acceptedSourcePaths: [sourcePath],
+    });
+    const requestBody = JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body));
+    expect(requestBody.messages[0].content).toContain("anime, movies, and TV series");
+    expect(requestBody.messages[0].content).toContain("Classify every provided path exactly once");
   });
 });

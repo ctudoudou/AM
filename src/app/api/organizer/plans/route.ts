@@ -179,6 +179,32 @@ function summarizeMetadata(metadata: Prisma.JsonValue | null) {
     title: typeof metadata.title === "string" ? metadata.title : undefined,
     posterUrl: typeof metadata.posterUrl === "string" ? metadata.posterUrl : undefined,
     year: typeof metadata.year === "number" ? metadata.year : undefined,
+    aiReview: summarizeAiReview(metadata.aiReview),
+  };
+}
+
+function summarizeAiReview(value: Prisma.JsonValue | undefined) {
+  if (!value || Array.isArray(value) || typeof value !== "object") {
+    return undefined;
+  }
+  const riskLevel = value.riskLevel;
+  const confidence = value.confidence;
+  if (
+    !["OK", "REVIEW", "REJECT"].includes(typeof riskLevel === "string" ? riskLevel : "") ||
+    typeof confidence !== "number"
+  ) {
+    return undefined;
+  }
+  return {
+    riskLevel,
+    confidence,
+    summary: typeof value.summary === "string" ? value.summary : "",
+    acceptedItems: Array.isArray(value.acceptedSourcePaths)
+      ? value.acceptedSourcePaths.filter((item) => typeof item === "string").length
+      : 0,
+    rejectedItems: Array.isArray(value.rejectedSourcePaths)
+      ? value.rejectedSourcePaths.filter((item) => typeof item === "string").length
+      : 0,
   };
 }
 

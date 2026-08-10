@@ -64,6 +64,8 @@ const metadataFileExtensions = new Set([
   ".m3u8",
 ]);
 const minAutoOrganizerConfidence = 0.9;
+const maxOrganizerAiReviewItems = 60;
+const minTrustedOrganizerAiReviewConfidence = 0.8;
 
 type OrganizerFileType = "video" | "audio" | "image" | "metadata";
 
@@ -80,6 +82,20 @@ type OrganizerAutomationAssessment = {
 
 export class OrganizerPlanStaleError extends Error {}
 export class OrganizerExecutionBusyError extends Error {}
+export type OrganizerAiReviewErrorCode =
+  | "ORGANIZER_AI_REVIEW_UNAVAILABLE"
+  | "ORGANIZER_AI_REVIEW_NOT_SUPPORTED"
+  | "ORGANIZER_AI_REVIEW_TOO_LARGE";
+
+export class OrganizerAiReviewError extends Error {
+  constructor(
+    readonly code: OrganizerAiReviewErrorCode,
+    message: string,
+  ) {
+    super(message);
+    this.name = "OrganizerAiReviewError";
+  }
+}
 
 type OrganizerCandidateIdentity = {
   mediaType: MediaType;
@@ -1205,10 +1221,7 @@ export async function reviewOrganizerPlansWithAi(limit = 30) {
       items: { some: {} },
       candidate: { isNot: null },
     },
-    include: {
-      items: true,
-      candidate: { include: { group: true } },
-    },
+    select: { id: true },
     orderBy: { updatedAt: "desc" },
     take: limit,
   });
@@ -1218,23 +1231,64 @@ export async function reviewOrganizerPlansWithAi(limit = 30) {
   let skipped = 0;
 
   for (const plan of plans) {
-    const input = buildOrganizerReviewInput(plan);
-    if (!input) {
+    try {
+      const result = await reviewOrganizerPlanWithAi(plan.id);
+      reviewed += 1;
+      filteredItems += result.filteredItems;
+      flagged += result.flagged ? 1 : 0;
+    } catch (error) {
+      if (!(error instanceof OrganizerAiReviewError)) {
+        throw error;
+      }
       skipped += 1;
-      continue;
     }
-    const review = await reviewOrganizerPlanWithOpenRouter(input);
-    if (!review) {
-      skipped += 1;
-      continue;
-    }
-    reviewed += 1;
-    const result = await applyOrganizerAiReview(plan.id, review, plan.items);
-    filteredItems += result.filteredItems;
-    flagged += result.flagged ? 1 : 0;
   }
 
   return { inspected: plans.length, reviewed, filteredItems, flagged, skipped };
+}
+
+export async function reviewOrganizerPlanWithAi(planId: string) {
+  const plan = await prisma.organizerPlan.findUniqueOrThrow({
+    where: { id: planId },
+    include: {
+      items: true,
+      candidate: { include: { group: true } },
+    },
+  });
+  if (["EXECUTED", "AUTO_ARCHIVED", "REJECTED", "EXECUTING"].includes(plan.status)) {
+    throw new OrganizerAiReviewError(
+      "ORGANIZER_AI_REVIEW_NOT_SUPPORTED",
+      "Only active organizer plans can be reviewed by AI.",
+    );
+  }
+  if (plan.items.length === 0) {
+    throw new OrganizerAiReviewError(
+      "ORGANIZER_AI_REVIEW_NOT_SUPPORTED",
+      "This organizer plan has no files for AI review.",
+    );
+  }
+  if (plan.items.length > maxOrganizerAiReviewItems) {
+    throw new OrganizerAiReviewError(
+      "ORGANIZER_AI_REVIEW_TOO_LARGE",
+      `This plan has ${plan.items.length} files. Split or repair the package before AI review.`,
+    );
+  }
+  const input = buildOrganizerReviewInput(plan);
+  if (!input) {
+    throw new OrganizerAiReviewError(
+      "ORGANIZER_AI_REVIEW_NOT_SUPPORTED",
+      "This organizer plan has no grouped title candidate for AI review.",
+    );
+  }
+  const review = await reviewOrganizerPlanWithOpenRouter(input);
+  if (!review) {
+    throw new OrganizerAiReviewError(
+      "ORGANIZER_AI_REVIEW_UNAVAILABLE",
+      "AI review is unavailable. Check the configured model and API key, then retry.",
+    );
+  }
+  const result = await applyOrganizerAiReview(plan.id, review, plan.items);
+  return { review, ...result };
 }
 
 function selectedAria2SourcePaths(value: unknown) {
@@ -1392,6 +1446,9 @@ export async function applyOrganizerAiReview(
   items: Array<{ id: string; sourcePath: string }>,
 ) {
   const knownPaths = new Set(items.map((item) => item.sourcePath));
+  const acceptedPaths = new Set(
+    review.acceptedSourcePaths.filter((sourcePath) => knownPaths.has(sourcePath)),
+  );
   const rejectedPaths = new Set(
     review.rejectedSourcePaths.filter((sourcePath) => knownPaths.has(sourcePath)),
   );
@@ -1407,7 +1464,14 @@ export async function applyOrganizerAiReview(
   }
 
   const remaining = items.length - filteredItems;
-  const flagged = review.riskLevel !== "OK" || filteredItems > 0 || remaining === 0;
+  const classifiedPaths = new Set([...acceptedPaths, ...rejectedPaths]);
+  const unclassifiedItems = Math.max(0, items.length - classifiedPaths.size);
+  const flagged =
+    review.riskLevel !== "OK" ||
+    review.confidence < minTrustedOrganizerAiReviewConfidence ||
+    filteredItems > 0 ||
+    remaining === 0 ||
+    unclassifiedItems > 0;
   const plan = await prisma.organizerPlan.findUnique({
     where: { id: planId },
     select: { metadata: true },
@@ -1425,7 +1489,13 @@ export async function applyOrganizerAiReview(
     },
   });
 
-  return { filteredItems, flagged };
+  return {
+    acceptedItems: acceptedPaths.size,
+    filteredItems,
+    flagged,
+    remainingItems: remaining,
+    unclassifiedItems,
+  };
 }
 
 function isPollutedOrganizerPlan(plan: {

@@ -51,6 +51,13 @@ type OrganizerPlan = {
     title?: string;
     posterUrl?: string;
     year?: number;
+    aiReview?: {
+      riskLevel: "OK" | "REVIEW" | "REJECT";
+      confidence: number;
+      summary: string;
+      acceptedItems: number;
+      rejectedItems: number;
+    };
   } | null;
 };
 
@@ -108,7 +115,7 @@ type OrganizerPage = {
   hasPrevious: boolean;
 };
 
-type PlanAction = "execute" | "reject" | "regenerate";
+type PlanAction = "execute" | "reject" | "regenerate" | "ai-review";
 
 export function OrganizerClient({
   buildRevision,
@@ -311,6 +318,43 @@ export function OrganizerClient({
       setError(errorMessage(reviewError, t.aiReviewPlansError));
     } finally {
       setReviewing(false);
+    }
+  }
+
+  async function reviewPlanWithAi(plan: OrganizerPlan) {
+    if (!canAiReviewPlan(plan)) {
+      setError(t.organizerAiClassifyUnavailable);
+      return;
+    }
+    setPlanAction({ id: plan.id, action: "ai-review" });
+    setStatus("");
+    setError("");
+    try {
+      const body = await requestJson<{
+        review: { riskLevel: "OK" | "REVIEW" | "REJECT"; confidence: number; summary: string };
+        acceptedItems: number;
+        filteredItems: number;
+        flagged: boolean;
+        remainingItems: number;
+        unclassifiedItems: number;
+      }>(
+        `/api/organizer/plans/${plan.id}/ai-review`,
+        { method: "POST" },
+        t.aiReviewPlansError,
+        {
+          ORGANIZER_AI_REVIEW_UNAVAILABLE: t.organizerAiClassifyUnavailable,
+          ORGANIZER_AI_REVIEW_NOT_SUPPORTED: t.organizerAiClassifyUnavailable,
+          ORGANIZER_AI_REVIEW_TOO_LARGE: t.organizerAiClassifyTooLarge,
+        },
+      );
+      setStatus(
+        `${t.organizerAiClassifyDone} ${formatOrganizerAiRisk(body.review.riskLevel, t)} · ${Math.round(body.review.confidence * 100)}%${body.filteredItems > 0 ? ` · ${t.organizerAiFiltered}: ${body.filteredItems}` : ""}`,
+      );
+      await load();
+    } catch (reviewError) {
+      setError(errorMessage(reviewError, t.aiReviewPlansError));
+    } finally {
+      setPlanAction(null);
     }
   }
 
@@ -726,6 +770,24 @@ export function OrganizerClient({
                         {formatMediaType(plan.mediaType, t)} · {formatOrganizerReason(plan.reason, t)}
                       </p>
                       <p className="organizer-plan-hint">{organizerPlanHint(plan, t)}</p>
+                      {plan.metadata?.aiReview ? (
+                        <div
+                          className={`organizer-ai-summary ${organizerAiRiskClass(plan.metadata.aiReview.riskLevel)}`}
+                        >
+                          <WandSparkles size={15} />
+                          <div>
+                            <strong>
+                              {t.organizerAiClassification}: {formatOrganizerAiRisk(plan.metadata.aiReview.riskLevel, t)} ·{" "}
+                              {Math.round(plan.metadata.aiReview.confidence * 100)}%
+                            </strong>
+                            <span>{plan.metadata.aiReview.summary || t.organizerAiNoSummary}</span>
+                            <small>
+                              {t.organizerAiAccepted}: {plan.metadata.aiReview.acceptedItems} ·{" "}
+                              {t.organizerAiRejected}: {plan.metadata.aiReview.rejectedItems}
+                            </small>
+                          </div>
+                        </div>
+                      ) : null}
                     </div>
                   </div>
                   <div className="toolbar-actions">
@@ -744,6 +806,23 @@ export function OrganizerClient({
                       </button>
                     ) : null}
                     <button
+                      disabled={!canAiReviewPlan(plan) || mutationBusy}
+                      onClick={() => void reviewPlanWithAi(plan)}
+                      title={
+                        plan.items.length > 60
+                          ? t.organizerAiClassifyTooLarge
+                          : t.organizerAiClassifyHint
+                      }
+                      type="button"
+                    >
+                      {activeAction === "ai-review" ? (
+                        <Loader2 size={14} />
+                      ) : (
+                        <WandSparkles size={14} />
+                      )}
+                      {plan.metadata?.aiReview ? t.organizerAiClassifyAgain : t.organizerAiClassify}
+                    </button>
+                    <button
                       disabled={!executable || mutationBusy}
                       onClick={() => requestExecution(plan)}
                       type="button"
@@ -761,14 +840,22 @@ export function OrganizerClient({
                     </button>
                   </div>
                 </div>
-                <div className="organizer-paths">
-                  {plan.items.map((item) => (
-                    <div key={item.id}>
-                      <span>{item.sourcePath}</span>
-                      <strong>{item.targetPath}</strong>
-                      {item.conflict ? <em>{item.conflictReason || t.conflict}</em> : null}
+                <div className="organizer-path-overview">
+                  <OrganizerFolderSummary items={plan.items} t={t} />
+                  <details>
+                    <summary>
+                      {t.organizerPathDetails} ({plan.items.length})
+                    </summary>
+                    <div className="organizer-paths">
+                      {plan.items.map((item) => (
+                        <div key={item.id}>
+                          <span>{item.sourcePath}</span>
+                          <strong>{item.targetPath}</strong>
+                          {item.conflict ? <em>{item.conflictReason || t.conflict}</em> : null}
+                        </div>
+                      ))}
                     </div>
-                  ))}
+                  </details>
                 </div>
               </article>
             );
@@ -989,16 +1076,50 @@ export function OrganizerClient({
                 <strong>{formatOrganizerStatus(pendingExecution.status, t)}</strong>
               </div>
             </div>
-            <div className="organizer-confirm-paths">
-              {pendingExecution.items.map((item) => (
-                <div key={item.id}>
-                  <span>{t.organizerExecutionSource}</span>
-                  <code>{item.sourcePath}</code>
-                  <span>{t.organizerExecutionTarget}</span>
-                  <strong>{item.targetPath}</strong>
+            {pendingExecution.metadata?.aiReview ? (
+              <div
+                className={`organizer-ai-summary organizer-confirm-ai ${organizerAiRiskClass(pendingExecution.metadata.aiReview.riskLevel)}`}
+              >
+                <WandSparkles size={16} />
+                <div>
+                  <strong>
+                    {t.organizerAiClassification}: {formatOrganizerAiRisk(pendingExecution.metadata.aiReview.riskLevel, t)} ·{" "}
+                    {Math.round(pendingExecution.metadata.aiReview.confidence * 100)}%
+                  </strong>
+                  <span>{pendingExecution.metadata.aiReview.summary || t.organizerAiNoSummary}</span>
+                  <small>
+                    {t.organizerAiAccepted}: {pendingExecution.metadata.aiReview.acceptedItems} ·{" "}
+                    {t.organizerAiRejected}: {pendingExecution.metadata.aiReview.rejectedItems}
+                  </small>
                 </div>
-              ))}
+              </div>
+            ) : (
+              <div className="organizer-ai-callout">
+                <WandSparkles size={16} />
+                <div>
+                  <strong>{t.organizerAiNotReviewed}</strong>
+                  <span>{t.organizerAiNotReviewedHint}</span>
+                </div>
+              </div>
+            )}
+            <div className="organizer-confirm-folder-summary">
+              <OrganizerFolderSummary items={pendingExecution.items} t={t} />
             </div>
+            <details className="organizer-confirm-path-details">
+              <summary>
+                {t.organizerPathDetails} ({pendingExecution.items.length})
+              </summary>
+              <div className="organizer-confirm-paths">
+                {pendingExecution.items.map((item) => (
+                  <div key={item.id}>
+                    <span>{t.organizerExecutionSource}</span>
+                    <code>{item.sourcePath}</code>
+                    <span>{t.organizerExecutionTarget}</span>
+                    <strong>{item.targetPath}</strong>
+                  </div>
+                ))}
+              </div>
+            </details>
             <label className="organizer-confirm-check">
               <input
                 autoFocus
@@ -1007,7 +1128,11 @@ export function OrganizerClient({
                 onChange={(event) => setExecutionAcknowledged(event.target.checked)}
                 type="checkbox"
               />
-              <span>{t.organizerExecutionAcknowledge}</span>
+              <span>
+                {organizerAiReviewIsTrusted(pendingExecution)
+                  ? t.organizerExecutionAcknowledgeAi
+                  : t.organizerExecutionAcknowledge}
+              </span>
             </label>
             {error ? (
               <div className="settings-alert organizer-dialog-alert" role="alert">
@@ -1032,7 +1157,7 @@ export function OrganizerClient({
                 type="button"
               >
                 {planAction?.action === "execute" ? <Loader2 size={14} /> : <Check size={14} />}
-                {t.organizerExecutionConfirm} ({pendingExecution.items.length})
+                {t.organizerExecutionConfirmFast} ({pendingExecution.items.length})
               </button>
             </div>
           </section>
@@ -1174,6 +1299,98 @@ function organizerPlanTitle(
     plan.candidate?.parsedTitle ||
     t.unknownTitle
   );
+}
+
+function OrganizerFolderSummary({
+  items,
+  t,
+}: {
+  items: OrganizerPlan["items"];
+  t: ReturnType<typeof getMessages>;
+}) {
+  const summary = summarizeOrganizerFolders(items);
+  return (
+    <div className="organizer-folder-summary">
+      <div>
+        <span>{t.organizerExecutionSource}</span>
+        <code title={summary.source}>{summary.source}</code>
+      </div>
+      <div>
+        <span>{t.organizerExecutionTarget}</span>
+        <strong title={summary.target}>{summary.target}</strong>
+      </div>
+    </div>
+  );
+}
+
+function summarizeOrganizerFolders(items: OrganizerPlan["items"]) {
+  return {
+    source: commonOrganizerDirectory(items.map((item) => item.sourcePath)),
+    target: commonOrganizerDirectory(items.map((item) => item.targetPath)),
+  };
+}
+
+function commonOrganizerDirectory(paths: string[]) {
+  if (paths.length === 0) {
+    return "-";
+  }
+  const directories = paths.map((filePath) => {
+    const lastSeparator = filePath.lastIndexOf("/");
+    return lastSeparator > 0 ? filePath.slice(0, lastSeparator) : filePath;
+  });
+  const segments = directories.map((directory) => directory.split("/").filter(Boolean));
+  const common = [...segments[0]];
+  for (const parts of segments.slice(1)) {
+    let index = 0;
+    while (index < common.length && common[index] === parts[index]) {
+      index += 1;
+    }
+    common.length = index;
+  }
+  return common.length > 0 ? `/${common.join("/")}` : directories[0];
+}
+
+function canAiReviewPlan(plan: OrganizerPlan) {
+  return (
+    Boolean(plan.candidate) &&
+    plan.items.length > 0 &&
+    plan.items.length <= 60 &&
+    !["AUTO_ARCHIVED", "EXECUTED", "EXECUTING", "REJECTED"].includes(plan.status)
+  );
+}
+
+function organizerAiReviewIsTrusted(plan: OrganizerPlan) {
+  const review = plan.metadata?.aiReview;
+  return Boolean(
+    review &&
+      review.riskLevel === "OK" &&
+      review.confidence >= 0.8 &&
+      review.rejectedItems === 0 &&
+      review.acceptedItems === plan.items.length,
+  );
+}
+
+function organizerAiRiskClass(riskLevel: "OK" | "REVIEW" | "REJECT") {
+  if (riskLevel === "OK") {
+    return "safe";
+  }
+  if (riskLevel === "REJECT") {
+    return "danger";
+  }
+  return "review";
+}
+
+function formatOrganizerAiRisk(
+  riskLevel: "OK" | "REVIEW" | "REJECT",
+  t: ReturnType<typeof getMessages>,
+) {
+  if (riskLevel === "OK") {
+    return t.organizerAiRiskOk;
+  }
+  if (riskLevel === "REJECT") {
+    return t.organizerAiRiskReject;
+  }
+  return t.organizerAiRiskReview;
 }
 
 function canExecutePlan(plan: OrganizerPlan) {

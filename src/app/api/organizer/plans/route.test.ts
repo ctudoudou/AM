@@ -111,6 +111,13 @@ describe("/api/organizer/plans", () => {
           year: 2026,
           synopsis: "large synopsis",
           raw: { providerPayload: "large payload" },
+          aiReview: {
+            riskLevel: "OK",
+            confidence: 0.94,
+            summary: "Title and episode match.",
+            acceptedSourcePaths: ["/data/import/episode.mkv"],
+            rejectedSourcePaths: [],
+          },
         },
         candidate: {
           mediaType: "ANIME",
@@ -146,6 +153,13 @@ describe("/api/organizer/plans", () => {
       title: "Some Anime",
       posterUrl: "https://image.example/poster.jpg",
       year: 2026,
+      aiReview: {
+        riskLevel: "OK",
+        confidence: 0.94,
+        summary: "Title and episode match.",
+        acceptedItems: 1,
+        rejectedItems: 0,
+      },
     });
     expect(body.plans[0].candidate).toEqual({
       parsedTitle: "Some Anime",
