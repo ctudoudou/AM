@@ -5,6 +5,7 @@ import { matchMetadataForGroup } from "@/lib/metadata";
 import { getAppSettings } from "@/lib/settings";
 import {
   assessOrganizerPlanAutomation,
+  applyOrganizerAiReview,
   buildOrganizerExtraTargetPath,
   buildOrganizerEpisodeTitleSegment,
   classifyOrganizerFile,
@@ -16,9 +17,11 @@ import {
   inspectCompletedDownloads,
   isAutoExecutableOrganizerPlan,
   organizerTargetPathLooksPolluted,
+  OrganizerAiReviewError,
   OrganizerExecutionBusyError,
   OrganizerPlanStaleError,
   regenerateRejectedOrganizerPlan,
+  reviewOrganizerPlanWithAi,
   resolveOrganizerItemIdentity,
   resolveOrganizerMediaType,
 } from "./organizer";
@@ -61,6 +64,9 @@ vi.mock("@/lib/db", () => ({
       findUniqueOrThrow: vi.fn(),
       update: vi.fn(),
       updateMany: vi.fn(),
+    },
+    organizerPlanItem: {
+      deleteMany: vi.fn(),
     },
   },
 }));
@@ -233,6 +239,88 @@ describe("resolveOrganizerMediaType", () => {
         },
       }),
     ).toBe("ANIME");
+  });
+});
+
+describe("applyOrganizerAiReview", () => {
+  const items = [
+    { id: "item-1", sourcePath: "/data/downloads/episode-01.mkv" },
+    { id: "item-2", sourcePath: "/data/downloads/episode-02.mkv" },
+  ];
+
+  beforeEach(() => {
+    vi.mocked(prisma.organizerPlan.findUnique).mockResolvedValue({ metadata: null } as never);
+    vi.mocked(prisma.organizerPlan.update).mockResolvedValue({ id: "plan-1" } as never);
+    vi.mocked(prisma.organizerPlanItem.deleteMany).mockResolvedValue({ count: 0 } as never);
+  });
+
+  it("accepts only a complete high-confidence AI classification as safe", async () => {
+    const result = await applyOrganizerAiReview(
+      "plan-1",
+      {
+        riskLevel: "OK",
+        confidence: 0.94,
+        summary: "Both episodes match the title.",
+        acceptedSourcePaths: items.map((item) => item.sourcePath),
+        rejectedSourcePaths: [],
+      },
+      items,
+    );
+
+    expect(result).toMatchObject({
+      acceptedItems: 2,
+      filteredItems: 0,
+      flagged: false,
+      unclassifiedItems: 0,
+    });
+    expect(prisma.organizerPlan.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ status: undefined }),
+      }),
+    );
+  });
+
+  it("keeps incomplete AI classifications in manual review", async () => {
+    const result = await applyOrganizerAiReview(
+      "plan-1",
+      {
+        riskLevel: "OK",
+        confidence: 0.95,
+        summary: "One episode was classified.",
+        acceptedSourcePaths: [items[0].sourcePath],
+        rejectedSourcePaths: [],
+      },
+      items,
+    );
+
+    expect(result).toMatchObject({ flagged: true, unclassifiedItems: 1 });
+    expect(prisma.organizerPlan.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ status: "NEEDS_REVIEW" }),
+      }),
+    );
+  });
+});
+
+describe("reviewOrganizerPlanWithAi", () => {
+  it("rejects oversized packages before calling the AI provider", async () => {
+    vi.mocked(prisma.organizerPlan.findUniqueOrThrow).mockResolvedValueOnce({
+      id: "plan-large",
+      status: "NEEDS_REVIEW",
+      items: Array.from({ length: 61 }, (_, index) => ({
+        id: `item-${index}`,
+        sourcePath: `/data/downloads/file-${index}.mkv`,
+        targetPath: `/data/library/anime/Title/file-${index}.mkv`,
+      })),
+      candidate: { group: null },
+    } as never);
+
+    await expect(reviewOrganizerPlanWithAi("plan-large")).rejects.toMatchObject<
+      Partial<OrganizerAiReviewError>
+    >({
+      code: "ORGANIZER_AI_REVIEW_TOO_LARGE",
+    });
+    expect(prisma.organizerPlan.update).not.toHaveBeenCalled();
   });
 });
 
