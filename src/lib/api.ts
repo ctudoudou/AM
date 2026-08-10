@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { Prisma } from "@prisma/client";
 import { ZodError } from "zod";
+import { SubscriptionReviewGateError } from "@/lib/subscription-review-gate";
 
 export class UntrustedMutationOriginError extends Error {}
 
@@ -94,6 +95,13 @@ export function jsonError(error: unknown) {
         })),
       },
       { status: 400 },
+    );
+  }
+
+  if (error instanceof SubscriptionReviewGateError) {
+    return NextResponse.json(
+      { error: error.code, message: error.message },
+      { status: 409 },
     );
   }
 

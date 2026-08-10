@@ -8,6 +8,7 @@ import {
   subscriptionCoversCandidateGroup,
   type SubscriptionCoverageInput,
 } from "@/lib/media-identity";
+import { assertSubscriptionReviewGate } from "@/lib/subscription-review-gate";
 
 const subscriptionCreateSchema = z.object({
   candidateId: z.string().min(1).optional(),
@@ -27,6 +28,7 @@ const subscriptionCreateSchema = z.object({
   preferredSourceKind: z.string().optional(),
   preferredVariantKey: z.string().optional(),
   autoDownload: z.boolean().default(false),
+  reviewConfirmed: z.boolean().default(false),
   fallbackPolicy: z.string().default("manual_review"),
 }).refine((input) => input.candidateId || input.candidateGroupId, {
   message: "candidateId or candidateGroupId is required",
@@ -71,6 +73,12 @@ export async function POST(request: Request) {
       (await prisma.releaseCandidateGroup.findUniqueOrThrow({
         where: { id: candidateGroupId },
       }));
+    assertSubscriptionReviewGate({
+      autoDownload: input.autoDownload,
+      candidateStatus: selectedCandidate?.status,
+      groupReviewRequired: group.reviewRequired,
+      reviewConfirmed: input.reviewConfirmed,
+    });
     const seasonNumber = input.seasonNumber ?? selectedCandidate?.season ?? group.season ?? null;
     const seasonMode = input.seasonMode ?? (seasonNumber ? "specific" : "unknown_review");
     const episodeStart = input.episodeStart ?? selectedCandidate?.episodeNumber ?? null;

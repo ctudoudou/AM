@@ -16,12 +16,22 @@ import {
 } from "@/lib/aria2";
 import { getAppSettings } from "@/lib/settings";
 import { createOrganizerPlanForDownload } from "@/lib/organizer";
+import { assertCandidateReadyForDownload } from "@/lib/subscription-review-gate";
 
 const videoExtensions = new Set([".mkv", ".mp4", ".avi", ".mov", ".webm", ".m4v", ".ts"]);
 
 export async function enqueueCandidateDownload(candidateId: string) {
   const candidate = await prisma.releaseCandidate.findUniqueOrThrow({
     where: { id: candidateId },
+    include: {
+      group: {
+        select: { reviewRequired: true },
+      },
+    },
+  });
+  assertCandidateReadyForDownload({
+    candidateStatus: candidate.status,
+    groupReviewRequired: candidate.group?.reviewRequired ?? true,
   });
   const settings = await getAppSettings();
   const downloadDir = settings.directories.downloadsDir;

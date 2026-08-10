@@ -2153,6 +2153,29 @@ a {
   color: var(--text-faint);
 }
 
+.strategy-review-gate {
+  display: grid;
+  gap: 10px;
+  margin-top: 12px;
+}
+
+.strategy-review-gate strong,
+.strategy-review-gate > div > span {
+  display: block;
+}
+
+.strategy-review-gate > div > span {
+  margin-top: 2px;
+  color: rgba(254, 202, 202, 0.76);
+}
+
+.strategy-review-gate .strategy-toggle {
+  margin-top: 0;
+  border-top: 1px solid rgba(248, 113, 113, 0.18);
+  padding-top: 8px;
+  color: rgba(254, 226, 226, 0.92);
+}
+
 .strategy-preview {
   margin-top: 16px;
   border: 1px solid rgba(255, 255, 255, 0.06);
