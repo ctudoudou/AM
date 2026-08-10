@@ -26,6 +26,7 @@ import {
 import { getMessages } from "@/messages";
 import type { Locale } from "@/lib/i18n";
 import { resolvePlaybackDuration } from "@/lib/transcode-profile";
+import { configureLocalHlsProvider } from "./local-hls-provider";
 
 type WatchMediaFile = {
   id: string;
@@ -470,7 +471,10 @@ export function WatchClient({
                   }
                   setEnded(true);
                 }}
-                onError={() => setError(t.playbackLoadError)}
+                onError={(detail) => {
+                  setError(detail.message || t.playbackLoadError);
+                }}
+                onCanPlay={() => setError("")}
                 onLoadedMetadata={() => {
                   if (!restoredRef.current && initialPositionSec > 0 && playerRef.current) {
                     playerRef.current.currentTime = initialPositionSec;
@@ -478,7 +482,11 @@ export function WatchClient({
                   restoredRef.current = true;
                 }}
                 onPause={() => void flushProgress({ force: true })}
-                onPlay={() => setEnded(false)}
+                onPlay={() => {
+                  setEnded(false);
+                  setError("");
+                }}
+                onProviderChange={configureLocalHlsProvider}
                 onSeeked={(nextTime) => {
                   currentTimeRef.current = nextTime;
                   void flushProgress({ force: true });

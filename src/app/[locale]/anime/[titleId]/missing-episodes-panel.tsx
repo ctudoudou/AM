@@ -401,10 +401,19 @@ export function MissingEpisodesPanel({
                   </div>
                   <div>
                     <strong>{labelForStatus(episode.status, t)}</strong>
-                    <small>{episode.candidateTitle || episode.reason || t.noCandidateFound}</small>
+                    <small>
+                      {episode.status === "ARCHIVED"
+                        ? t.archivedLibraryRepairDescription
+                        : episode.candidateTitle || episode.reason || t.noCandidateFound}
+                    </small>
                   </div>
                   <div className="missing-episode-actions">
-                    {wantedId && episode.status === "IGNORED" ? (
+                    {episode.status === "ARCHIVED" ? (
+                      <button disabled type="button">
+                        <RefreshCw size={14} />
+                        {t.archivedLibraryRepairAction}
+                      </button>
+                    ) : wantedId && episode.status === "IGNORED" ? (
                       <button
                         disabled={busyId === wantedId}
                         onClick={() => void runWantedAction(wantedId, "restore")}
@@ -437,7 +446,7 @@ export function MissingEpisodesPanel({
                         {t.scanMissingEpisodes}
                       </button>
                     )}
-                    {wantedId && episode.status !== "IGNORED" ? (
+                    {wantedId && !["ARCHIVED", "IGNORED"].includes(episode.status) ? (
                       <button
                         disabled={busyId === wantedId}
                         onClick={() => void runWantedAction(wantedId, "ignore")}
@@ -542,6 +551,9 @@ function labelForStatus(status: EpisodeCoverageItem["status"], t: ReturnType<typ
   }
   if (status === "DOWNLOADED") {
     return t.downloadedWaitingOrganizer;
+  }
+  if (status === "ARCHIVED") {
+    return t.archivedLibraryRepair;
   }
   if (status === "NEEDS_REVIEW") {
     return t.needsReview;

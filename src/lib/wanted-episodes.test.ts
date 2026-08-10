@@ -356,6 +356,80 @@ describe("buildWantedEpisodeCoverage", () => {
     );
   });
 
+  it("marks completed organizer plans as archived when the library episode is missing", () => {
+    const coverage = buildWantedEpisodeCoverage(
+      {
+        ...baseMedia,
+        seasons: [{ number: 1, episodes: [] }],
+      },
+      [
+        {
+          ...wantedCandidate({
+            id: "candidate-2",
+            rawTitle: "淡島百景 - 02",
+            season: 1,
+            episodeNumber: 2,
+          }),
+          status: "DOWNLOADED",
+          downloads: [{ status: "COMPLETED" }],
+          organizerPlans: [
+            {
+              status: "EXECUTED",
+              mediaTitleId: baseMedia.id,
+              items: [{ id: "item-1" }],
+            },
+          ],
+        },
+      ],
+      [],
+    );
+
+    expect(coverage.episodes).toContainEqual(
+      expect.objectContaining({
+        episodeNumber: 2,
+        status: "ARCHIVED",
+        reason: "Organizer completed, but no playable library episode is registered",
+      }),
+    );
+  });
+
+  it("does not borrow completed organizer state from another media title", () => {
+    const coverage = buildWantedEpisodeCoverage(
+      {
+        ...baseMedia,
+        seasons: [{ number: 1, episodes: [] }],
+      },
+      [
+        {
+          ...wantedCandidate({
+            id: "candidate-2",
+            rawTitle: "淡島百景 - 02",
+            season: 1,
+            episodeNumber: 2,
+          }),
+          status: "DOWNLOADED",
+          downloads: [{ status: "COMPLETED" }],
+          organizerPlans: [
+            {
+              status: "EXECUTED",
+              mediaTitleId: "another-media",
+              items: [{ id: "item-1" }],
+            },
+          ],
+        },
+      ],
+      [],
+    );
+
+    expect(coverage.episodes).toContainEqual(
+      expect.objectContaining({
+        episodeNumber: 2,
+        status: "DOWNLOADED",
+        reason: "Download completed",
+      }),
+    );
+  });
+
   it("does not let base-season cumulative candidates pollute a later-season title", () => {
     const coverage = buildWantedEpisodeCoverage(
       {
