@@ -124,6 +124,18 @@ describe("reviewOrganizerPlanWithOpenRouter", () => {
                 summary: "The file is the requested movie.",
                 acceptedSourcePaths: [sourcePath],
                 rejectedSourcePaths: [],
+                fileClassifications: [
+                  {
+                    sourcePath,
+                    role: "MAIN_VIDEO",
+                    mediaType: "MOVIE",
+                    title: "Example Movie",
+                    season: 1,
+                    episodeNumber: 1,
+                    confidence: 0.97,
+                    evidence: "The filename matches the requested movie.",
+                  },
+                ],
               }),
             },
           },
@@ -152,6 +164,7 @@ describe("reviewOrganizerPlanWithOpenRouter", () => {
       riskLevel: "OK",
       confidence: 0.96,
       acceptedSourcePaths: [sourcePath],
+      fileClassifications: [{ sourcePath, role: "MAIN_VIDEO" }],
     });
     const requestBody = JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body));
     expect(requestBody.messages[0].content).toContain("anime, movies, and TV series");

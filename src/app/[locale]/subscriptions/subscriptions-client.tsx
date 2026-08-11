@@ -250,6 +250,9 @@ export function SubscriptionsClient({ locale }: { locale: Locale }) {
   const [selectedGroupId, setSelectedGroupId] = useState<string | null>(null);
   const [pendingSubscription, setPendingSubscription] = useState<PendingSubscription | null>(null);
   const [subscriptionSubmitting, setSubscriptionSubmitting] = useState(false);
+  const [selectedQueueGroupIds, setSelectedQueueGroupIds] = useState<string[]>([]);
+  const [bulkSubscriptionConfirm, setBulkSubscriptionConfirm] = useState(false);
+  const [bulkSubscriptionSubmitting, setBulkSubscriptionSubmitting] = useState(false);
   const groupsWithVersions = Math.max(0, candidateStats.totalGroups - candidateStats.emptyGroups);
   const visibleSubscriptions = useMemo(() => {
     const needle = subscriptionQuery.trim().toLowerCase();
@@ -320,6 +323,20 @@ export function SubscriptionsClient({ locale }: { locale: Locale }) {
     () => visibleGroups.find((group) => group.id === selectedGroupId) ?? visibleGroups[0] ?? null,
     [selectedGroupId, visibleGroups],
   );
+  const safeVisibleGroupIds = useMemo(() => {
+    const subscriptionGroupIds = new Set(
+      subscriptions
+        .map((subscription) => subscription.candidateGroupId)
+        .filter((id): id is string => Boolean(id)),
+    );
+    return visibleGroups
+      .filter((group) => groupIsSafeForBulkSubscription(group, subscriptionGroupIds))
+      .map((group) => group.id);
+  }, [subscriptions, visibleGroups]);
+  const selectedSafeQueueGroupIds = useMemo(() => {
+    const safeIds = new Set(safeVisibleGroupIds);
+    return selectedQueueGroupIds.filter((id) => safeIds.has(id));
+  }, [safeVisibleGroupIds, selectedQueueGroupIds]);
 
   useEffect(() => {
     if (!selectedGroup || selectedGroup.candidatesLoaded || selectedGroup._count.candidates === 0) {
@@ -697,6 +714,51 @@ export function SubscriptionsClient({ locale }: { locale: Locale }) {
       setError(submitError instanceof Error ? submitError.message : t.subscriptionCreateError);
     } finally {
       setSubscriptionSubmitting(false);
+    }
+  }
+
+  async function createBulkManualSubscriptions() {
+    if (bulkSubscriptionSubmitting || selectedSafeQueueGroupIds.length === 0) {
+      return;
+    }
+    const selected = groups.filter((group) => selectedSafeQueueGroupIds.includes(group.id));
+    setBulkSubscriptionSubmitting(true);
+    setError("");
+    setStatus("");
+    let succeeded = 0;
+    const failures: string[] = [];
+    try {
+      for (const group of selected) {
+        const response = await fetch("/api/subscriptions", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            candidateGroupId: group.id,
+            seasonMode: group.season && group.season > 0 ? "specific" : "unknown_review",
+            seasonNumber: group.season ?? null,
+            episodeMode: "future_only",
+            batchPolicy: "review",
+            autoDownload: false,
+            reviewConfirmed: false,
+            fallbackPolicy: "manual_review",
+          }),
+        });
+        if (response.ok) {
+          succeeded += 1;
+          continue;
+        }
+        const body = await response.json().catch(() => null);
+        failures.push(`${group.displayTitle}: ${body?.message || t.subscriptionCreateError}`);
+      }
+      setBulkSubscriptionConfirm(false);
+      setSelectedQueueGroupIds([]);
+      setStatus(`${t.bulkSubscriptionDone} ${t.organizerSucceeded}: ${succeeded}, ${t.organizerFailed}: ${failures.length}.`);
+      if (failures.length > 0) {
+        setError(failures.slice(0, 3).join(" · "));
+      }
+      await refreshData();
+    } finally {
+      setBulkSubscriptionSubmitting(false);
     }
   }
 
@@ -1136,6 +1198,32 @@ export function SubscriptionsClient({ locale }: { locale: Locale }) {
           <span>{t.queueStatusReview}: {candidateStats.reviewGroups}</span>
           <span>{t.futureOnly}: {candidateStats.emptyGroups}</span>
         </div>
+        <div className="candidate-bulk-toolbar">
+          <span>{t.bulkSubscriptionSelected}: {selectedSafeQueueGroupIds.length}</span>
+          <button
+            disabled={safeVisibleGroupIds.length === 0}
+            onClick={() => setSelectedQueueGroupIds(safeVisibleGroupIds)}
+            type="button"
+          >
+            <CheckCircle2 size={14} />
+            {t.bulkSubscriptionSelectSafe} ({safeVisibleGroupIds.length})
+          </button>
+          <button
+            disabled={selectedSafeQueueGroupIds.length === 0}
+            onClick={() => setSelectedQueueGroupIds([])}
+            type="button"
+          >
+            {t.bulkSubscriptionClear}
+          </button>
+          <button
+            disabled={selectedSafeQueueGroupIds.length === 0 || bulkSubscriptionSubmitting}
+            onClick={() => setBulkSubscriptionConfirm(true)}
+            type="button"
+          >
+            <Plus size={14} />
+            {t.bulkSubscriptionCreateManual}
+          </button>
+        </div>
         {candidateError ? <div className="settings-alert candidate-load-error">{candidateError}</div> : null}
         {candidateLoading && groups.length === 0 ? (
           <div className="candidate-initial-loading">
@@ -1157,13 +1245,35 @@ export function SubscriptionsClient({ locale }: { locale: Locale }) {
                 const freshness = candidateGroupFreshness(group);
                 const queueStatus = group.queueStatus ?? fallbackQueueStatus(group, hasAnySubscription);
 
+                const safeForBulk = groupIsSafeForBulkSubscription(
+                  group,
+                  new Set(
+                    subscriptions
+                      .map((subscription) => subscription.candidateGroupId)
+                      .filter((id): id is string => Boolean(id)),
+                  ),
+                );
+
                 return (
-                  <button
-                    className={selectedGroup.id === group.id ? "queue-master-item active" : "queue-master-item"}
-                    key={group.id}
-                    onClick={() => setSelectedGroupId(group.id)}
-                    type="button"
-                  >
+                  <div className="queue-master-row" key={group.id}>
+                    <input
+                      aria-label={`${t.bulkSubscriptionSelect} ${group.displayTitle}`}
+                      checked={selectedSafeQueueGroupIds.includes(group.id)}
+                      disabled={!safeForBulk || bulkSubscriptionSubmitting}
+                      onChange={(event) =>
+                        setSelectedQueueGroupIds((current) =>
+                          event.target.checked
+                            ? [...current, group.id]
+                            : current.filter((groupId) => groupId !== group.id),
+                        )
+                      }
+                      type="checkbox"
+                    />
+                    <button
+                      className={selectedGroup.id === group.id ? "queue-master-item active" : "queue-master-item"}
+                      onClick={() => setSelectedGroupId(group.id)}
+                      type="button"
+                    >
                     <span className={hasAnySubscription ? "candidate-policy active" : "candidate-policy"}>
                       {formatQueueState(queueStatus.state, t)}
                     </span>
@@ -1181,7 +1291,8 @@ export function SubscriptionsClient({ locale }: { locale: Locale }) {
                         ? ` · ${formatCandidateSourceSummary(group.sourceSummary, locale, t)}`
                         : ""}
                     </span>
-                  </button>
+                    </button>
+                  </div>
                 );
               })}
             </div>
@@ -1235,7 +1346,7 @@ export function SubscriptionsClient({ locale }: { locale: Locale }) {
                   </div>
                   <div className="queue-detail-status">
                     <span>{formatQueueReason(queueStatus.reason, t)}</span>
-                    {group.aiSummary ? <span>{group.aiSummary}</span> : null}
+                    {group.aiSummary ? <span>{formatCandidateAiSummary(group.aiSummary, t)}</span> : null}
                   </div>
                   {groupSubscriptions.length > 0 ? (
                     <div className="queue-subscription-summary">
@@ -1366,6 +1477,72 @@ export function SubscriptionsClient({ locale }: { locale: Locale }) {
           </div>
         ) : null}
       </section>
+      {bulkSubscriptionConfirm ? (
+        <div
+          className="strategy-dialog-backdrop"
+          onMouseDown={() => {
+            if (!bulkSubscriptionSubmitting) {
+              setBulkSubscriptionConfirm(false);
+            }
+          }}
+          role="presentation"
+        >
+          <section
+            aria-labelledby="bulk-subscription-dialog-title"
+            aria-modal="true"
+            className="strategy-dialog bulk-subscription-dialog"
+            onMouseDown={(event) => event.stopPropagation()}
+            role="dialog"
+          >
+            <div className="strategy-dialog-heading">
+              <div>
+                <h2 id="bulk-subscription-dialog-title">{t.bulkSubscriptionConfirmTitle}</h2>
+                <p>{t.bulkSubscriptionConfirmDescription}</p>
+              </div>
+              <button
+                aria-label={t.strategyCancel}
+                className="strategy-dialog-close"
+                disabled={bulkSubscriptionSubmitting}
+                onClick={() => setBulkSubscriptionConfirm(false)}
+                type="button"
+              >
+                <X size={16} />
+              </button>
+            </div>
+            <div className="bulk-subscription-preview">
+              {groups
+                .filter((group) => selectedSafeQueueGroupIds.includes(group.id))
+                .map((group) => (
+                  <span key={group.id}>
+                    <strong>{group.displayTitle}</strong>
+                    <small>{t.subscriptionModeManual} · {t.futureOnly}</small>
+                  </span>
+                ))}
+            </div>
+            <div className="settings-alert" role="note">
+              {t.bulkSubscriptionSafetyNote}
+            </div>
+            <div className="strategy-dialog-actions">
+              <button
+                disabled={bulkSubscriptionSubmitting}
+                onClick={() => setBulkSubscriptionConfirm(false)}
+                type="button"
+              >
+                {t.strategyCancel}
+              </button>
+              <button
+                className="strategy-confirm-button"
+                disabled={bulkSubscriptionSubmitting || selectedSafeQueueGroupIds.length === 0}
+                onClick={() => void createBulkManualSubscriptions()}
+                type="button"
+              >
+                {bulkSubscriptionSubmitting ? <Loader2 size={14} /> : <CheckCircle2 size={14} />}
+                {t.bulkSubscriptionConfirmAction} ({selectedSafeQueueGroupIds.length})
+              </button>
+            </div>
+          </section>
+        </div>
+      ) : null}
       {pendingSubscription ? (
         <div
           className="strategy-dialog-backdrop"
@@ -2338,6 +2515,31 @@ function matchesCandidateStatus(
     return group._count.candidates === 0;
   }
   return true;
+}
+
+function groupIsSafeForBulkSubscription(
+  group: CandidateGroup,
+  subscriptionGroupIds: Set<string>,
+) {
+  return (
+    group._count.candidates > 0 &&
+    !group.reviewRequired &&
+    !subscriptionGroupIds.has(group.id) &&
+    (group.queueStatus?.state ?? "ACTIONABLE") === "ACTIONABLE"
+  );
+}
+
+function formatCandidateAiSummary(value: string, t: ReturnType<typeof getMessages>) {
+  if (value.includes("invalid grouping response")) {
+    return t.queueAiFallbackInvalid;
+  }
+  if (value.includes("did not respond before the timeout")) {
+    return t.queueAiFallbackTimeout;
+  }
+  if (value.includes("Heuristic grouping used because OpenRouter returned")) {
+    return t.queueAiFallbackProvider;
+  }
+  return value;
 }
 
 const mediaTypeOptions: MediaType[] = ["ANIME", "MOVIE", "TV"];

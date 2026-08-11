@@ -1,6 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
+import Link from "next/link";
 import { Download, Loader2, RotateCcw, RefreshCw, Search, X } from "lucide-react";
 import { getMessages } from "@/messages";
 import type { Locale } from "@/lib/i18n";
@@ -408,13 +409,19 @@ export function MissingEpisodesPanel({
                     </small>
                   </div>
                   <div className="missing-episode-actions">
-                    {episode.status === "ARCHIVED" ? (
-                      <button disabled type="button">
+                    {episode.status === "ARCHIVED" || episode.workflow?.stage === "ORGANIZER" ? (
+                      <Link href={workflowHref(episode, locale)}>
                         <RefreshCw size={14} />
-                        {t.archivedLibraryRepairAction}
-                      </button>
+                        {episode.status === "ARCHIVED" ? t.archivedLibraryRepairAction : t.organizer}
+                      </Link>
+                    ) : episode.workflow?.stage === "DOWNLOAD" ? (
+                      <Link href={`/${locale}/downloads`}>
+                        <Download size={14} />
+                        {t.downloads}
+                      </Link>
                     ) : wantedId && episode.status === "IGNORED" ? (
                       <button
+                        aria-label={`${t.restoreEpisode} S${String(episode.seasonNumber).padStart(2, "0")}E${String(episode.episodeNumber).padStart(2, "0")}`}
                         disabled={busyId === wantedId}
                         onClick={() => void runWantedAction(wantedId, "restore")}
                         type="button"
@@ -424,6 +431,7 @@ export function MissingEpisodesPanel({
                       </button>
                     ) : wantedId && episode.candidateId ? (
                       <button
+                        aria-label={`${t.download} S${String(episode.seasonNumber).padStart(2, "0")}E${String(episode.episodeNumber).padStart(2, "0")}`}
                         disabled={busyId === wantedId}
                         onClick={() => void runWantedAction(wantedId, "download")}
                         type="button"
@@ -433,6 +441,7 @@ export function MissingEpisodesPanel({
                       </button>
                     ) : wantedId ? (
                       <button
+                        aria-label={`${t.searchWantedSources} S${String(episode.seasonNumber).padStart(2, "0")}E${String(episode.episodeNumber).padStart(2, "0")}`}
                         disabled={searchState?.loading}
                         onClick={() => void searchWantedSources(wantedId)}
                         type="button"
@@ -448,6 +457,7 @@ export function MissingEpisodesPanel({
                     )}
                     {wantedId && !["ARCHIVED", "IGNORED"].includes(episode.status) ? (
                       <button
+                        aria-label={`${t.ignoreEpisode} S${String(episode.seasonNumber).padStart(2, "0")}E${String(episode.episodeNumber).padStart(2, "0")}`}
                         disabled={busyId === wantedId}
                         onClick={() => void runWantedAction(wantedId, "ignore")}
                         type="button"
@@ -521,6 +531,13 @@ export function MissingEpisodesPanel({
       )}
     </section>
   );
+}
+
+function workflowHref(episode: EpisodeCoverageItem, locale: Locale) {
+  if (episode.workflow?.organizerPlanId) {
+    return `/${locale}/organizer?view=all&planId=${encodeURIComponent(episode.workflow.organizerPlanId)}`;
+  }
+  return `/${locale}/data-health`;
 }
 
 function formatTorrentAvailability(result: WantedSearchResult, t: ReturnType<typeof getMessages>) {

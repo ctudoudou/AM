@@ -39,13 +39,18 @@ export async function rollbackOperation(input: {
   const operation = await prisma.operationLog.findUniqueOrThrow({
     where: { id: input.operationId },
   });
-  if (operation.domain === "ORGANIZER" && operation.action === "EXECUTE_MOVE") {
+  if (
+    operation.domain === "ORGANIZER" &&
+    ["EXECUTE_MOVE", "REPAIR_LEGACY_MISARCHIVE"].includes(operation.action)
+  ) {
     if (input.confirmation !== ORGANIZER_OPERATION_ROLLBACK_CONFIRMATION) {
       throw new OperationRollbackValidationError(
         "Organizer rollback confirmation phrase does not match.",
       );
     }
-    return rollbackOrganizerOperation(operation);
+    return operation.action === "REPAIR_LEGACY_MISARCHIVE"
+      ? rollbackLegacyMisarchiveOperation(operation)
+      : rollbackOrganizerOperation(operation);
   }
   if (input.confirmation !== OPERATION_ROLLBACK_CONFIRMATION) {
     throw new OperationRollbackValidationError(
@@ -119,6 +124,142 @@ export async function rollbackOperation(input: {
         data: { status: "FAILED", errorMessage: message, completedAt: new Date() },
       })
       .catch(() => null);
+    throw error;
+  }
+}
+
+async function rollbackLegacyMisarchiveOperation(
+  operation: Awaited<ReturnType<typeof prisma.operationLog.findUniqueOrThrow>>,
+) {
+  if (operation.status !== "SUCCEEDED" || !operation.entityId) {
+    throw new OperationRollbackValidationError(
+      "Only a successful legacy organizer repair can be rolled back.",
+    );
+  }
+  const moves = parseOrganizerRollback(operation.rollbackData);
+  const repair = parseLegacyRepairRollback(operation.rollbackData);
+  if (!moves || moves.length !== 1 || !repair) {
+    throw new OperationRollbackValidationError(
+      "The operation has no valid legacy organizer rollback evidence.",
+    );
+  }
+  const [move] = moves;
+  const [plan, planItem, mediaFile] = await Promise.all([
+    prisma.organizerPlan.findUniqueOrThrow({
+      where: { id: operation.entityId },
+      select: { id: true, status: true },
+    }),
+    prisma.organizerPlanItem.findUniqueOrThrow({ where: { id: repair.planItemId } }),
+    prisma.mediaFile.findUniqueOrThrow({ where: { id: repair.mediaFileId } }),
+  ]);
+  if (
+    !["EXECUTED", "AUTO_ARCHIVED"].includes(plan.status) ||
+    planItem.planId !== plan.id ||
+    planItem.targetPath !== repair.newPath ||
+    planItem.fileType !== "video" ||
+    mediaFile.absolutePath !== repair.newPath ||
+    move.sourcePath !== repair.newPath ||
+    move.targetPath !== repair.oldPath
+  ) {
+    throw new OperationRollbackValidationError(
+      "Legacy organizer repair state changed after execution; refusing an unsafe rollback.",
+    );
+  }
+  const leased = await prisma.operationLog.updateMany({
+    where: { id: operation.id, status: "SUCCEEDED" },
+    data: { status: "ROLLBACK_STARTED" },
+  });
+  if (leased.count !== 1) {
+    throw new OperationRollbackValidationError(
+      "The legacy organizer repair is already being rolled back.",
+    );
+  }
+  const audit = await prisma.operationLog.create({
+    data: {
+      domain: "ORGANIZER",
+      action: "ROLLBACK_REPAIR_LEGACY_MISARCHIVE",
+      status: "STARTED",
+      entityType: operation.entityType,
+      entityId: operation.entityId,
+      planId: operation.planId,
+      details: { rollbackOf: operation.id, moves, repair } as Prisma.InputJsonValue,
+    },
+  });
+  let allowedRoots: string[] = [];
+  let moved: OrganizerMove[] = [];
+  let databaseFinalized = false;
+  try {
+    const settings = await getAppSettings();
+    allowedRoots = organizerAllowedRoots(settings.directories);
+    moved = await moveOrganizerFiles(moves, allowedRoots);
+    await prisma.$transaction(async (database) => {
+      await database.organizerPlanItem.update({
+        where: { id: repair.planItemId },
+        data: {
+          targetPath: repair.oldPath,
+          fileType: "extra_video",
+          conflict: false,
+          conflictReason: null,
+        },
+      });
+      await database.mediaFile.update({
+        where: { id: repair.mediaFileId },
+        data: {
+          episodeId: repair.previousEpisodeId,
+          relativePath: repair.oldPath,
+          absolutePath: repair.oldPath,
+        },
+      });
+      if (!repair.episodePreviouslyExisted) {
+        await database.episode.deleteMany({
+          where: {
+            id: repair.repairedEpisodeId,
+            files: { none: {} },
+            progress: { none: {} },
+            subtitles: { none: {} },
+          },
+        });
+      }
+      const completedAt = new Date();
+      await database.operationLog.update({
+        where: { id: audit.id },
+        data: { status: "SUCCEEDED", completedAt },
+      });
+      await database.operationLog.update({
+        where: { id: operation.id },
+        data: { status: "ROLLED_BACK", completedAt },
+      });
+    });
+    databaseFinalized = true;
+    return {
+      operationId: operation.id,
+      rollbackOperationId: audit.id,
+      restored: moved.length,
+    };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Legacy organizer rollback failed";
+    const compensation =
+      !databaseFinalized && moved.length > 0
+        ? await rollbackOrganizerFiles(moved, allowedRoots)
+        : null;
+    const stateMessage =
+      compensation?.errors.length
+        ? `${message}; file compensation was incomplete`
+        : message;
+    await Promise.all([
+      prisma.operationLog
+        .update({
+          where: { id: audit.id },
+          data: { status: "FAILED", completedAt: new Date(), errorMessage: stateMessage },
+        })
+        .catch(() => null),
+      prisma.operationLog
+        .updateMany({
+          where: { id: operation.id, status: "ROLLBACK_STARTED" },
+          data: { status: databaseFinalized ? "ROLLBACK_FAILED" : "SUCCEEDED" },
+        })
+        .catch(() => null),
+    ]);
     throw error;
   }
 }
@@ -318,6 +459,48 @@ function parseOrganizerRollback(value: Prisma.JsonValue): OrganizerMove[] | null
     moves.push({ sourcePath, targetPath });
   }
   return moves;
+}
+
+function parseLegacyRepairRollback(value: Prisma.JsonValue) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return null;
+  }
+  const repair = value.legacyRepair;
+  if (!repair || typeof repair !== "object" || Array.isArray(repair)) {
+    return null;
+  }
+  const {
+    planItemId,
+    mediaFileId,
+    previousEpisodeId,
+    repairedEpisodeId,
+    episodePreviouslyExisted,
+    oldPath,
+    newPath,
+  } = repair;
+  if (
+    typeof planItemId !== "string" ||
+    typeof mediaFileId !== "string" ||
+    (previousEpisodeId !== null && typeof previousEpisodeId !== "string") ||
+    typeof repairedEpisodeId !== "string" ||
+    typeof episodePreviouslyExisted !== "boolean" ||
+    typeof oldPath !== "string" ||
+    typeof newPath !== "string" ||
+    !path.isAbsolute(oldPath) ||
+    !path.isAbsolute(newPath) ||
+    oldPath === newPath
+  ) {
+    return null;
+  }
+  return {
+    planItemId,
+    mediaFileId,
+    previousEpisodeId,
+    repairedEpisodeId,
+    episodePreviouslyExisted,
+    oldPath,
+    newPath,
+  };
 }
 
 function organizerAllowedRoots(directories: {

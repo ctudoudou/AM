@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import { useSearchParams } from "next/navigation";
 import {
   AlertTriangle,
   Check,
@@ -19,8 +20,17 @@ import {
   ORGANIZER_PLAN_EXECUTION_CONFIRMATION,
   ORGANIZER_OPERATION_ROLLBACK_CONFIRMATION,
   ORGANIZER_REPAIR_CONFIRMATION,
+  ORGANIZER_AI_CLASSIFICATION_CONFIRMATION,
 } from "@/lib/organizer-confirmations";
 import type { OrganizerRepairPlan } from "@/lib/organizer-repair";
+
+type OrganizerAiFileRole =
+  | "MAIN_VIDEO"
+  | "EXTRA_VIDEO"
+  | "AUDIO"
+  | "IMAGE"
+  | "METADATA"
+  | "UNRELATED";
 
 type OrganizerPlan = {
   id: string;
@@ -57,6 +67,17 @@ type OrganizerPlan = {
       summary: string;
       acceptedItems: number;
       rejectedItems: number;
+      appliedAt?: string;
+      fileClassifications: Array<{
+        sourcePath: string;
+        role: OrganizerAiFileRole;
+        mediaType: string | null;
+        title: string | null;
+        season: number | null;
+        episodeNumber: number | null;
+        confidence: number;
+        evidence: string;
+      }>;
     };
   } | null;
 };
@@ -115,7 +136,7 @@ type OrganizerPage = {
   hasPrevious: boolean;
 };
 
-type PlanAction = "execute" | "reject" | "regenerate" | "ai-review";
+type PlanAction = "execute" | "reject" | "regenerate" | "ai-review" | "ai-apply";
 
 export function OrganizerClient({
   buildRevision,
@@ -125,10 +146,14 @@ export function OrganizerClient({
   locale: Locale;
 }) {
   const t = getMessages(locale);
+  const searchParams = useSearchParams();
+  const linkedPlanId = searchParams.get("planId")?.trim() || null;
   const [plans, setPlans] = useState<OrganizerPlan[]>([]);
   const [operations, setOperations] = useState<OrganizerOperationRecord[]>([]);
   const [stats, setStats] = useState<OrganizerStats | null>(null);
-  const [filter, setFilter] = useState<OrganizerFilter>("ACTIVE");
+  const [filter, setFilter] = useState<OrganizerFilter>(
+    searchParams.get("view") === "all" ? "ALL" : "ACTIVE",
+  );
   const [planPage, setPlanPage] = useState(1);
   const [pageInfo, setPageInfo] = useState<OrganizerPage>({
     page: 1,
@@ -169,7 +194,7 @@ export function OrganizerClient({
           stats?: OrganizerStats;
           page?: OrganizerPage;
         }>(
-          `/api/organizer/plans?${organizerPlanParams(filter, planPage)}`,
+          `/api/organizer/plans?${organizerPlanParams(filter, planPage, linkedPlanId)}`,
           undefined,
           t.organizerLoadError,
           { DATABASE_MIGRATION_REQUIRED: t.databaseMigrationRequired },
@@ -213,7 +238,7 @@ export function OrganizerClient({
         setRefreshing(false);
       }
     }
-  }, [filter, planPage, t.databaseMigrationRequired, t.organizerLoadError]);
+  }, [filter, linkedPlanId, planPage, t.databaseMigrationRequired, t.organizerLoadError]);
 
   const loadImportRoot = useCallback(async () => {
     try {
@@ -237,6 +262,16 @@ export function OrganizerClient({
     }, 0);
     return () => window.clearTimeout(timeout);
   }, [load]);
+
+  useEffect(() => {
+    if (!linkedPlanId || !plans.some((plan) => plan.id === linkedPlanId)) {
+      return;
+    }
+    document.getElementById(`organizer-plan-${linkedPlanId}`)?.scrollIntoView({
+      behavior: "smooth",
+      block: "center",
+    });
+  }, [linkedPlanId, plans]);
 
   useEffect(() => {
     const timeout = window.setTimeout(() => {
@@ -353,6 +388,46 @@ export function OrganizerClient({
       await load();
     } catch (reviewError) {
       setError(errorMessage(reviewError, t.aiReviewPlansError));
+    } finally {
+      setPlanAction(null);
+    }
+  }
+
+  async function applyPlanAiClassification(plan: OrganizerPlan) {
+    if (!canApplyAiClassification(plan)) {
+      setError(t.organizerAiApplyUnavailable);
+      return;
+    }
+    setPlanAction({ id: plan.id, action: "ai-apply" });
+    setStatus("");
+    setError("");
+    try {
+      const body = await requestJson<{
+        updatedItems: number;
+        excludedItems: number;
+        conflicts: number;
+      }>(
+        `/api/organizer/plans/${plan.id}/ai-review/apply`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            confirmation: ORGANIZER_AI_CLASSIFICATION_CONFIRMATION,
+            planVersion: plan.version,
+          }),
+        },
+        t.organizerAiApplyError,
+        {
+          ORGANIZER_AI_REVIEW_NOT_SUPPORTED: t.organizerAiApplyUnavailable,
+          STALE_ORGANIZER_PLAN: t.organizerPlanStale,
+        },
+      );
+      setStatus(
+        `${t.organizerAiApplyDone} ${t.organizerUpdated}: ${body.updatedItems}, ${t.organizerExcluded}: ${body.excludedItems}, ${t.conflict}: ${body.conflicts}.`,
+      );
+      await load();
+    } catch (applyError) {
+      setError(errorMessage(applyError, t.organizerAiApplyError));
     } finally {
       setPlanAction(null);
     }
@@ -741,7 +816,11 @@ export function OrganizerClient({
             const title = organizerPlanTitle(plan, t);
             const activeAction = planAction?.id === plan.id ? planAction.action : null;
             return (
-              <article key={plan.id}>
+              <article
+                className={plan.id === linkedPlanId ? "linked" : undefined}
+                id={`organizer-plan-${plan.id}`}
+                key={plan.id}
+              >
                 <div className="organizer-plan-heading">
                   <div className="organizer-plan-media">
                     {plan.metadata?.posterUrl ? (
@@ -785,6 +864,25 @@ export function OrganizerClient({
                               {t.organizerAiAccepted}: {plan.metadata.aiReview.acceptedItems} ·{" "}
                               {t.organizerAiRejected}: {plan.metadata.aiReview.rejectedItems}
                             </small>
+                            {plan.metadata.aiReview.fileClassifications.length > 0 ? (
+                              <details className="organizer-ai-files">
+                                <summary>
+                                  {t.organizerAiFileClassifications} ({plan.metadata.aiReview.fileClassifications.length})
+                                </summary>
+                                {plan.metadata.aiReview.fileClassifications.map((classification) => (
+                                  <div key={classification.sourcePath}>
+                                    <strong>{formatOrganizerAiRole(classification.role, t)}</strong>
+                                    <span>
+                                      {classification.season !== null ? `S${String(classification.season).padStart(2, "0")}` : ""}
+                                      {classification.episodeNumber !== null ? `E${String(Math.floor(classification.episodeNumber)).padStart(2, "0")}` : ""}
+                                      {` · ${Math.round(classification.confidence * 100)}%`}
+                                    </span>
+                                    <code title={classification.sourcePath}>{classification.sourcePath}</code>
+                                    {classification.evidence ? <small>{classification.evidence}</small> : null}
+                                  </div>
+                                ))}
+                              </details>
+                            ) : null}
                           </div>
                         </div>
                       ) : null}
@@ -822,6 +920,17 @@ export function OrganizerClient({
                       )}
                       {plan.metadata?.aiReview ? t.organizerAiClassifyAgain : t.organizerAiClassify}
                     </button>
+                    {plan.metadata?.aiReview?.fileClassifications.length ? (
+                      <button
+                        disabled={!canApplyAiClassification(plan) || mutationBusy}
+                        onClick={() => void applyPlanAiClassification(plan)}
+                        title={t.organizerAiApplyHint}
+                        type="button"
+                      >
+                        {activeAction === "ai-apply" ? <Loader2 size={14} /> : <CheckCheck size={14} />}
+                        {plan.metadata.aiReview.appliedAt ? t.organizerAiApplyAgain : t.organizerAiApply}
+                      </button>
+                    ) : null}
                     <button
                       disabled={!executable || mutationBusy}
                       onClick={() => requestExecution(plan)}
@@ -892,7 +1001,7 @@ export function OrganizerClient({
           <div>
             {operations.map((operation) => {
               const rollbackable =
-                operation.action === "EXECUTE_MOVE" &&
+                ["EXECUTE_MOVE", "REPAIR_LEGACY_MISARCHIVE"].includes(operation.action) &&
                 operation.status === "SUCCEEDED" &&
                 (operation.rollbackData?.moves?.length ?? 0) > 0;
               return (
@@ -1370,6 +1479,32 @@ function organizerAiReviewIsTrusted(plan: OrganizerPlan) {
   );
 }
 
+function canApplyAiClassification(plan: OrganizerPlan) {
+  const review = plan.metadata?.aiReview;
+  return Boolean(
+    review &&
+      !review.appliedAt &&
+      review.fileClassifications.length === plan.items.length &&
+      review.confidence >= 0.8 &&
+      review.fileClassifications.every((classification) => classification.confidence >= 0.8) &&
+      !["AUTO_ARCHIVED", "EXECUTED", "EXECUTING", "REJECTED"].includes(plan.status),
+  );
+}
+
+function formatOrganizerAiRole(
+  role: OrganizerAiFileRole,
+  t: ReturnType<typeof getMessages>,
+) {
+  return {
+    MAIN_VIDEO: t.organizerAiRoleMainVideo,
+    EXTRA_VIDEO: t.organizerAiRoleExtraVideo,
+    AUDIO: t.organizerAiRoleAudio,
+    IMAGE: t.organizerAiRoleImage,
+    METADATA: t.organizerAiRoleMetadata,
+    UNRELATED: t.organizerAiRoleUnrelated,
+  }[role];
+}
+
 function organizerAiRiskClass(riskLevel: "OK" | "REVIEW" | "REJECT") {
   if (riskLevel === "OK") {
     return "safe";
@@ -1412,7 +1547,7 @@ function canRegeneratePlan(plan: OrganizerPlan) {
   return plan.status === "REJECTED";
 }
 
-function organizerPlanParams(filter: OrganizerFilter, page: number) {
+function organizerPlanParams(filter: OrganizerFilter, page: number, planId?: string | null) {
   const params = new URLSearchParams();
   if (filter === "ACTIVE") {
     params.set("view", "active");
@@ -1427,6 +1562,9 @@ function organizerPlanParams(filter: OrganizerFilter, page: number) {
   }
   params.set("page", String(page));
   params.set("pageSize", "50");
+  if (planId) {
+    params.set("planId", planId);
+  }
   return params.toString();
 }
 
@@ -1625,6 +1763,8 @@ function formatOrganizerOperationAction(
   return {
     EXECUTE_MOVE: t.organizerOperationExecute,
     ROLLBACK_EXECUTE_MOVE: t.organizerOperationRollback,
+    REPAIR_LEGACY_MISARCHIVE: t.organizerOperationRepairLegacyMisarchive,
+    ROLLBACK_REPAIR_LEGACY_MISARCHIVE: t.organizerOperationRollbackLegacyMisarchive,
   }[action] ?? action;
 }
 
@@ -1698,6 +1838,9 @@ function formatOrganizerRepairKind(
   if (kind === "resolve_archived") {
     return t.organizerRepairResolveArchived;
   }
+  if (kind === "reclassify_episode") {
+    return t.organizerRepairReclassifyEpisode;
+  }
   if (kind === "regenerate") {
     return t.organizerRepairRegenerate;
   }
@@ -1719,6 +1862,9 @@ function organizerRepairKindDescription(
   }
   if (kind === "resolve_archived") {
     return t.organizerRepairResolveArchivedDescription;
+  }
+  if (kind === "reclassify_episode") {
+    return t.organizerRepairReclassifyEpisodeDescription;
   }
   if (kind === "regenerate") {
     return t.organizerRepairRegenerateDescription;

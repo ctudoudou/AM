@@ -20,6 +20,18 @@ describe("/api/organizer/plans/[id]/ai-review", () => {
         summary: "Title and episode match.",
         acceptedSourcePaths: ["/data/downloads/episode.mkv"],
         rejectedSourcePaths: [],
+        fileClassifications: [
+          {
+            sourcePath: "/data/downloads/episode.mkv",
+            role: "MAIN_VIDEO",
+            mediaType: "ANIME",
+            title: "Example",
+            season: 1,
+            episodeNumber: 1,
+            confidence: 0.94,
+            evidence: "S01E01",
+          },
+        ],
       },
       acceptedItems: 1,
       filteredItems: 0,
