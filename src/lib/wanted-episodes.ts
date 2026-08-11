@@ -6,7 +6,11 @@ import { normalizeCandidateEpisodeNumber, type EpisodeNumberCandidate } from "@/
 
 type CandidateWithState = ReleaseCandidate & {
   downloads: Array<{ status: string }>;
-  organizerPlans: Array<{ status: string; items: Array<{ id: string }> }>;
+  organizerPlans: Array<{
+    status: string;
+    mediaTitleId?: string | null;
+    items: Array<{ id: string }>;
+  }>;
   group: { displayTitle: string; normalizedTitle: string; aliases: unknown } | null;
 };
 
@@ -304,7 +308,13 @@ async function findCandidatesForMedia(media: MediaWithEpisodes) {
     },
     include: {
       downloads: { select: { status: true } },
-      organizerPlans: { select: { status: true, items: { select: { id: true } } } },
+      organizerPlans: {
+        select: {
+          status: true,
+          mediaTitleId: true,
+          items: { select: { id: true } },
+        },
+      },
       group: { select: { displayTitle: true, normalizedTitle: true, aliases: true } },
     },
     orderBy: [{ episodeNumber: "asc" }, { createdAt: "desc" }],
@@ -412,7 +422,7 @@ export function buildWantedEpisodeCoverage(
       );
       const bestCandidate = selectBestCandidate(episodeCandidates.map((item) => item.candidate));
       const state = bestCandidate
-        ? stateForCandidate(bestCandidate, episodeCandidates.length)
+        ? stateForCandidate(bestCandidate, episodeCandidates.length, media.id)
         : {
             status: "MISSING" as WantedEpisodeStatus,
             reason: "No candidate found",
@@ -620,7 +630,11 @@ function candidatePriority(candidate: CandidateWithState) {
   return 1;
 }
 
-function stateForCandidate(candidate: CandidateWithState, candidateCount: number) {
+function stateForCandidate(
+  candidate: CandidateWithState,
+  candidateCount: number,
+  mediaTitleId: string,
+) {
   const activeOrganizerPlans = candidate.organizerPlans.filter((plan) =>
     ["PENDING", "NEEDS_REVIEW", "EXECUTING", "CONFLICT", "FAILED"].includes(plan.status),
   );
@@ -629,6 +643,18 @@ function stateForCandidate(candidate: CandidateWithState, candidateCount: number
   }
   if (candidate.downloads.some((download) => ["WAITING", "ACTIVE", "PAUSED"].includes(download.status))) {
     return { status: "DOWNLOADING" as const, reason: "Download in progress" };
+  }
+  const completedOrganizerPlan = candidate.organizerPlans.find(
+    (plan) =>
+      ["EXECUTED", "AUTO_ARCHIVED"].includes(plan.status) &&
+      plan.mediaTitleId === mediaTitleId &&
+      plan.items.length > 0,
+  );
+  if (completedOrganizerPlan) {
+    return {
+      status: "ARCHIVED" as const,
+      reason: "Organizer completed, but no playable library episode is registered",
+    };
   }
   if (candidate.downloads.some((download) => download.status === "COMPLETED")) {
     return {

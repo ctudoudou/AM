@@ -626,6 +626,10 @@ export const en = {
   noCandidateFound: "No candidate",
   candidateFound: "Candidate found",
   downloadedWaitingOrganizer: "Downloaded, waiting for organizer",
+  archivedLibraryRepair: "Archived, but missing from library",
+  archivedLibraryRepairDescription:
+    "The organizer completed, but no playable episode was registered. Repair the legacy archive data, then rescan the library.",
+  archivedLibraryRepairAction: "Data repair required",
   downloading: "Downloading",
   missing: "Missing",
   ignored: "Ignored",
