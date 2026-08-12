@@ -1,14 +1,21 @@
 import { createHash } from "node:crypto";
 import fs from "node:fs/promises";
 import path from "node:path";
-import type { DownloadStatus, MediaType } from "@prisma/client";
+import { Prisma, type DownloadStatus, type MediaType } from "@prisma/client";
 import { prisma } from "@/lib/db";
 import { retryFailedDownload } from "@/lib/downloads";
 import { findExistingMediaTitle } from "@/lib/media-title-repair";
 import { parseMediaReleaseTitle } from "@/lib/media-parser";
-import { regenerateRejectedOrganizerPlan } from "@/lib/organizer";
+import { buildOrganizerTargetPath, regenerateRejectedOrganizerPlan } from "@/lib/organizer";
 import { ORGANIZER_REPAIR_CONFIRMATION } from "@/lib/organizer-confirmations";
 import { getAppSettings } from "@/lib/settings";
+import {
+  moveOrganizerFiles,
+  OrganizerMoveError,
+  rollbackOrganizerFiles,
+  type OrganizerMove,
+} from "@/lib/organizer-lifecycle";
+import { scanWantedEpisodes } from "@/lib/wanted-episodes";
 
 export { ORGANIZER_REPAIR_CONFIRMATION } from "@/lib/organizer-confirmations";
 
@@ -18,6 +25,7 @@ export class OrganizerRepairValidationError extends Error {}
 export type OrganizerRepairKind =
   | "delete_stale"
   | "resolve_archived"
+  | "reclassify_episode"
   | "regenerate"
   | "retry_missing"
   | "wait_download"
@@ -39,6 +47,12 @@ export type OrganizerRepairGroup = {
   targetPaths: Array<{ path: string; exists: boolean }>;
   archivedEvidencePaths: string[];
   hasBlockingPlan: boolean;
+  planItemIds?: string[];
+  mediaTitleId?: string | null;
+  season?: number | null;
+  recoveryMoves?: OrganizerMove[];
+  recoveryExecutable?: boolean;
+  recoveryReason?: string;
 };
 
 export type OrganizerRepairItem = {
@@ -53,6 +67,10 @@ export type OrganizerRepairItem = {
   episode: number | null;
   sourcePaths: string[];
   evidencePaths: string[];
+  planItemIds: string[];
+  mediaTitleId: string | null;
+  season: number | null;
+  moves: OrganizerMove[];
 };
 
 export type OrganizerRepairPlan = {
@@ -80,6 +98,7 @@ export async function createOrganizerRepairPlan(): Promise<OrganizerRepairPlan> 
     settings.directories.tvLibraryDir,
   ].map((value) => path.resolve(value));
   const plans = await loadRepairablePlans();
+  const legacyMisarchives = await createLegacyMisarchiveRepairGroups(settings.directories);
   const blockingPlans = await prisma.organizerPlan.findMany({
     where: {
       status: { not: "REJECTED" },
@@ -204,7 +223,7 @@ export async function createOrganizerRepairPlan(): Promise<OrganizerRepairPlan> 
     });
   }
 
-  return buildOrganizerRepairPlan(groups);
+  return buildOrganizerRepairPlan([...legacyMisarchives, ...groups]);
 }
 
 export function buildOrganizerRepairPlan(groups: OrganizerRepairGroup[]): OrganizerRepairPlan {
@@ -217,11 +236,16 @@ export function buildOrganizerRepairPlan(groups: OrganizerRepairGroup[]): Organi
       downloadId: item.downloadId,
       sourcePaths: item.sourcePaths,
       evidencePaths: item.evidencePaths,
+      planItemIds: item.planItemIds,
+      mediaTitleId: item.mediaTitleId,
+      season: item.season,
+      moves: item.moves,
     })),
   );
   const kinds: OrganizerRepairKind[] = [
     "delete_stale",
     "resolve_archived",
+    "reclassify_episode",
     "regenerate",
     "retry_missing",
     "wait_download",
@@ -319,7 +343,21 @@ function classifyOrganizerRepairGroup(group: OrganizerRepairGroup): OrganizerRep
     episode: group.episode,
     sourcePaths,
     evidencePaths,
+    planItemIds: group.planItemIds ?? [],
+    mediaTitleId: group.mediaTitleId ?? null,
+    season: group.season ?? null,
+    moves: group.recoveryMoves ?? [],
   };
+  if (group.recoveryMoves) {
+    return repairItem(base, {
+      kind: group.recoveryExecutable ? "reclassify_episode" : "manual_review",
+      executable: Boolean(group.recoveryExecutable),
+      confidence: group.recoveryExecutable ? "high" : "low",
+      reason:
+        group.recoveryReason ??
+        "An executed organizer plan archived an episode video under Extras.",
+    });
+  }
   if (!group.downloadId) {
     return repairItem(base, sourcePaths.length > 0
       ? {
@@ -426,11 +464,14 @@ function repairItem(
   return {
     ...base,
     ...action,
-    actionId: `${action.kind}:${stableHash({ planIds: base.planIds, downloadId: base.downloadId }).slice(0, 16)}`,
+    actionId: `${action.kind}:${stableHash({ planIds: base.planIds, planItemIds: base.planItemIds, downloadId: base.downloadId, moves: base.moves }).slice(0, 16)}`,
   };
 }
 
 async function executeOrganizerRepairItem(item: OrganizerRepairItem) {
+  if (item.kind === "reclassify_episode") {
+    return executeLegacyMisarchiveRepair(item);
+  }
   if (item.kind === "delete_stale") {
     return prisma.organizerPlan.updateMany({
       where: {
@@ -517,6 +558,300 @@ async function executeOrganizerRepairItem(item: OrganizerRepairItem) {
     return retried;
   }
   throw new Error("Review-only organizer repair actions cannot be executed.");
+}
+
+async function createLegacyMisarchiveRepairGroups(directories: {
+  dataRoot: string;
+  animeLibraryDir: string;
+  moviesLibraryDir: string;
+  tvLibraryDir: string;
+}) {
+  const plans = await prisma.organizerPlan.findMany({
+    where: {
+      status: { in: ["EXECUTED", "AUTO_ARCHIVED"] },
+      mediaTitleId: { not: null },
+      items: { some: { fileType: "extra_video" } },
+    },
+    include: {
+      items: { where: { fileType: "extra_video" } },
+      candidate: { include: { group: true } },
+      download: {
+        select: {
+          status: true,
+          archiveStatus: true,
+          supersededById: true,
+          sourceUrl: true,
+        },
+      },
+      mediaTitle: true,
+    },
+    orderBy: { executedAt: "desc" },
+    take: 500,
+  });
+  const roots = {
+    animeLibraryDir: directories.animeLibraryDir,
+    moviesLibraryDir: directories.moviesLibraryDir,
+    tvLibraryDir: directories.tvLibraryDir,
+  };
+  const groups: OrganizerRepairGroup[] = [];
+  for (const plan of plans) {
+    const metadata =
+      plan.metadata && typeof plan.metadata === "object" && !Array.isArray(plan.metadata)
+        ? (plan.metadata as Record<string, unknown>)
+        : {};
+    const title =
+      plan.mediaTitle?.primaryTitle ??
+      (typeof metadata.title === "string" ? metadata.title : null) ??
+      plan.candidate?.group?.displayTitle ??
+      plan.candidate?.parsedTitle ??
+      null;
+    for (const item of plan.items) {
+      if (!pathUsesExtrasDirectory(item.targetPath) || !title) {
+        continue;
+      }
+      const parsed = parseMediaReleaseTitle(item.originalName || item.sourcePath, plan.mediaType);
+      const episode = positiveEpisode(parsed.episodeNumber) ?? positiveEpisode(plan.candidate?.episodeNumber);
+      const season = nonNegativeSeason(parsed.season) ?? nonNegativeSeason(plan.candidate?.season) ?? 1;
+      if (episode === null) {
+        continue;
+      }
+      const extensionSource = path.join(path.dirname(item.targetPath), item.originalName);
+      const targetPath = buildOrganizerTargetPath({
+        mediaType: plan.mediaType,
+        roots,
+        title,
+        year:
+          plan.mediaTitle?.year ??
+          (typeof metadata.year === "number" ? metadata.year : undefined),
+        season,
+        episode,
+        episodeTitle: parsed.parsedTitle,
+        group: plan.candidate?.subtitleGroup,
+        resolution: plan.candidate?.resolution,
+        codec: plan.candidate?.codec,
+        sourcePath: extensionSource,
+        titleAliases: [
+          plan.mediaTitle?.primaryTitle,
+          plan.mediaTitle?.originalTitle,
+          plan.candidate?.group?.displayTitle,
+          plan.candidate?.parsedTitle,
+        ].filter((value): value is string => Boolean(value)),
+      });
+      const [sourceExists, targetExists] = await Promise.all([
+        regularFileExists(item.targetPath, directories.dataRoot),
+        regularFileExists(targetPath, directories.dataRoot),
+      ]);
+      const extensionPreserved =
+        path.extname(targetPath).toLowerCase() === path.extname(item.originalName).toLowerCase();
+      const executable = sourceExists && !targetExists && extensionPreserved;
+      const reason = !sourceExists
+        ? "The legacy Extras file is missing; no file move can be verified."
+        : targetExists
+          ? "The corrected episode target already exists and requires duplicate review."
+          : !extensionPreserved
+            ? "The corrected target does not preserve the original file extension."
+            : "Restore the executed episode video from Extras and relink it to the playable library episode.";
+      groups.push({
+        key: `legacy:${item.id}`,
+        planIds: [plan.id],
+        statuses: [plan.status],
+        downloadId: plan.downloadId,
+        downloadStatus: plan.download?.status ?? null,
+        archiveStatus: plan.download?.archiveStatus ?? null,
+        supersededById: plan.download?.supersededById ?? null,
+        sourceUrlAvailable: Boolean(plan.download?.sourceUrl),
+        title,
+        season,
+        episode,
+        hasItems: true,
+        sourcePaths: [{ path: item.targetPath, exists: sourceExists }],
+        targetPaths: [{ path: targetPath, exists: targetExists }],
+        archivedEvidencePaths: sourceExists ? [item.targetPath] : [],
+        hasBlockingPlan: false,
+        planItemIds: [item.id],
+        mediaTitleId: plan.mediaTitleId,
+        recoveryMoves: [{ sourcePath: item.targetPath, targetPath }],
+        recoveryExecutable: executable,
+        recoveryReason: reason,
+      });
+    }
+  }
+  return groups;
+}
+
+async function executeLegacyMisarchiveRepair(item: OrganizerRepairItem) {
+  const [planId] = item.planIds;
+  const [planItemId] = item.planItemIds;
+  const [move] = item.moves;
+  if (
+    !planId ||
+    !planItemId ||
+    !move ||
+    !item.mediaTitleId ||
+    item.episode === null ||
+    item.season === null
+  ) {
+    throw new Error("Legacy organizer recovery evidence is incomplete.");
+  }
+  const settings = await getAppSettings();
+  const allowedRoots = organizerRepairAllowedRoots(settings.directories);
+  const plan = await prisma.organizerPlan.findUniqueOrThrow({
+    where: { id: planId },
+    include: { items: true, candidate: true },
+  });
+  const planItem = plan.items.find((candidate) => candidate.id === planItemId);
+  if (
+    !planItem ||
+    !["EXECUTED", "AUTO_ARCHIVED"].includes(plan.status) ||
+    planItem.fileType !== "extra_video" ||
+    planItem.targetPath !== move.sourcePath ||
+    !pathUsesExtrasDirectory(planItem.targetPath)
+  ) {
+    throw new OrganizerRepairPlanStaleError(
+      "The legacy organizer item changed after preview. Generate a new repair plan.",
+    );
+  }
+  if (!(await regularFileExists(move.sourcePath, settings.directories.dataRoot))) {
+    throw new OrganizerRepairPlanStaleError("The legacy Extras file no longer exists.");
+  }
+  if (await regularFileExists(move.targetPath, settings.directories.dataRoot)) {
+    throw new OrganizerRepairPlanStaleError("The corrected episode target now exists.");
+  }
+  const existingMediaFile = await prisma.mediaFile.findFirst({
+    where: { absolutePath: move.sourcePath },
+    select: { id: true, episodeId: true },
+  });
+  const existingSeason = await prisma.season.findUnique({
+    where: { mediaId_number: { mediaId: item.mediaTitleId, number: item.season } },
+    include: { episodes: { where: { number: item.episode }, select: { id: true } } },
+  });
+  const previousEpisodeId = existingMediaFile?.episodeId ?? null;
+  const episodePreviouslyExisted = Boolean(existingSeason?.episodes[0]);
+  const operation = await prisma.operationLog.create({
+    data: {
+      domain: "ORGANIZER",
+      action: "REPAIR_LEGACY_MISARCHIVE",
+      status: "STARTED",
+      entityType: "OrganizerPlan",
+      entityId: plan.id,
+      planId: plan.id,
+      details: {
+        moves: [move],
+        planItemId,
+        season: item.season,
+        episode: item.episode,
+      },
+    },
+  });
+  let moved: OrganizerMove[] = [];
+  try {
+    moved = await moveOrganizerFiles([move], allowedRoots);
+    const completedAt = new Date();
+    const result = await prisma.$transaction(
+      async (database) => {
+        const season = await database.season.upsert({
+          where: {
+            mediaId_number: {
+              mediaId: item.mediaTitleId as string,
+              number: item.season as number,
+            },
+          },
+          create: { mediaId: item.mediaTitleId as string, number: item.season as number },
+          update: {},
+        });
+        const episode = await database.episode.upsert({
+          where: {
+            seasonId_number: { seasonId: season.id, number: item.episode as number },
+          },
+          create: {
+            seasonId: season.id,
+            number: item.episode as number,
+            title: parseMediaReleaseTitle(planItem.originalName, plan.mediaType).parsedTitle,
+          },
+          update: {},
+        });
+        await database.organizerPlanItem.update({
+          where: { id: planItem.id },
+          data: {
+            targetPath: move.targetPath,
+            fileType: "video",
+            conflict: false,
+            conflictReason: null,
+          },
+        });
+        const mediaFileData = {
+          episodeId: episode.id,
+          relativePath: move.targetPath,
+          absolutePath: move.targetPath,
+          originalName: planItem.originalName,
+          sizeBytes: planItem.sizeBytes,
+          resolution: plan.candidate?.resolution,
+          sourceResolution: plan.candidate?.resolution,
+          videoCodec: plan.candidate?.codec,
+          subtitleGroup: plan.candidate?.subtitleGroup,
+        };
+        const mediaFile = existingMediaFile
+          ? await database.mediaFile.update({
+              where: { id: existingMediaFile.id },
+              data: mediaFileData,
+            })
+          : await database.mediaFile.create({ data: mediaFileData });
+        await database.organizerPlan.update({
+          where: { id: plan.id },
+          data: {
+            reason: "Legacy episode restored from Extras",
+            resolution: `Reclassified organizer item ${planItem.id} as a playable episode.`,
+          },
+        });
+        await database.operationLog.update({
+          where: { id: operation.id },
+          data: {
+            status: "SUCCEEDED",
+            completedAt,
+            rollbackData: {
+              moves: [{ sourcePath: move.targetPath, targetPath: move.sourcePath }],
+              legacyRepair: {
+                planItemId: planItem.id,
+                mediaFileId: mediaFile.id,
+                previousEpisodeId,
+                repairedEpisodeId: episode.id,
+                episodePreviouslyExisted,
+                oldPath: move.sourcePath,
+                newPath: move.targetPath,
+              },
+            } as Prisma.InputJsonValue,
+          },
+        });
+        return {
+          planId: plan.id,
+          planItemId: planItem.id,
+          mediaFileId: mediaFile.id,
+          episodeId: episode.id,
+        };
+      },
+      { maxWait: 5_000, timeout: 30_000 },
+    );
+    await scanWantedEpisodes(item.mediaTitleId).catch(() => null);
+    return result;
+  } catch (error) {
+    const rollback =
+      error instanceof OrganizerMoveError
+        ? error.rollback
+        : moved.length > 0
+          ? await rollbackOrganizerFiles(moved, allowedRoots)
+          : null;
+    const message = error instanceof Error ? error.message : "Legacy organizer recovery failed";
+    const auditedMessage = rollback?.errors.length
+      ? `${message}; file rollback was incomplete`
+      : message;
+    await prisma.operationLog
+      .update({
+        where: { id: operation.id },
+        data: { status: "FAILED", completedAt: new Date(), errorMessage: auditedMessage },
+      })
+      .catch(() => null);
+    throw error;
+  }
 }
 
 async function loadRepairablePlans() {
@@ -657,6 +992,38 @@ function parseDownloadIdentity(targetPath: string | null | undefined, mediaType:
         : null,
     season: parsed.season ?? 1,
   };
+}
+
+function positiveEpisode(value: number | null | undefined) {
+  return typeof value === "number" && Number.isFinite(value) && value > 0
+    ? Math.floor(value)
+    : null;
+}
+
+function nonNegativeSeason(value: number | null | undefined) {
+  return typeof value === "number" && Number.isInteger(value) && value >= 0 ? value : null;
+}
+
+function pathUsesExtrasDirectory(value: string) {
+  return value.split(path.sep).some((segment) => /^extras?$/i.test(segment));
+}
+
+function organizerRepairAllowedRoots(directories: {
+  dataRoot: string;
+  downloadsDir: string;
+  stagingDir: string;
+  animeLibraryDir: string;
+  moviesLibraryDir: string;
+  tvLibraryDir: string;
+}) {
+  return unique([
+    directories.dataRoot,
+    directories.downloadsDir,
+    directories.stagingDir,
+    directories.animeLibraryDir,
+    directories.moviesLibraryDir,
+    directories.tvLibraryDir,
+  ].map((value) => path.resolve(value)));
 }
 
 function stringArray(value: unknown) {

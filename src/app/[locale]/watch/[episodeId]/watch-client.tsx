@@ -742,7 +742,7 @@ export function WatchClient({
               {t.autoNextEpisode}: {autoNext ? t.enabled : t.disabled}
             </button>
           </div>
-          {error ? <div className="settings-alert">{error}</div> : null}
+          {error ? <div className="settings-alert" role="alert">{error}</div> : null}
           <p className="watch-playback-explanation">
             {playbackModeDescription(descriptor?.playbackMode, t)}
           </p>

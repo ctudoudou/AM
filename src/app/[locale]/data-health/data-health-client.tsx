@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { AlertTriangle, CheckCircle2, Loader2, RefreshCw, ShieldCheck, Wrench } from "lucide-react";
 import { getMessages } from "@/messages";
 import type { Locale } from "@/lib/i18n";
+import { DATA_HEALTH_REPAIR_CONFIRMATION } from "@/lib/data-health-confirmations";
 
 type DataHealthIssue = {
   id: string;
@@ -32,8 +33,31 @@ type DataHealthScan = {
 };
 
 type DataHealthRepairResponse = {
-  repair: Record<string, unknown>;
+  requested: number;
+  succeeded: number;
+  failed: number;
   scan: DataHealthScan;
+};
+
+type DataHealthRepairAction = {
+  actionId: "candidate_groups" | "organizer_plans" | "movie_metadata_aliases";
+  issueIds: string[];
+  affectedRecords: number;
+  confidence: "high" | "medium";
+  title: string;
+  description: string;
+};
+
+type DataHealthRepairPlan = {
+  planId: string;
+  createdAt: string;
+  generatedFrom: string;
+  actions: DataHealthRepairAction[];
+  summary: {
+    actions: number;
+    affectedRecords: number;
+    highConfidenceActions: number;
+  };
 };
 
 const dataHealthRequestTimeoutMs = 60_000;
@@ -43,6 +67,9 @@ export function DataHealthClient({ locale }: { locale: Locale }) {
   const [scan, setScan] = useState<DataHealthScan | null>(null);
   const [loading, setLoading] = useState(true);
   const [repairing, setRepairing] = useState(false);
+  const [repairPlan, setRepairPlan] = useState<DataHealthRepairPlan | null>(null);
+  const [repairSelection, setRepairSelection] = useState<DataHealthRepairAction["actionId"][]>([]);
+  const [repairAcknowledged, setRepairAcknowledged] = useState(false);
   const [error, setError] = useState("");
   const [repairMessage, setRepairMessage] = useState("");
   const [loadingSeconds, setLoadingSeconds] = useState(0);
@@ -105,18 +132,65 @@ export function DataHealthClient({ locale }: { locale: Locale }) {
     };
   }, [load]);
 
-  async function repair() {
+  async function previewRepair() {
     setRepairing(true);
     setError("");
     setRepairMessage("");
     try {
-      const response = await fetch("/api/data-health", { method: "POST" });
+      const response = await fetch("/api/data-health", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ mode: "preview" }),
+      });
       if (!response.ok) {
         throw new Error(t.dataHealthRepairError);
       }
-      const body = (await response.json()) as DataHealthRepairResponse;
+      const plan = (await response.json()) as DataHealthRepairPlan;
+      setRepairPlan(plan);
+      setRepairSelection(
+        plan.actions
+          .filter((action) => action.confidence === "high")
+          .map((action) => action.actionId),
+      );
+      setRepairAcknowledged(false);
+    } catch (repairError) {
+      setError(repairError instanceof Error ? repairError.message : t.dataHealthRepairError);
+    } finally {
+      setRepairing(false);
+    }
+  }
+
+  async function executeRepair() {
+    if (!repairPlan || repairSelection.length === 0 || !repairAcknowledged) {
+      return;
+    }
+    setRepairing(true);
+    setError("");
+    setRepairMessage("");
+    try {
+      const response = await fetch("/api/data-health", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          mode: "execute",
+          planId: repairPlan.planId,
+          actionIds: repairSelection,
+          confirmation: DATA_HEALTH_REPAIR_CONFIRMATION,
+        }),
+      });
+      const body = (await response.json().catch(() => null)) as
+        | (DataHealthRepairResponse & { message?: string })
+        | null;
+      if (!response.ok || !body) {
+        throw new Error(body?.message || t.dataHealthRepairError);
+      }
       setScan(body.scan);
-      setRepairMessage(t.dataHealthRepairDone);
+      setRepairPlan(null);
+      setRepairSelection([]);
+      setRepairAcknowledged(false);
+      setRepairMessage(
+        `${t.dataHealthRepairDone} ${t.dataHealthRepairSucceeded}: ${body.succeeded}, ${t.dataHealthRepairFailed}: ${body.failed}.`,
+      );
     } catch (repairError) {
       setError(repairError instanceof Error ? repairError.message : t.dataHealthRepairError);
     } finally {
@@ -154,8 +228,8 @@ export function DataHealthClient({ locale }: { locale: Locale }) {
 
   return (
     <div className="settings-grid data-health-grid">
-      {error ? <div className="settings-alert">{error}</div> : null}
-      {repairMessage ? <div className="settings-success">{repairMessage}</div> : null}
+      {error ? <div className="settings-alert" role="alert">{error}</div> : null}
+      {repairMessage ? <div aria-live="polite" className="settings-success">{repairMessage}</div> : null}
 
       <section className="settings-panel wide data-health-hero">
         <div className="settings-panel-heading">
@@ -173,9 +247,9 @@ export function DataHealthClient({ locale }: { locale: Locale }) {
               {loading ? <Loader2 size={14} /> : <RefreshCw size={14} />}
               {t.refresh}
             </button>
-            <button disabled={loading || repairing || !scan?.summary.autoFixableIssues} onClick={() => void repair()} type="button">
+            <button disabled={loading || repairing || !scan?.summary.autoFixableIssues} onClick={() => void previewRepair()} type="button">
               {repairing ? <Loader2 size={14} /> : <Wrench size={14} />}
-              {t.dataHealthRepair}
+              {t.dataHealthRepairPreview}
             </button>
           </div>
         </div>
@@ -217,9 +291,9 @@ export function DataHealthClient({ locale }: { locale: Locale }) {
                 <div>
                   <strong>
                     {issue.severity === "danger" ? <AlertTriangle size={15} /> : <ShieldCheck size={15} />}
-                    {issue.title}
+                    {localizedDataHealthIssue(issue.id, issue.title, issue.description, t).title}
                   </strong>
-                  <p>{issue.description}</p>
+                  <p>{localizedDataHealthIssue(issue.id, issue.title, issue.description, t).description}</p>
                 </div>
                 <span>{issue.count}</span>
                 <small>{issue.autoFixable ? t.dataHealthAutoFixable : t.dataHealthManualOnly}</small>
@@ -234,8 +308,136 @@ export function DataHealthClient({ locale }: { locale: Locale }) {
           </div>
         )}
       </section>
+
+      {repairPlan ? (
+        <div
+          className="strategy-dialog-backdrop"
+          onMouseDown={() => {
+            if (!repairing) {
+              setRepairPlan(null);
+              setRepairSelection([]);
+              setRepairAcknowledged(false);
+            }
+          }}
+          role="presentation"
+        >
+          <section
+            aria-labelledby="data-health-repair-title"
+            aria-modal="true"
+            className="strategy-dialog data-health-repair-dialog"
+            onMouseDown={(event) => event.stopPropagation()}
+            role="dialog"
+          >
+            <div className="strategy-dialog-heading">
+              <div>
+                <h2 id="data-health-repair-title">{t.dataHealthRepairPlanTitle}</h2>
+                <p>{t.dataHealthRepairPlanDescription}</p>
+              </div>
+              <button
+                aria-label={t.organizerExecutionCancel}
+                className="strategy-dialog-close"
+                disabled={repairing}
+                onClick={() => setRepairPlan(null)}
+                type="button"
+              >
+                ×
+              </button>
+            </div>
+            <div className="strategy-summary-grid">
+              <Metric label={t.dataHealthRepairActions} value={repairPlan.summary.actions} />
+              <Metric label={t.dataHealthRepairAffected} value={repairPlan.summary.affectedRecords} />
+              <Metric label={t.dataHealthRepairHighConfidence} value={repairPlan.summary.highConfidenceActions} />
+            </div>
+            <div className="data-health-repair-actions">
+              {repairPlan.actions.map((action) => {
+                const copy = localizedDataHealthRepairAction(action.actionId, action.title, action.description, t);
+                return (
+                  <label key={action.actionId}>
+                    <input
+                      checked={repairSelection.includes(action.actionId)}
+                      disabled={repairing}
+                      onChange={(event) =>
+                        setRepairSelection((current) =>
+                          event.target.checked
+                            ? [...current, action.actionId]
+                            : current.filter((actionId) => actionId !== action.actionId),
+                        )
+                      }
+                      type="checkbox"
+                    />
+                    <span>
+                      <strong>{copy.title}</strong>
+                      <small>{copy.description}</small>
+                    </span>
+                    <em>{action.affectedRecords} · {action.confidence === "high" ? t.dataHealthRepairConfidenceHigh : t.dataHealthRepairConfidenceMedium}</em>
+                  </label>
+                );
+              })}
+            </div>
+            <label className="strategy-acknowledgement">
+              <input
+                checked={repairAcknowledged}
+                disabled={repairing}
+                onChange={(event) => setRepairAcknowledged(event.target.checked)}
+                type="checkbox"
+              />
+              <span>{t.dataHealthRepairAcknowledge}</span>
+            </label>
+            <div className="strategy-dialog-actions">
+              <button disabled={repairing} onClick={() => setRepairPlan(null)} type="button">
+                {t.organizerExecutionCancel}
+              </button>
+              <button
+                className="strategy-confirm-button"
+                disabled={repairing || repairSelection.length === 0 || !repairAcknowledged}
+                onClick={() => void executeRepair()}
+                type="button"
+              >
+                {repairing ? <Loader2 size={14} /> : <ShieldCheck size={14} />}
+                {t.dataHealthRepairApply} ({repairSelection.length})
+              </button>
+            </div>
+          </section>
+        </div>
+      ) : null}
     </div>
   );
+}
+
+function localizedDataHealthIssue(
+  id: string,
+  title: string,
+  description: string,
+  t: ReturnType<typeof getMessages>,
+) {
+  const localized = {
+    "parser-replay": [t.dataHealthIssueParserReplay, t.dataHealthIssueParserReplayDescription],
+    "non-video-candidates": [t.dataHealthIssueNonVideo, t.dataHealthIssueNonVideoDescription],
+    "polluted-groups": [t.dataHealthIssuePollutedGroups, t.dataHealthIssuePollutedGroupsDescription],
+    "split-groups": [t.dataHealthIssueSplitGroups, t.dataHealthIssueSplitGroupsDescription],
+    "organizer-plan-health": [t.dataHealthIssueOrganizerPlans, t.dataHealthIssueOrganizerPlansDescription],
+    "movie-metadata-alias-noise": [t.dataHealthIssueMovieAliases, t.dataHealthIssueMovieAliasesDescription],
+    "media-path-pollution": [t.dataHealthIssueMediaPaths, t.dataHealthIssueMediaPathsDescription],
+  }[id];
+  return localized ? { title: localized[0], description: localized[1] } : { title, description };
+}
+
+function localizedDataHealthRepairAction(
+  actionId: DataHealthRepairAction["actionId"],
+  title: string,
+  description: string,
+  t: ReturnType<typeof getMessages>,
+) {
+  if (actionId === "candidate_groups") {
+    return { title: t.dataHealthRepairCandidateGroups, description: t.dataHealthRepairCandidateGroupsDescription };
+  }
+  if (actionId === "organizer_plans") {
+    return { title: t.dataHealthRepairOrganizerPlans, description: t.dataHealthRepairOrganizerPlansDescription };
+  }
+  if (actionId === "movie_metadata_aliases") {
+    return { title: t.dataHealthRepairMovieAliases, description: t.dataHealthRepairMovieAliasesDescription };
+  }
+  return { title, description };
 }
 
 function Metric({ label, value }: { label: string; value: number | string }) {

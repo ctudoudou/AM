@@ -52,6 +52,32 @@ describe("organizer repair planning", () => {
     expect(result.items[0]).toMatchObject({ kind: "resolve_archived", executable: true });
   });
 
+  it("previews a verified legacy Extras episode as a reversible file reclassification", () => {
+    const result = buildOrganizerRepairPlan([
+      group({
+        statuses: ["EXECUTED"],
+        planItemIds: ["item-1"],
+        mediaTitleId: "media-1",
+        season: 1,
+        recoveryMoves: [
+          {
+            sourcePath: "/data/library/anime/Example/Season 01/Extras/episode.mkv",
+            targetPath: "/data/library/anime/Example/Season 01/Example - S01E01.mkv",
+          },
+        ],
+        recoveryExecutable: true,
+      }),
+    ]);
+
+    expect(result.items[0]).toMatchObject({
+      kind: "reclassify_episode",
+      executable: true,
+      confidence: "high",
+      planItemIds: ["item-1"],
+      mediaTitleId: "media-1",
+    });
+  });
+
   it("does not regenerate an orphaned empty review without archived-file evidence", () => {
     const result = buildOrganizerRepairPlan([
       group({

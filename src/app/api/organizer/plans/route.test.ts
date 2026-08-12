@@ -159,6 +159,7 @@ describe("/api/organizer/plans", () => {
         summary: "Title and episode match.",
         acceptedItems: 1,
         rejectedItems: 0,
+        fileClassifications: [],
       },
     });
     expect(body.plans[0].candidate).toEqual({
@@ -187,6 +188,23 @@ describe("/api/organizer/plans", () => {
           items: { some: {} },
         }),
       }),
+    );
+  });
+
+  it("resolves a deep link to the exact organizer plan including history", async () => {
+    organizerPlan.count.mockResolvedValue(0);
+
+    await GET(
+      new Request("http://localhost/api/organizer/plans?view=all&planId=plan-history"),
+    );
+
+    expect(organizerPlan.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({ id: "plan-history" }),
+      }),
+    );
+    expect(organizerPlan.findMany.mock.calls[0]?.[0]?.where).not.toHaveProperty(
+      "resolvedAt",
     );
   });
 

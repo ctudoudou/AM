@@ -5,10 +5,12 @@ import { enqueueCandidateDownload } from "@/lib/downloads";
 import { normalizeCandidateEpisodeNumber, type EpisodeNumberCandidate } from "@/lib/episode-normalizer";
 
 type CandidateWithState = ReleaseCandidate & {
-  downloads: Array<{ status: string }>;
+  downloads: Array<{ id?: string; status: string }>;
   organizerPlans: Array<{
+    id?: string;
     status: string;
     mediaTitleId?: string | null;
+    downloadId?: string | null;
     items: Array<{ id: string }>;
   }>;
   group: { displayTitle: string; normalizedTitle: string; aliases: unknown } | null;
@@ -49,6 +51,13 @@ export type EpisodeCoverageItem = {
   candidateId: string | null;
   candidateTitle: string | null;
   reason: string | null;
+  workflow?: {
+    stage: "CANDIDATE" | "DOWNLOAD" | "ORGANIZER" | "LIBRARY_REPAIR";
+    organizerPlanId: string | null;
+    organizerStatus: string | null;
+    downloadId: string | null;
+    downloadStatus: string | null;
+  } | null;
 };
 
 export async function getAnimeEpisodeCoverage(mediaTitleId: string) {
@@ -307,11 +316,13 @@ async function findCandidatesForMedia(media: MediaWithEpisodes) {
       groupId: { not: null },
     },
     include: {
-      downloads: { select: { status: true } },
+      downloads: { select: { id: true, status: true } },
       organizerPlans: {
         select: {
+          id: true,
           status: true,
           mediaTitleId: true,
+          downloadId: true,
           items: { select: { id: true } },
         },
       },
@@ -426,6 +437,7 @@ export function buildWantedEpisodeCoverage(
         : {
             status: "MISSING" as WantedEpisodeStatus,
             reason: "No candidate found",
+            workflow: null,
           };
       episodes.push({
         seasonNumber,
@@ -437,6 +449,7 @@ export function buildWantedEpisodeCoverage(
         candidateId: bestCandidate?.id ?? null,
         candidateTitle: bestCandidate?.rawTitle ?? null,
         reason: state.reason,
+        workflow: state.workflow,
       });
     }
   }
@@ -639,10 +652,34 @@ function stateForCandidate(
     ["PENDING", "NEEDS_REVIEW", "EXECUTING", "CONFLICT", "FAILED"].includes(plan.status),
   );
   if (activeOrganizerPlans.some((plan) => plan.items.length > 0)) {
-    return { status: "DOWNLOADED" as const, reason: "Downloaded and waiting for organizer" };
+    const organizerPlan = activeOrganizerPlans.find((plan) => plan.items.length > 0) ?? null;
+    return {
+      status: "DOWNLOADED" as const,
+      reason: "Downloaded and waiting for organizer",
+      workflow: {
+        stage: "ORGANIZER" as const,
+        organizerPlanId: organizerPlan?.id ?? null,
+        organizerStatus: organizerPlan?.status ?? null,
+        downloadId: organizerPlan?.downloadId ?? candidate.downloads[0]?.id ?? null,
+        downloadStatus: candidate.downloads[0]?.status ?? null,
+      },
+    };
   }
-  if (candidate.downloads.some((download) => ["WAITING", "ACTIVE", "PAUSED"].includes(download.status))) {
-    return { status: "DOWNLOADING" as const, reason: "Download in progress" };
+  const activeDownload = candidate.downloads.find((download) =>
+    ["WAITING", "ACTIVE", "PAUSED"].includes(download.status),
+  );
+  if (activeDownload) {
+    return {
+      status: "DOWNLOADING" as const,
+      reason: "Download in progress",
+      workflow: {
+        stage: "DOWNLOAD" as const,
+        organizerPlanId: null,
+        organizerStatus: null,
+        downloadId: activeDownload.id ?? null,
+        downloadStatus: activeDownload.status,
+      },
+    };
   }
   const completedOrganizerPlan = candidate.organizerPlans.find(
     (plan) =>
@@ -654,20 +691,55 @@ function stateForCandidate(
     return {
       status: "ARCHIVED" as const,
       reason: "Organizer completed, but no playable library episode is registered",
+      workflow: {
+        stage: "LIBRARY_REPAIR" as const,
+        organizerPlanId: completedOrganizerPlan.id ?? null,
+        organizerStatus: completedOrganizerPlan.status,
+        downloadId: completedOrganizerPlan.downloadId ?? candidate.downloads[0]?.id ?? null,
+        downloadStatus: candidate.downloads[0]?.status ?? null,
+      },
     };
   }
   if (candidate.downloads.some((download) => download.status === "COMPLETED")) {
+    const completedDownload = candidate.downloads.find((download) => download.status === "COMPLETED");
     return {
       status: "DOWNLOADED" as const,
       reason: activeOrganizerPlans.length > 0
         ? "Download completed but organizer plan has no files; run organizer scan"
         : "Download completed",
+      workflow: {
+        stage: "ORGANIZER" as const,
+        organizerPlanId: activeOrganizerPlans[0]?.id ?? null,
+        organizerStatus: activeOrganizerPlans[0]?.status ?? null,
+        downloadId: completedDownload?.id ?? null,
+        downloadStatus: completedDownload?.status ?? null,
+      },
     };
   }
   if (candidate.status === "REVIEW" || candidateCount > 1) {
-    return { status: "NEEDS_REVIEW" as const, reason: "Multiple or review-required candidates found" };
+    return {
+      status: "NEEDS_REVIEW" as const,
+      reason: "Multiple or review-required candidates found",
+      workflow: {
+        stage: "CANDIDATE" as const,
+        organizerPlanId: null,
+        organizerStatus: null,
+        downloadId: null,
+        downloadStatus: null,
+      },
+    };
   }
-  return { status: "CANDIDATE_FOUND" as const, reason: "Candidate found" };
+  return {
+    status: "CANDIDATE_FOUND" as const,
+    reason: "Candidate found",
+    workflow: {
+      stage: "CANDIDATE" as const,
+      organizerPlanId: null,
+      organizerStatus: null,
+      downloadId: null,
+      downloadStatus: null,
+    },
+  };
 }
 
 function candidateMatchesMedia(candidate: CandidateWithState, mediaAliasSet: Set<string>) {

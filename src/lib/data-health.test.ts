@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { prisma } from "@/lib/db";
 import { listNoisyMovieMetadataAliases } from "@/lib/metadata";
 import {
+  buildDataHealthRepairPlan,
   detectCandidateReplayIssue,
   isSuspiciousTitleToken,
   scanDataHealth,
@@ -101,6 +102,54 @@ describe("data health helpers", () => {
     expect(sumDataHealthIssueCounts([{ count: 26 }])).toBe(26);
     expect(sumDataHealthIssueCounts([{ count: 5 }, { count: 3 }])).toBe(8);
     expect(sumDataHealthIssueCounts([])).toBe(0);
+  });
+
+  it("builds a stable, selectable repair plan from the scanned issue snapshot", () => {
+    const scan = {
+      generatedAt: "2026-08-11T00:00:00.000Z",
+      summary: {
+        score: 70,
+        candidatesScanned: 10,
+        parserReplayIssues: 3,
+        pollutedGroups: 2,
+        splitGroups: 1,
+        organizerIssues: 4,
+        pollutedMediaFiles: 0,
+        noisyMovieMetadataAliases: 0,
+        autoFixableIssues: 3,
+      },
+      issues: [
+        {
+          id: "parser-replay",
+          type: "parser_replay" as const,
+          severity: "warning" as const,
+          title: "Parser replay drift",
+          description: "",
+          count: 3,
+          autoFixable: true,
+          samples: [],
+        },
+        {
+          id: "organizer-plan-health",
+          type: "organizer_plan" as const,
+          severity: "warning" as const,
+          title: "Organizer plans need cleanup",
+          description: "",
+          count: 4,
+          autoFixable: true,
+          samples: [],
+        },
+      ],
+    };
+
+    const first = buildDataHealthRepairPlan(scan);
+    const second = buildDataHealthRepairPlan(scan);
+
+    expect(first.planId).toBe(second.planId);
+    expect(first.actions).toMatchObject([
+      { actionId: "candidate_groups", affectedRecords: 3, confidence: "medium" },
+      { actionId: "organizer_plans", affectedRecords: 4, confidence: "medium" },
+    ]);
   });
 
   it("reports every split title in the overview and fetches only scan fields", async () => {

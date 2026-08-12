@@ -15,9 +15,11 @@ import { parseMediaReleaseTitle } from "@/lib/media-parser";
 import { aliasesFromMetadataRaw } from "@/lib/title-display";
 import {
   reviewOrganizerPlanWithOpenRouter,
+  parseOrganizerAiReview,
   type OrganizerAiReview,
   type OrganizerReviewInput,
 } from "@/lib/openrouter";
+import { ORGANIZER_AI_CLASSIFICATION_CONFIRMATION } from "@/lib/organizer-confirmations";
 import {
   moveOrganizerFiles,
   OrganizerMoveError,
@@ -1291,6 +1293,240 @@ export async function reviewOrganizerPlanWithAi(planId: string) {
   return { review, ...result };
 }
 
+export async function applyOrganizerAiClassification(input: {
+  planId: string;
+  expectedVersion: string;
+  confirmation: string;
+}) {
+  if (input.confirmation !== ORGANIZER_AI_CLASSIFICATION_CONFIRMATION) {
+    throw new OrganizerAiReviewError(
+      "ORGANIZER_AI_REVIEW_NOT_SUPPORTED",
+      "AI classification confirmation phrase does not match.",
+    );
+  }
+  const settings = await getAppSettings();
+  const allowedRoots = allowedOrganizerRoots(settings.directories);
+  const plan = await prisma.organizerPlan.findUniqueOrThrow({
+    where: { id: input.planId },
+    include: { items: true, candidate: { include: { group: true } } },
+  });
+  if (createOrganizerPlanVersion(plan) !== input.expectedVersion) {
+    throw new OrganizerPlanStaleError(
+      "Organizer plan changed after AI classification. Reload and review the paths again.",
+    );
+  }
+  if (["EXECUTED", "AUTO_ARCHIVED", "REJECTED", "EXECUTING"].includes(plan.status)) {
+    throw new OrganizerAiReviewError(
+      "ORGANIZER_AI_REVIEW_NOT_SUPPORTED",
+      "AI classifications can only be applied to active organizer plans.",
+    );
+  }
+  const metadata =
+    plan.metadata && typeof plan.metadata === "object" && !Array.isArray(plan.metadata)
+      ? (plan.metadata as Record<string, unknown>)
+      : {};
+  const review = parseOrganizerAiReview(metadata.aiReview);
+  const classifications = review.fileClassifications ?? [];
+  const knownPaths = new Set(plan.items.map((item) => item.sourcePath));
+  const classifiedPaths = classifications.map((classification) => classification.sourcePath);
+  if (
+    classifications.length !== plan.items.length ||
+    new Set(classifiedPaths).size !== classifications.length ||
+    classifiedPaths.some((sourcePath) => !knownPaths.has(sourcePath))
+  ) {
+    throw new OrganizerAiReviewError(
+      "ORGANIZER_AI_REVIEW_NOT_SUPPORTED",
+      "AI classification is incomplete or no longer matches the organizer plan.",
+    );
+  }
+  if (
+    review.confidence < minTrustedOrganizerAiReviewConfidence ||
+    classifications.some((classification) => classification.confidence < minTrustedOrganizerAiReviewConfidence)
+  ) {
+    throw new OrganizerAiReviewError(
+      "ORGANIZER_AI_REVIEW_NOT_SUPPORTED",
+      "Low-confidence AI classifications must remain in manual review.",
+    );
+  }
+  const candidate = plan.candidate;
+  if (!candidate) {
+    throw new OrganizerAiReviewError(
+      "ORGANIZER_AI_REVIEW_NOT_SUPPORTED",
+      "The organizer plan has no candidate identity for deterministic target generation.",
+    );
+  }
+  const title =
+    (typeof metadata.title === "string" ? metadata.title : null) ??
+    candidate.group?.displayTitle ??
+    candidate.parsedTitle;
+  const year = typeof metadata.year === "number" ? metadata.year : undefined;
+  const titleAliases = [
+    title,
+    candidate.parsedTitle,
+    candidate.normalizedTitle,
+    candidate.group?.displayTitle,
+    candidate.group?.normalizedTitle,
+    ...groupAliases(candidate.group?.aliases),
+  ].filter((value): value is string => Boolean(value));
+  const updates: Array<{
+    id: string;
+    sourcePath: string;
+    targetPath: string;
+    fileType: string;
+    conflict: boolean;
+    conflictReason: string | null;
+  }> = [];
+  const deleteIds: string[] = [];
+  for (const classification of classifications) {
+    const item = plan.items.find((candidateItem) => candidateItem.sourcePath === classification.sourcePath);
+    if (!item) {
+      throw new OrganizerPlanStaleError("Organizer item changed after AI classification.");
+    }
+    if (classification.role === "UNRELATED") {
+      deleteIds.push(item.id);
+      continue;
+    }
+    if (
+      classification.mediaType &&
+      classification.mediaType !== plan.mediaType
+    ) {
+      throw new OrganizerAiReviewError(
+        "ORGANIZER_AI_REVIEW_NOT_SUPPORTED",
+        `AI classified ${classification.sourcePath} as another media type.`,
+      );
+    }
+    if (
+      classification.title &&
+      !normalizeTitleAliases(classification.title).some((alias) =>
+        titleAliases.flatMap((value) => normalizeTitleAliases(value)).includes(alias),
+      )
+    ) {
+      throw new OrganizerAiReviewError(
+        "ORGANIZER_AI_REVIEW_NOT_SUPPORTED",
+        `AI classified ${classification.sourcePath} as another title.`,
+      );
+    }
+    const detectedFileType = classifyOrganizerFile(item.sourcePath);
+    if (!detectedFileType) {
+      throw new OrganizerAiReviewError(
+        "ORGANIZER_AI_REVIEW_NOT_SUPPORTED",
+        `Unsupported organizer file type: ${item.sourcePath}`,
+      );
+    }
+    let targetPath: string;
+    let fileType: string;
+    if (classification.role === "MAIN_VIDEO") {
+      if (detectedFileType !== "video") {
+        throw new OrganizerAiReviewError(
+          "ORGANIZER_AI_REVIEW_NOT_SUPPORTED",
+          `Only video files can be classified as main media: ${item.sourcePath}`,
+        );
+      }
+      const parsed = parseMediaReleaseTitle(
+        path.basename(item.sourcePath, path.extname(item.sourcePath)),
+        plan.mediaType,
+      );
+      const season = classification.season ?? parsed.season ?? candidate.season ?? 1;
+      const episode =
+        plan.mediaType === "MOVIE"
+          ? 1
+          : classification.episodeNumber ?? parsed.episodeNumber ?? candidate.episodeNumber;
+      if (plan.mediaType !== "MOVIE" && (!episode || episode <= 0)) {
+        throw new OrganizerAiReviewError(
+          "ORGANIZER_AI_REVIEW_NOT_SUPPORTED",
+          `AI main-video classification has no safe episode identity: ${item.sourcePath}`,
+        );
+      }
+      targetPath = buildOrganizerTargetPath({
+        mediaType: plan.mediaType,
+        roots: settings.directories,
+        title,
+        year,
+        season,
+        episode,
+        episodeTitle: parsed.parsedTitle,
+        group: candidate.subtitleGroup,
+        resolution: candidate.resolution,
+        codec: candidate.codec,
+        sourcePath: item.sourcePath,
+        titleAliases,
+      });
+      fileType = "video";
+    } else {
+      targetPath = buildOrganizerExtraTargetPath({
+        mediaType: plan.mediaType,
+        roots: settings.directories,
+        title,
+        year,
+        season: classification.season ?? candidate.season ?? 1,
+        sourcePath: item.sourcePath,
+        sourcePackageRoot: path.dirname(item.sourcePath),
+      });
+      fileType = `extra_${detectedFileType}`;
+    }
+    targetPath = assertInsideConfiguredRoots(targetPath, allowedRoots);
+    const conflict = targetPath !== item.sourcePath && (await exists(targetPath));
+    updates.push({
+      id: item.id,
+      sourcePath: item.sourcePath,
+      targetPath,
+      fileType,
+      conflict,
+      conflictReason: conflict ? "Target path already exists" : null,
+    });
+  }
+  if (updates.length === 0) {
+    throw new OrganizerAiReviewError(
+      "ORGANIZER_AI_REVIEW_NOT_SUPPORTED",
+      "AI classification rejected every organizer item.",
+    );
+  }
+  markDuplicateTargetConflicts(updates);
+  const hasConflict = updates.some((item) => item.conflict);
+  const updated = await prisma.$transaction(async (database) => {
+    if (deleteIds.length > 0) {
+      await database.organizerPlanItem.deleteMany({ where: { id: { in: deleteIds }, planId: plan.id } });
+    }
+    for (const update of updates) {
+      await database.organizerPlanItem.update({
+        where: { id: update.id },
+        data: {
+          targetPath: update.targetPath,
+          fileType: update.fileType,
+          conflict: update.conflict,
+          conflictReason: update.conflictReason,
+        },
+      });
+    }
+    return database.organizerPlan.update({
+      where: { id: plan.id },
+      data: {
+        status: hasConflict ? "CONFLICT" : "PENDING",
+        autoExecutable: false,
+        reason: hasConflict
+          ? "AI classification applied with target conflicts"
+          : "AI classification applied; verify paths before execution",
+        metadata: {
+          ...metadata,
+          aiReview: {
+            ...review,
+            appliedAt: new Date().toISOString(),
+            appliedItems: updates.length,
+            excludedItems: deleteIds.length,
+          },
+        } as Prisma.InputJsonValue,
+      },
+      include: { items: true },
+    });
+  });
+  return {
+    plan: updated,
+    updatedItems: updates.length,
+    excludedItems: deleteIds.length,
+    conflicts: updates.filter((item) => item.conflict).length,
+  };
+}
+
 function selectedAria2SourcePaths(value: unknown) {
   if (!Array.isArray(value)) {
     return [];
@@ -1401,7 +1637,7 @@ function buildOrganizerReviewInput(plan: {
     season: number | null;
     group: { displayTitle: string; normalizedTitle: string; aliases: unknown } | null;
   } | null;
-  items: Array<{ sourcePath: string; targetPath: string }>;
+  items: Array<{ sourcePath: string; targetPath: string; fileType: string }>;
 }): OrganizerReviewInput | null {
   const candidate = plan.candidate;
   if (!candidate) {
@@ -1435,6 +1671,7 @@ function buildOrganizerReviewInput(plan: {
         parsedTitle: parsed.parsedTitle,
         parsedEpisodeNumber: parsed.episodeNumber ?? null,
         parsedSeason: parsed.season ?? null,
+        currentFileType: item.fileType,
       };
     }),
   };
@@ -1443,34 +1680,49 @@ function buildOrganizerReviewInput(plan: {
 export async function applyOrganizerAiReview(
   planId: string,
   review: OrganizerAiReview,
-  items: Array<{ id: string; sourcePath: string }>,
+  items: Array<{ id: string; sourcePath: string; fileType?: string }>,
 ) {
   const knownPaths = new Set(items.map((item) => item.sourcePath));
+  const structuredClassifications = (review.fileClassifications ?? []).filter((classification) =>
+    knownPaths.has(classification.sourcePath),
+  );
   const acceptedPaths = new Set(
-    review.acceptedSourcePaths.filter((sourcePath) => knownPaths.has(sourcePath)),
+    [
+      ...review.acceptedSourcePaths,
+      ...structuredClassifications
+        .filter((classification) => classification.role !== "UNRELATED")
+        .map((classification) => classification.sourcePath),
+    ].filter((sourcePath) => knownPaths.has(sourcePath)),
   );
   const rejectedPaths = new Set(
-    review.rejectedSourcePaths.filter((sourcePath) => knownPaths.has(sourcePath)),
+    [
+      ...review.rejectedSourcePaths,
+      ...structuredClassifications
+        .filter((classification) => classification.role === "UNRELATED")
+        .map((classification) => classification.sourcePath),
+    ].filter((sourcePath) => knownPaths.has(sourcePath)),
   );
-  let filteredItems = 0;
-  if (review.confidence >= 0.75 && rejectedPaths.size > 0) {
-    const deleted = await prisma.organizerPlanItem.deleteMany({
-      where: {
-        planId,
-        sourcePath: { in: [...rejectedPaths] },
-      },
-    });
-    filteredItems = deleted.count;
-  }
-
-  const remaining = items.length - filteredItems;
+  const filteredItems = 0;
+  const remaining = items.length;
   const classifiedPaths = new Set([...acceptedPaths, ...rejectedPaths]);
   const unclassifiedItems = Math.max(0, items.length - classifiedPaths.size);
+  const suggestedChanges = structuredClassifications.filter((classification) => {
+    const current = items.find((item) => item.sourcePath === classification.sourcePath) as
+      | { id: string; sourcePath: string; fileType?: string }
+      | undefined;
+    if (!current) {
+      return false;
+    }
+    return (
+      classification.role === "UNRELATED" ||
+      (classification.role === "MAIN_VIDEO" && current.fileType !== "video") ||
+      (classification.role === "EXTRA_VIDEO" && current.fileType !== "extra_video")
+    );
+  }).length;
   const flagged =
     review.riskLevel !== "OK" ||
     review.confidence < minTrustedOrganizerAiReviewConfidence ||
-    filteredItems > 0 ||
-    remaining === 0 ||
+    suggestedChanges > 0 ||
     unclassifiedItems > 0;
   const plan = await prisma.organizerPlan.findUnique({
     where: { id: planId },
@@ -1492,6 +1744,7 @@ export async function applyOrganizerAiReview(
   return {
     acceptedItems: acceptedPaths.size,
     filteredItems,
+    suggestedChanges,
     flagged,
     remainingItems: remaining,
     unclassifiedItems,

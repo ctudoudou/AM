@@ -1,4 +1,5 @@
 import path from "node:path";
+import { createHash } from "node:crypto";
 import type { MediaType } from "@prisma/client";
 import { prisma } from "@/lib/db";
 import { normalizeTitleAliases } from "@/lib/anime-parser";
@@ -14,7 +15,9 @@ import {
   cleanupNoisyMovieMetadataAliases,
   listNoisyMovieMetadataAliases,
 } from "@/lib/metadata";
-import { repairAnimeEpisodeNumbering } from "@/lib/wanted-episodes";
+import { DATA_HEALTH_REPAIR_CONFIRMATION } from "@/lib/data-health-confirmations";
+
+export { DATA_HEALTH_REPAIR_CONFIRMATION } from "@/lib/data-health-confirmations";
 
 const maxIssueSamples = 40;
 const suspiciousTitleTokens = [
@@ -74,15 +77,47 @@ export type DataHealthScan = {
 };
 
 export type DataHealthRepairResult = {
-  repair: {
-    candidateGroups: Awaited<ReturnType<typeof repairCandidateGroups>>;
-    organizerCleanup: Awaited<ReturnType<typeof cleanupPollutedOrganizerPlans>>;
-    stalePlans: Awaited<ReturnType<typeof cleanupStaleOrganizerPlans>>;
-    episodeNumbering: Awaited<ReturnType<typeof repairAnimeEpisodeNumbering>>;
-    movieMetadataAliases: Awaited<ReturnType<typeof cleanupNoisyMovieMetadataAliases>>;
-  };
+  planId: string;
+  requested: number;
+  succeeded: number;
+  failed: number;
+  results: Array<{
+    actionId: DataHealthRepairActionId;
+    status: "succeeded" | "failed";
+    result?: unknown;
+    message?: string;
+  }>;
   scan: DataHealthScan;
 };
+
+export type DataHealthRepairActionId =
+  | "candidate_groups"
+  | "organizer_plans"
+  | "movie_metadata_aliases";
+
+export type DataHealthRepairAction = {
+  actionId: DataHealthRepairActionId;
+  issueIds: string[];
+  affectedRecords: number;
+  confidence: "high" | "medium";
+  title: string;
+  description: string;
+};
+
+export type DataHealthRepairPlan = {
+  planId: string;
+  createdAt: string;
+  generatedFrom: string;
+  actions: DataHealthRepairAction[];
+  summary: {
+    actions: number;
+    affectedRecords: number;
+    highConfidenceActions: number;
+  };
+};
+
+export class DataHealthRepairPlanStaleError extends Error {}
+export class DataHealthRepairValidationError extends Error {}
 
 type CandidateSnapshot = {
   id: string;
@@ -248,23 +283,166 @@ export async function scanDataHealth(): Promise<DataHealthScan> {
   };
 }
 
-export async function repairDataHealth(): Promise<DataHealthRepairResult> {
-  const candidateGroups = await repairCandidateGroups();
-  const organizerCleanup = await cleanupPollutedOrganizerPlans();
-  const stalePlans = await cleanupStaleOrganizerPlans();
-  const episodeNumbering = await repairAnimeEpisodeNumbering();
-  const movieMetadataAliases = await cleanupNoisyMovieMetadataAliases();
+export async function createDataHealthRepairPlan(): Promise<DataHealthRepairPlan> {
+  return buildDataHealthRepairPlan(await scanDataHealth());
+}
+
+export function buildDataHealthRepairPlan(scan: DataHealthScan): DataHealthRepairPlan {
+  const issueById = new Map(scan.issues.map((issue) => [issue.id, issue]));
+  const actions: DataHealthRepairAction[] = [];
+  const candidateIssueIds = [
+    "parser-replay",
+    "non-video-candidates",
+    "polluted-groups",
+    "split-groups",
+  ].filter((issueId) => issueById.get(issueId)?.autoFixable);
+  if (candidateIssueIds.length > 0) {
+    actions.push({
+      actionId: "candidate_groups",
+      issueIds: candidateIssueIds,
+      affectedRecords: candidateIssueIds.reduce(
+        (total, issueId) => total + (issueById.get(issueId)?.count ?? 0),
+        0,
+      ),
+      confidence: "medium",
+      title: "Repair candidate grouping",
+      description:
+        "Replay parsing and regroup only the candidate issues shown in this snapshot; ambiguous results remain review-required.",
+    });
+  }
+  const organizerIssue = issueById.get("organizer-plan-health");
+  if (organizerIssue?.autoFixable) {
+    actions.push({
+      actionId: "organizer_plans",
+      issueIds: [organizerIssue.id],
+      affectedRecords: organizerIssue.count,
+      confidence: "medium",
+      title: "Clean organizer plans",
+      description:
+        "Reject empty, stale, or polluted active plans without moving library files.",
+    });
+  }
+  const movieAliasIssue = issueById.get("movie-metadata-alias-noise");
+  if (movieAliasIssue?.autoFixable) {
+    actions.push({
+      actionId: "movie_metadata_aliases",
+      issueIds: [movieAliasIssue.id],
+      affectedRecords: movieAliasIssue.count,
+      confidence: "high",
+      title: "Remove noisy movie aliases",
+      description:
+        "Remove aliases derived from Extras, scans, menus, audio tracks, and image files.",
+    });
+  }
+  const planId = stableDataHealthHash(
+    actions.map(({ actionId, issueIds, affectedRecords }) => ({ actionId, issueIds, affectedRecords })),
+  );
+  return {
+    planId,
+    createdAt: new Date().toISOString(),
+    generatedFrom: scan.generatedAt,
+    actions,
+    summary: {
+      actions: actions.length,
+      affectedRecords: actions.reduce((total, action) => total + action.affectedRecords, 0),
+      highConfidenceActions: actions.filter((action) => action.confidence === "high").length,
+    },
+  };
+}
+
+export async function repairDataHealth(input: {
+  planId: string;
+  actionIds: DataHealthRepairActionId[];
+  confirmation: string;
+}): Promise<DataHealthRepairResult> {
+  if (input.confirmation !== DATA_HEALTH_REPAIR_CONFIRMATION) {
+    throw new DataHealthRepairValidationError("Data health repair confirmation phrase does not match.");
+  }
+  if (new Set(input.actionIds).size !== input.actionIds.length) {
+    throw new DataHealthRepairValidationError("Data health repair action IDs must be unique.");
+  }
+  const plan = await createDataHealthRepairPlan();
+  if (plan.planId !== input.planId) {
+    throw new DataHealthRepairPlanStaleError(
+      "Data health changed after preview. Generate a new repair plan before applying changes.",
+    );
+  }
+  const selected = new Set(input.actionIds);
+  const actions = plan.actions.filter((action) => selected.has(action.actionId));
+  if (actions.length !== selected.size || actions.length === 0) {
+    throw new DataHealthRepairValidationError(
+      "One or more selected repairs are not part of the current plan.",
+    );
+  }
+
+  const results: DataHealthRepairResult["results"] = [];
+  for (const action of actions) {
+    const operation = await prisma.operationLog.create({
+      data: {
+        domain: "DATA_HEALTH",
+        action: `REPAIR_${action.actionId.toUpperCase()}`,
+        status: "STARTED",
+        entityType: "DataHealthRepairPlan",
+        entityId: plan.planId,
+        details: {
+          issueIds: action.issueIds,
+          affectedRecords: action.affectedRecords,
+          generatedFrom: plan.generatedFrom,
+        },
+      },
+    });
+    try {
+      const result = await executeDataHealthRepairAction(action.actionId);
+      await prisma.operationLog.update({
+        where: { id: operation.id },
+        data: {
+          status: "SUCCEEDED",
+          completedAt: new Date(),
+          details: {
+            issueIds: action.issueIds,
+            affectedRecords: action.affectedRecords,
+            generatedFrom: plan.generatedFrom,
+            result,
+          },
+        },
+      });
+      results.push({ actionId: action.actionId, status: "succeeded", result });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Unexpected data health repair error";
+      await prisma.operationLog
+        .update({
+          where: { id: operation.id },
+          data: { status: "FAILED", completedAt: new Date(), errorMessage: message },
+        })
+        .catch(() => null);
+      results.push({ actionId: action.actionId, status: "failed", message });
+    }
+  }
 
   return {
-    repair: {
-      candidateGroups,
-      organizerCleanup,
-      stalePlans,
-      episodeNumbering,
-      movieMetadataAliases,
-    },
+    planId: plan.planId,
+    requested: results.length,
+    succeeded: results.filter((result) => result.status === "succeeded").length,
+    failed: results.filter((result) => result.status === "failed").length,
+    results,
     scan: await scanDataHealth(),
   };
+}
+
+async function executeDataHealthRepairAction(actionId: DataHealthRepairActionId) {
+  if (actionId === "candidate_groups") {
+    return repairCandidateGroups();
+  }
+  if (actionId === "organizer_plans") {
+    const polluted = await cleanupPollutedOrganizerPlans();
+    const stale = await cleanupStaleOrganizerPlans();
+    return { polluted, stale };
+  }
+  return cleanupNoisyMovieMetadataAliases();
+}
+
+function stableDataHealthHash(value: unknown) {
+  return createHash("sha256").update(JSON.stringify(value)).digest("hex");
 }
 
 export function detectCandidateReplayIssue(

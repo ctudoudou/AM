@@ -6,3 +6,6 @@ export const ORGANIZER_REPAIR_CONFIRMATION =
 
 export const ORGANIZER_OPERATION_ROLLBACK_CONFIRMATION =
   "I understand this restores the audited organizer files";
+
+export const ORGANIZER_AI_CLASSIFICATION_CONFIRMATION =
+  "I reviewed the AI file classifications";

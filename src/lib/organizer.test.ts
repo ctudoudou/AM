@@ -244,8 +244,8 @@ describe("resolveOrganizerMediaType", () => {
 
 describe("applyOrganizerAiReview", () => {
   const items = [
-    { id: "item-1", sourcePath: "/data/downloads/episode-01.mkv" },
-    { id: "item-2", sourcePath: "/data/downloads/episode-02.mkv" },
+    { id: "item-1", sourcePath: "/data/downloads/episode-01.mkv", fileType: "video" },
+    { id: "item-2", sourcePath: "/data/downloads/episode-02.mkv", fileType: "video" },
   ];
 
   beforeEach(() => {
@@ -299,6 +299,45 @@ describe("applyOrganizerAiReview", () => {
         data: expect.objectContaining({ status: "NEEDS_REVIEW" }),
       }),
     );
+  });
+
+  it("stores structured role changes as suggestions without deleting plan items", async () => {
+    const result = await applyOrganizerAiReview(
+      "plan-1",
+      {
+        riskLevel: "REVIEW",
+        confidence: 0.91,
+        summary: "The second file is an extra.",
+        acceptedSourcePaths: items.map((item) => item.sourcePath),
+        rejectedSourcePaths: [],
+        fileClassifications: [
+          {
+            sourcePath: items[0].sourcePath,
+            role: "MAIN_VIDEO",
+            mediaType: "ANIME",
+            title: "Example",
+            season: 1,
+            episodeNumber: 1,
+            confidence: 0.94,
+            evidence: "S01E01",
+          },
+          {
+            sourcePath: items[1].sourcePath,
+            role: "EXTRA_VIDEO",
+            mediaType: "ANIME",
+            title: "Example",
+            season: 1,
+            episodeNumber: null,
+            confidence: 0.9,
+            evidence: "Preview marker",
+          },
+        ],
+      },
+      items,
+    );
+
+    expect(result).toMatchObject({ filteredItems: 0, suggestedChanges: 1, flagged: true });
+    expect(prisma.organizerPlanItem.deleteMany).not.toHaveBeenCalled();
   });
 });
 

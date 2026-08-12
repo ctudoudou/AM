@@ -16,9 +16,10 @@ export async function GET(request: Request) {
   try {
     const url = new URL(request.url);
     const view = url.searchParams.get("view") ?? "active";
+    const planId = url.searchParams.get("planId")?.trim() || null;
     const status = url.searchParams.get("status");
     const includeResolved =
-      view === "all" || url.searchParams.get("includeResolved") === "true";
+      Boolean(planId) || view === "all" || url.searchParams.get("includeResolved") === "true";
     const page = clampPositiveInt(Number(url.searchParams.get("page")), 1, 10_000);
     const requestedPageSize = Number(url.searchParams.get("pageSize"));
     const requestedLimit = Number(url.searchParams.get("limit"));
@@ -43,6 +44,7 @@ export async function GET(request: Request) {
               : [...activeStatuses];
     const activeView = view === "active" && !status;
     const where = {
+      ...(planId ? { id: planId } : {}),
       status: { in: statusFilter },
       ...(!includeResolved ? { resolvedAt: null } : {}),
       ...(activeView ? { items: { some: {} } } : {}),
@@ -205,7 +207,42 @@ function summarizeAiReview(value: Prisma.JsonValue | undefined) {
     rejectedItems: Array.isArray(value.rejectedSourcePaths)
       ? value.rejectedSourcePaths.filter((item) => typeof item === "string").length
       : 0,
+    fileClassifications: summarizeAiFileClassifications(value.fileClassifications),
+    appliedAt: typeof value.appliedAt === "string" ? value.appliedAt : undefined,
   };
+}
+
+function summarizeAiFileClassifications(value: Prisma.JsonValue | undefined) {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  return value.flatMap((item) => {
+    if (!item || Array.isArray(item) || typeof item !== "object") {
+      return [];
+    }
+    const sourcePath = item.sourcePath;
+    const role = item.role;
+    const confidence = item.confidence;
+    if (
+      typeof sourcePath !== "string" ||
+      !["MAIN_VIDEO", "EXTRA_VIDEO", "AUDIO", "IMAGE", "METADATA", "UNRELATED"].includes(
+        typeof role === "string" ? role : "",
+      ) ||
+      typeof confidence !== "number"
+    ) {
+      return [];
+    }
+    return [{
+      sourcePath,
+      role,
+      mediaType: typeof item.mediaType === "string" ? item.mediaType : null,
+      title: typeof item.title === "string" ? item.title : null,
+      season: typeof item.season === "number" ? item.season : null,
+      episodeNumber: typeof item.episodeNumber === "number" ? item.episodeNumber : null,
+      confidence,
+      evidence: typeof item.evidence === "string" ? item.evidence : "",
+    }];
+  });
 }
 
 function clampPositiveInt(value: number, fallback: number, max: number) {
