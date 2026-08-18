@@ -58,7 +58,7 @@ export default async function AnimeTitlePage({
   type AnimeDetailSeason = (typeof media.seasons)[number];
   type AnimeDetailEpisode = AnimeDetailSeason["episodes"][number];
   const hasPlayableFile = (episode: AnimeDetailEpisode) => episode.files.length > 0;
-  const episodeCount = media.seasons.reduce(
+  const playableEpisodeCount = media.seasons.reduce(
     (count: number, season: AnimeDetailSeason) =>
       count + season.episodes.filter(hasPlayableFile).length,
     0,
@@ -66,6 +66,18 @@ export default async function AnimeTitlePage({
   const playableEpisodes: AnimeDetailEpisode[] = media.seasons.flatMap((season: AnimeDetailSeason) =>
     season.episodes.filter(hasPlayableFile),
   );
+  const knownSeasonCount = new Set([
+    ...media.seasons.map((season) => season.number),
+    ...missingCoverage.seasons,
+  ]).size;
+  const knownEpisodeCount = new Set([
+    ...media.seasons.flatMap((season) =>
+      season.episodes.map((episode) => `${season.number}:${episode.number}`),
+    ),
+    ...missingCoverage.episodes.map(
+      (episode) => `${episode.seasonNumber}:${episode.episodeNumber}`,
+    ),
+  ]).size;
   const nextEpisode =
     playableEpisodes.find((episode) => !episode.progress[0]?.completed) ??
     playableEpisodes[0] ??
@@ -103,8 +115,8 @@ export default async function AnimeTitlePage({
                 <small>{title.secondary || display.secondaryTitles[0]}</small>
               ) : null}
               <span>
-                {media.year ?? "-"} · {media.seasons.length} {t.seasons} · {episodeCount}{" "}
-                {t.episodes}
+                {media.year ?? "-"} · {knownSeasonCount} {t.seasons} · {knownEpisodeCount}{" "}
+                {t.episodes} · {playableEpisodeCount} {t.playableEpisodes}
               </span>
               {media.synopsis ? <em>{media.synopsis}</em> : null}
               <AnimeTitleActions
@@ -146,7 +158,7 @@ export default async function AnimeTitlePage({
               <p>{t.selectEpisodeDescription}</p>
             </div>
             <span>
-              {episodeCount} {t.episodes}
+              {playableEpisodeCount} {t.playableEpisodes}
             </span>
           </div>
           {media.seasons.map((season: AnimeDetailSeason) => (

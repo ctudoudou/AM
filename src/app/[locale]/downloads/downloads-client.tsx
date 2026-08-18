@@ -97,6 +97,7 @@ type DownloadReconciliationPlan = {
     untrackedAria2: number;
     anomalies: number;
     archivedActive: number;
+    stalledTracked: number;
     safePause: number;
     manualReview: number;
   };
@@ -108,6 +109,7 @@ type DownloadReconciliationPlan = {
       | "untracked_payload"
       | "untracked_metadata"
       | "untracked_error"
+      | "stalled_tracked"
       | "ambiguous_match";
     gid: string;
     aria2Status: string;
@@ -559,6 +561,7 @@ function DownloadReconciliation({
         <span>{t.downloadReconciliationUntracked}: <strong>{plan.summary.untrackedAria2}</strong></span>
         <span>{t.downloadReconciliationAnomalies}: <strong>{plan.summary.anomalies}</strong></span>
         <span>{t.downloadReconciliationArchivedActive}: <strong>{plan.summary.archivedActive}</strong></span>
+        <span>{t.downloadReconciliationStalledTracked}: <strong>{plan.summary.stalledTracked}</strong></span>
         <span>{t.downloadReconciliationSafePause}: <strong>{plan.summary.safePause}</strong></span>
         <span>{t.downloadReconciliationManualReview}: <strong>{plan.summary.manualReview}</strong></span>
       </div>
@@ -679,6 +682,7 @@ function downloadReconciliationKindLabel(
     untracked_payload: t.downloadReconciliationKindUntrackedPayload,
     untracked_metadata: t.downloadReconciliationKindUntrackedMetadata,
     untracked_error: t.downloadReconciliationKindUntrackedError,
+    stalled_tracked: t.downloadReconciliationKindStalledTracked,
     ambiguous_match: t.downloadReconciliationKindAmbiguousMatch,
   }[kind];
 }

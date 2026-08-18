@@ -17,6 +17,7 @@ export async function GET(request: Request) {
     const url = new URL(request.url);
     const view = url.searchParams.get("view") ?? "active";
     const planId = url.searchParams.get("planId")?.trim() || null;
+    const mediaTitleId = url.searchParams.get("mediaTitleId")?.trim() || null;
     const status = url.searchParams.get("status");
     const includeResolved =
       Boolean(planId) || view === "all" || url.searchParams.get("includeResolved") === "true";
@@ -45,6 +46,7 @@ export async function GET(request: Request) {
     const activeView = view === "active" && !status;
     const where = {
       ...(planId ? { id: planId } : {}),
+      ...(mediaTitleId ? { mediaTitleId } : {}),
       status: { in: statusFilter },
       ...(!includeResolved ? { resolvedAt: null } : {}),
       ...(activeView ? { items: { some: {} } } : {}),
@@ -56,6 +58,7 @@ export async function GET(request: Request) {
           }
         : {}),
     } satisfies Prisma.OrganizerPlanWhereInput;
+    const scopeWhere = mediaTitleId ? { mediaTitleId } : undefined;
     const [plans, filteredTotal, groupedStatuses, active, autoExecutable, all] = await Promise.all([
       prisma.organizerPlan.findMany({
         where,
@@ -100,11 +103,12 @@ export async function GET(request: Request) {
       prisma.organizerPlan.count({ where }),
       prisma.organizerPlan.groupBy({
         by: ["status"],
-        where: { resolvedAt: null },
+        where: { ...scopeWhere, resolvedAt: null },
         _count: { _all: true },
       }),
       prisma.organizerPlan.count({
         where: {
+          ...scopeWhere,
           status: { in: [...activeStatuses] },
           resolvedAt: null,
           items: { some: {} },
@@ -112,6 +116,7 @@ export async function GET(request: Request) {
       }),
       prisma.organizerPlan.count({
         where: {
+          ...scopeWhere,
           status: "PENDING",
           resolvedAt: null,
           autoExecutable: true,
@@ -119,7 +124,7 @@ export async function GET(request: Request) {
           items: { some: {}, every: { conflict: false } },
         },
       }),
-      prisma.organizerPlan.count(),
+      prisma.organizerPlan.count({ where: scopeWhere }),
     ]);
     const plansWithAutomation = plans.map((plan) => ({
       id: plan.id,

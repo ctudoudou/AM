@@ -501,6 +501,7 @@ model OrganizerPlan {
 
   @@index([downloadId])
   @@index([candidateId])
+  @@index([mediaTitleId])
   @@index([status])
   @@index([status, resolvedAt])
   @@index([mediaType])

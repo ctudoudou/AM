@@ -30,6 +30,7 @@ describe("/api/downloads/reconciliation", () => {
         untrackedAria2: 1,
         anomalies: 1,
         archivedActive: 0,
+        stalledTracked: 0,
         safePause: 0,
         manualReview: 1,
         byKind: {
@@ -38,6 +39,7 @@ describe("/api/downloads/reconciliation", () => {
           untracked_payload: 1,
           untracked_metadata: 0,
           untracked_error: 0,
+          stalled_tracked: 0,
           ambiguous_match: 0,
         },
       },

@@ -56,3 +56,11 @@ rollback hint, preventing post-organizer redownload while preserving a reversibl
 Single-plan regeneration verifies that at least one source file still exists, creates and validates
 the replacement first, and only then marks the rejected plan resolved. aria2 pseudo-paths beginning
 with `[METADATA]` are excluded from Organizer source discovery.
+
+## Title recovery scope and database compatibility
+
+`GET /api/organizer/plans?mediaTitleId=<id>&view=all` provides a title-scoped recovery view that
+includes active and resolved Organizer history without changing plan state or files. Migration
+`000018_organizer_media_title_scope` adds only an index on the existing nullable `mediaTitleId`
+column. It does not rewrite plan rows and remains compatible with the previous application version
+during a rolling deployment. Apply the migration before relying on this filtered view at scale.

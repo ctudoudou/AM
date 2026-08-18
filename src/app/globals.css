@@ -4218,6 +4218,7 @@ a {
   color: var(--text-primary);
   font-size: 28px;
   line-height: 34px;
+  overflow-wrap: anywhere;
 }
 
 .anime-detail-copy p,
@@ -4289,6 +4290,80 @@ a {
   flex-direction: column;
   gap: 12px;
   margin-top: 20px;
+}
+
+.title-recovery-banner,
+.organizer-scope-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  border: 1px solid rgba(0, 212, 146, 0.2);
+  border-radius: 12px;
+  background: rgba(0, 212, 146, 0.055);
+  padding: 12px 14px;
+}
+
+.title-recovery-banner > div,
+.organizer-scope-banner > div {
+  min-width: 0;
+}
+
+.title-recovery-banner strong,
+.title-recovery-banner > div > span,
+.organizer-scope-banner strong,
+.organizer-scope-banner span {
+  display: block;
+}
+
+.title-recovery-banner strong,
+.organizer-scope-banner strong {
+  color: var(--text-primary);
+  font-size: 13px;
+  line-height: 18px;
+}
+
+.title-recovery-banner > div > span,
+.organizer-scope-banner span {
+  margin-top: 3px;
+  color: var(--text-faint);
+  font-size: 12px;
+  line-height: 17px;
+}
+
+.title-recovery-counts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.title-recovery-counts small {
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.055);
+  color: var(--text-muted);
+  padding: 3px 8px;
+  font-size: 11px;
+}
+
+.title-recovery-banner > a,
+.organizer-scope-banner > a {
+  display: inline-flex;
+  min-height: 34px;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  border: 1px solid rgba(0, 212, 146, 0.28);
+  border-radius: 10px;
+  color: rgba(255, 255, 255, 0.86);
+  padding: 0 11px;
+  text-decoration: none;
+  font-size: 12px;
+}
+
+.organizer-scope-banner {
+  margin-bottom: 12px;
 }
 
 .history-backfill-panel {
@@ -5842,6 +5917,17 @@ a {
   }
 
   .anime-detail-play {
+    width: 100%;
+  }
+
+  .title-recovery-banner,
+  .organizer-scope-banner {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .title-recovery-banner > a,
+  .organizer-scope-banner > a {
     width: 100%;
   }
 

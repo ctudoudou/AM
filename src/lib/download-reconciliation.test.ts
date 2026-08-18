@@ -19,6 +19,7 @@ function download(
     title: "Show 01",
     archiveStatus: "archived",
     supersededById: null,
+    stalledSince: null,
     organizerPlans: [
       {
         id: "plan-1",
@@ -203,6 +204,47 @@ describe("download reconciliation planning", () => {
     });
 
     expect(result.summary.anomalies).toBe(0);
+    expect(result.items).toEqual([]);
+  });
+
+  it("reports a tracked payload that has been stalled beyond the blocked threshold", () => {
+    const result = plan({
+      downloads: [
+        download({
+          status: "ACTIVE",
+          archiveStatus: null,
+          organizerPlans: [],
+          stalledSince: new Date("2026-01-01T00:00:00.000Z"),
+        }),
+      ],
+    });
+
+    expect(result.summary).toMatchObject({
+      anomalies: 1,
+      stalledTracked: 1,
+      manualReview: 1,
+    });
+    expect(result.items[0]).toMatchObject({
+      kind: "stalled_tracked",
+      downloadId: "download-1",
+      recommendedAction: "review",
+      safeToPause: false,
+    });
+  });
+
+  it("does not report a recently stalled tracked payload", () => {
+    const result = plan({
+      downloads: [
+        download({
+          status: "ACTIVE",
+          archiveStatus: null,
+          organizerPlans: [],
+          stalledSince: new Date(Date.now() - 2 * 3_600_000),
+        }),
+      ],
+    });
+
+    expect(result.summary.stalledTracked).toBe(0);
     expect(result.items).toEqual([]);
   });
 });

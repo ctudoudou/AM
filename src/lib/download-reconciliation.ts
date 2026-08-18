@@ -4,7 +4,11 @@ import path from "node:path";
 import { Prisma, type DownloadStatus, type OrganizerPlanStatus } from "@prisma/client";
 import { listKnownDownloads, pauseAria2Download, type Aria2Status } from "@/lib/aria2";
 import { prisma } from "@/lib/db";
-import { extractBtInfoHash, normalizeBtInfoHash } from "@/lib/downloads";
+import {
+  classifyDownloadStall,
+  extractBtInfoHash,
+  normalizeBtInfoHash,
+} from "@/lib/downloads";
 import { resolveDownloadPathInsideRoot } from "@/lib/download-repair";
 import { getAppSettings } from "@/lib/settings";
 
@@ -14,6 +18,7 @@ export type DownloadReconciliationKind =
   | "untracked_payload"
   | "untracked_metadata"
   | "untracked_error"
+  | "stalled_tracked"
   | "ambiguous_match";
 
 export const DOWNLOAD_RECONCILIATION_CONFIRMATION =
@@ -32,6 +37,7 @@ export type DownloadReconciliationRecord = {
   title: string | null;
   archiveStatus: string | null;
   supersededById: string | null;
+  stalledSince: Date | null;
   organizerPlans: Array<{
     id: string;
     status: OrganizerPlanStatus;
@@ -89,6 +95,7 @@ export type DownloadReconciliationPlan = {
     untrackedAria2: number;
     anomalies: number;
     archivedActive: number;
+    stalledTracked: number;
     safePause: number;
     manualReview: number;
     byKind: Record<DownloadReconciliationKind, number>;
@@ -126,6 +133,7 @@ const reconciliationKinds: DownloadReconciliationKind[] = [
   "untracked_payload",
   "untracked_metadata",
   "untracked_error",
+  "stalled_tracked",
   "ambiguous_match",
 ];
 
@@ -144,6 +152,7 @@ export async function createDownloadReconciliationPlan(): Promise<DownloadReconc
       title: true,
       archiveStatus: true,
       supersededById: true,
+      stalledSince: true,
       organizerPlans: {
         where: { status: { in: ["EXECUTED", "AUTO_ARCHIVED"] } },
         orderBy: [{ executedAt: "desc" }, { createdAt: "desc" }],
@@ -444,6 +453,34 @@ export function buildDownloadReconciliationPlan(
       ];
     }
 
+    const stallState = direct
+      ? classifyDownloadStall({
+          status: direct.status,
+          metadataOnly,
+          stalledSince: direct.stalledSince,
+        })
+      : "none";
+    if (
+      direct &&
+      !isArchived(direct) &&
+      ["active", "waiting"].includes(status.status) &&
+      (stallState === "blocked" || stallState === "needs_source")
+    ) {
+      return [
+        reconciliationItem({
+          status,
+          kind: "stalled_tracked",
+          candidates: [direct],
+          matchedBy: "gid",
+          payloadFiles,
+          reason:
+            stallState === "needs_source"
+              ? "The tracked metadata task has not progressed for at least 24 hours and needs a new source or manual retry review."
+              : "The tracked payload task has not progressed for at least 72 hours and needs manual source and peer review.",
+        }),
+      ];
+    }
+
     if (direct) {
       return [];
     }
@@ -496,6 +533,7 @@ export function buildDownloadReconciliationPlan(
       untrackedAria2: snapshot.knownAria2.filter((status) => !directByGid.has(status.gid)).length,
       anomalies: items.length,
       archivedActive: byKind.archived_active,
+      stalledTracked: byKind.stalled_tracked,
       safePause: items.filter((item) => item.safeToPause).length,
       manualReview: items.filter((item) => !item.safeToPause).length,
       byKind,
