@@ -148,6 +148,7 @@ export function OrganizerClient({
   const t = getMessages(locale);
   const searchParams = useSearchParams();
   const linkedPlanId = searchParams.get("planId")?.trim() || null;
+  const linkedMediaTitleId = searchParams.get("mediaTitleId")?.trim() || null;
   const [plans, setPlans] = useState<OrganizerPlan[]>([]);
   const [operations, setOperations] = useState<OrganizerOperationRecord[]>([]);
   const [stats, setStats] = useState<OrganizerStats | null>(null);
@@ -194,7 +195,12 @@ export function OrganizerClient({
           stats?: OrganizerStats;
           page?: OrganizerPage;
         }>(
-          `/api/organizer/plans?${organizerPlanParams(filter, planPage, linkedPlanId)}`,
+          `/api/organizer/plans?${organizerPlanParams(
+            filter,
+            planPage,
+            linkedPlanId,
+            linkedMediaTitleId,
+          )}`,
           undefined,
           t.organizerLoadError,
           { DATABASE_MIGRATION_REQUIRED: t.databaseMigrationRequired },
@@ -238,7 +244,14 @@ export function OrganizerClient({
         setRefreshing(false);
       }
     }
-  }, [filter, linkedPlanId, planPage, t.databaseMigrationRequired, t.organizerLoadError]);
+  }, [
+    filter,
+    linkedMediaTitleId,
+    linkedPlanId,
+    planPage,
+    t.databaseMigrationRequired,
+    t.organizerLoadError,
+  ]);
 
   const loadImportRoot = useCallback(async () => {
     try {
@@ -718,6 +731,15 @@ export function OrganizerClient({
           </button>
         </div>
       </div>
+      {linkedMediaTitleId ? (
+        <div className="organizer-scope-banner" role="status">
+          <div>
+            <strong>{t.titleRecoveryOrganizerScope}</strong>
+            <span>{t.titleRecoveryOrganizerScopeDescription}</span>
+          </div>
+          <a href={`/${locale}/organizer?view=all`}>{t.clearTitleRecoveryScope}</a>
+        </div>
+      ) : null}
       <div className="organizer-import-panel">
         <div>
           <strong>{t.importScan}</strong>
@@ -1547,7 +1569,12 @@ function canRegeneratePlan(plan: OrganizerPlan) {
   return plan.status === "REJECTED";
 }
 
-function organizerPlanParams(filter: OrganizerFilter, page: number, planId?: string | null) {
+function organizerPlanParams(
+  filter: OrganizerFilter,
+  page: number,
+  planId?: string | null,
+  mediaTitleId?: string | null,
+) {
   const params = new URLSearchParams();
   if (filter === "ACTIVE") {
     params.set("view", "active");
@@ -1564,6 +1591,9 @@ function organizerPlanParams(filter: OrganizerFilter, page: number, planId?: str
   params.set("pageSize", "50");
   if (planId) {
     params.set("planId", planId);
+  }
+  if (mediaTitleId) {
+    params.set("mediaTitleId", mediaTitleId);
   }
   return params.toString();
 }

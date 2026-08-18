@@ -208,6 +208,28 @@ describe("/api/organizer/plans", () => {
     );
   });
 
+  it("scopes a title recovery view to all organizer plans for that media title", async () => {
+    organizerPlan.count.mockResolvedValue(0);
+
+    await GET(
+      new Request(
+        "http://localhost/api/organizer/plans?view=all&mediaTitleId=title-1&page=1&pageSize=50",
+      ),
+    );
+
+    expect(organizerPlan.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({ mediaTitleId: "title-1" }),
+      }),
+    );
+    expect(organizerPlan.findMany.mock.calls[0]?.[0]?.where).not.toHaveProperty(
+      "resolvedAt",
+    );
+    expect(organizerPlan.count).toHaveBeenLastCalledWith({
+      where: { mediaTitleId: "title-1" },
+    });
+  });
+
   it("hides resolved plans unless audit history is explicitly requested", async () => {
     organizerPlan.count
       .mockResolvedValueOnce(1)

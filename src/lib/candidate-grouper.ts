@@ -126,14 +126,7 @@ export async function groupUngroupedCandidates(
       mediaType === "ANIME" && options.useAi !== false
         ? await groupCandidatesWithOpenRouter(aiInputs)
         : heuristicMediaGroups(mediaType, aiInputs);
-    const mediaGroups = validateGroupProposals(rawGroups, aiInputs)
-      ? rawGroups
-      : heuristicMediaGroups(
-          mediaType,
-          aiInputs,
-          "Rule grouping used because AI grouping did not cover the candidate set safely.",
-          true,
-        );
+    const mediaGroups = reconcileGroupProposals(mediaType, rawGroups, aiInputs);
     groups.push(...mediaGroups.map((group) => ({ ...group, mediaType })));
   }
 
@@ -708,6 +701,54 @@ export function validateGroupProposals(
   return seenIds.size === inputIds.size;
 }
 
+export function reconcileGroupProposals(
+  mediaType: MediaType,
+  groups: CandidateGroupProposal[],
+  candidates: GroupableCandidate[],
+) {
+  const inputIds = new Set(candidates.map((candidate) => candidate.id));
+  const structurallySafe = groups.filter((group) => {
+    const candidateIds = new Set(group.candidateIds);
+    return (
+      candidateIds.size === group.candidateIds.length &&
+      candidateIds.size > 0 &&
+      group.candidateIds.every((id) => inputIds.has(id)) &&
+      group.normalizedTitle.trim().length > 0 &&
+      group.displayTitle.trim().length > 0 &&
+      Number.isFinite(group.confidence) &&
+      group.confidence >= 0 &&
+      group.confidence <= 1
+    );
+  });
+  const occurrenceCount = new Map<string, number>();
+  for (const group of structurallySafe) {
+    for (const id of group.candidateIds) {
+      occurrenceCount.set(id, (occurrenceCount.get(id) ?? 0) + 1);
+    }
+  }
+  const accepted = structurallySafe.filter((group) =>
+    group.candidateIds.every((id) => occurrenceCount.get(id) === 1),
+  );
+  const coveredIds = new Set(accepted.flatMap((group) => group.candidateIds));
+  const uncovered = candidates.filter((candidate) => !coveredIds.has(candidate.id));
+
+  if (uncovered.length === 0) {
+    return accepted;
+  }
+
+  return [
+    ...accepted,
+    ...heuristicMediaGroups(
+      mediaType,
+      uncovered,
+      accepted.length > 0
+        ? "Rule grouping used only for candidates not covered safely by the AI response."
+        : "Rule grouping used because the AI response did not contain a safe candidate group.",
+      true,
+    ),
+  ];
+}
+
 function heuristicMediaGroups(
   mediaType: MediaType,
   candidates: GroupableCandidate[],
@@ -718,22 +759,46 @@ function heuristicMediaGroups(
     ? groupAnimeCandidatesByAlias(mediaType, candidates)
     : groupCandidatesByNormalizedTitle(mediaType, candidates);
 
-  return [...grouped.values()].map((items) => ({
-    normalizedTitle: chooseGroupNormalizedTitle(items),
-    displayTitle: chooseGroupDisplayTitle(items),
-    season: items[0].season ?? 1,
-    candidateIds: items.map((item) => item.id),
-    confidence: Math.min(...items.map((item) => 0.72 + (item.resolution ? 0.08 : 0))),
-    reviewRequired,
-    aliases: [...new Set(items.map((item) => item.parsedTitle))],
-    summary:
-      summary ??
-      (mediaType === "MOVIE"
-        ? "Rule grouping used for movie intake."
-        : mediaType === "TV"
-          ? "Rule grouping used for TV intake."
-          : "Rule grouping used for anime intake."),
-  }));
+  return [...grouped.values()].map((items) => {
+    const corroborated = heuristicGroupHasCorroboratingIdentity(mediaType, items);
+    return {
+      normalizedTitle: chooseGroupNormalizedTitle(items),
+      displayTitle: chooseGroupDisplayTitle(items),
+      season: items[0].season ?? 1,
+      candidateIds: items.map((item) => item.id),
+      confidence: corroborated
+        ? 0.86
+        : Math.min(...items.map((item) => 0.72 + (item.resolution ? 0.08 : 0))),
+      reviewRequired: reviewRequired && !corroborated,
+      aliases: [...new Set(items.map((item) => item.parsedTitle))],
+      summary:
+        summary ??
+        (mediaType === "MOVIE"
+          ? "Rule grouping used for movie intake."
+          : mediaType === "TV"
+            ? "Rule grouping used for TV intake."
+            : "Rule grouping used for anime intake."),
+    };
+  });
+}
+
+export function heuristicGroupHasCorroboratingIdentity(
+  mediaType: MediaType,
+  candidates: GroupableCandidate[],
+) {
+  if (candidates.length < 2 || new Set(candidates.map((candidate) => candidate.rawTitle)).size < 2) {
+    return false;
+  }
+  const strongKeys = candidates.map((candidate) =>
+    createStrongMediaIdentityKeys({
+      mediaType,
+      parsedTitle: candidate.parsedTitle,
+      normalizedTitle: candidate.normalizedTitle,
+      rawTitle: candidate.rawTitle,
+      season: candidate.season,
+    }),
+  );
+  return strongKeys[0].some((key) => strongKeys.slice(1).every((keys) => keys.includes(key)));
 }
 
 export function proposalNeedsReview(group: Pick<CandidateGroupProposal, "confidence" | "reviewRequired">) {

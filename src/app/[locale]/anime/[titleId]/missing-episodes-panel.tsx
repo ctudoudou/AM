@@ -65,6 +65,24 @@ export function MissingEpisodesPanel({
     () => coverage.episodes.filter((episode) => episode.status !== "AVAILABLE"),
     [coverage.episodes],
   );
+  const recoveryCounts = useMemo(
+    () =>
+      coverage.episodes.reduce(
+        (counts, episode) => {
+          if (episode.workflow?.stage === "LIBRARY_REPAIR") {
+            counts.libraryRepair += 1;
+          } else if (episode.workflow?.stage === "ORGANIZER") {
+            counts.organizer += 1;
+          } else if (episode.workflow?.stage === "DOWNLOAD") {
+            counts.download += 1;
+          }
+          return counts;
+        },
+        { libraryRepair: 0, organizer: 0, download: 0 },
+      ),
+    [coverage.episodes],
+  );
+  const hasRecoveryWork = recoveryCounts.libraryRepair + recoveryCounts.organizer > 0;
   const safeBackfillSelections = useMemo(() => {
     if (!backfillResult) {
       return [];
@@ -256,6 +274,31 @@ export function MissingEpisodesPanel({
           {t.scanMissingEpisodes}
         </button>
       </div>
+      {hasRecoveryWork ? (
+        <div className="title-recovery-banner">
+          <div>
+            <strong>{t.titleRecoveryCenter}</strong>
+            <span>{t.titleRecoveryCenterDescription}</span>
+            <div className="title-recovery-counts">
+              {recoveryCounts.libraryRepair > 0 ? (
+                <small>{t.archivedLibraryRepair}: {recoveryCounts.libraryRepair}</small>
+              ) : null}
+              {recoveryCounts.organizer > 0 ? (
+                <small>{t.downloadedWaitingOrganizer}: {recoveryCounts.organizer}</small>
+              ) : null}
+              {recoveryCounts.download > 0 ? (
+                <small>{t.downloading}: {recoveryCounts.download}</small>
+              ) : null}
+            </div>
+          </div>
+          <Link
+            href={`/${locale}/organizer?view=all&mediaTitleId=${encodeURIComponent(mediaTitleId)}`}
+          >
+            <RefreshCw size={14} />
+            {t.openTitleRecoveryOrganizer}
+          </Link>
+        </div>
+      ) : null}
       {error ? <div className="settings-alert">{error}</div> : null}
       <div className="history-backfill-panel">
         <div>
